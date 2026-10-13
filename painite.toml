@@ -2,7 +2,7 @@
 
 [network]
 java_port    = 25565          # TCP
-bedrock_port = 19132          # UDP (RakNet); Geyser's default, not 28258
+bedrock_port = 19132          # UDP (RakNet); a number, or "same" to reuse java_port over UDP
 bedrock      = true           # built-in, no Geyser/addon
 proxy_protocol = "none"       # none | haproxy-v2 | velocity | bungee
 

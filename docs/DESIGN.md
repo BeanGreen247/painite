@@ -18,7 +18,8 @@ join the same world natively. No plugin API compatibility with Paper/Bukkit.
 
 ## Protocols
 - Java: TCP 25565.
-- Bedrock: RakNet over UDP, default 19132 (Geyser's default; 28258 is not a Geyser default).
+- Bedrock: RakNet over UDP, default 19132 (Geyser's default). `bedrock_port = "same"` reuses `java_port`
+  over UDP, so one number (e.g. 28258) serves both editions, matching Geyser's `clone-remote-port`.
 - One internal world and entity model; each protocol has its own encoder/decoder layer.
 
 ## Bandwidth for high-ping / lossy / proxied links
