@@ -35,7 +35,7 @@ static void classify(BlockInfo& b) {
         "repeater", "lectern", "anvil", "hopper", "cauldron", "end_rod", "lightning_rod", "pointed_dripstone", "amethyst_cluster", "sea_pickle",
         "turtle_egg", "frogspawn", "glow_lichen", "sculk_vein", "hanging_roots", "spore_blossom", "azalea", "pitcher", "melon_stem", "pumpkin_stem", "cocoa", "fan", "barrier", "_bud"};
     bool block_word = has(n, "_block") || has(n, "grass_block");
-    bool plant = (any(n, plants) && !block_word && n != "minecraft:light_gray_carpet" && !has(n, "light_blue") && !has(n, "light_gray")) || n == "minecraft:light";
+    bool plant = (any(n, plants) && !block_word && !has(n, "leaves") && !has(n, "potted") && !has(n, "flower_pot") && !has(n, "cactus") && n != "minecraft:light_gray_carpet" && !has(n, "light_blue") && !has(n, "light_gray")) || n == "minecraft:light";
     bool exact_clear = n == "minecraft:bamboo" || n == "minecraft:bamboo_sapling" || n == "minecraft:brown_mushroom" || n == "minecraft:red_mushroom" ||
                        n == "minecraft:tinted_glass_never";
     uint8_t op = 15;
@@ -60,6 +60,12 @@ static void classify(BlockInfo& b) {
     else if (lit && has(n, "candle")) b.emit = 3;
     else if (lit && has(n, "ore")) b.emit = 9;
     if (n == "minecraft:light") b.emit = 15;
+    b.falling = n == "minecraft:sand" || n == "minecraft:red_sand" || n == "minecraft:gravel" || has(n, "concrete_powder") || n == "minecraft:suspicious_sand" ||
+                n == "minecraft:suspicious_gravel" || n == "minecraft:dragon_egg" || has(n, "anvil");
+    bool floor_plant = plant && !any(n, {"vine", "fire", "portal", "bubble_column", "light", "sign", "banner", "button", "lever", "wall_", "kelp", "seagrass", "structure_void",
+                                         "hanging", "cave_vines", "weeping", "twisting", "mangrove_roots", "tripwire"});
+    bool floor_item = any(n, {"carpet", "pressure_plate", "minecraft:rail", "_rail", "redstone_wire", "repeater", "comparator", "minecraft:snow"}) && !has(n, "block");
+    b.needs_floor = floor_plant || floor_item;
     b.opacity = op;
     b.solid = !(b.air || plant || n == "minecraft:water" || n == "minecraft:lava" || b.replaceable);
 }

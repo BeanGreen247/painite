@@ -2,6 +2,7 @@
 // commands and autosave. Workers (network threads) call in; events go back out through Worker::post_fn.
 #pragma once
 #include "auth.hpp"
+#include "region.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -55,7 +56,7 @@ class Worker;
 
 class Game {
 public:
-    explicit Game(Server& s) : s_(s) {}
+    explicit Game(Server& s) : s_(s), ticker_(s) {}
     ~Game();
     void start();
     void stop();
@@ -88,6 +89,7 @@ public:
     bool saving_enabled = true;
 
     void post_task(std::function<void()> fn);
+    RegionTicker& ticker() { return ticker_; }
     void save_everything(bool unload);
     void save_player_data(uint64_t gid);
 
@@ -121,6 +123,7 @@ private:
     std::mutex task_mu_;
     std::condition_variable task_cv_;
     std::vector<std::function<void()>> tasks_;
+    RegionTicker ticker_;
     std::atomic<int64_t> game_time_{0}, day_time_{0};
     double tps_ = 20, mspt_ = 0;
     int64_t last_autosave_ = 0;

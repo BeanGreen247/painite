@@ -42,6 +42,7 @@ check "Bedrock smoke"                                           python3 -I tests
 check "two Java bots: entities, blocks, commands (26.3)"        python3 -I tests/game_test.py --port $PORT
 [ -f data/vanilla-26.2.ids ] && check "two Java bots (26.2)"    python3 -I tests/game_test.py --port $PORT --protocol 776 --ids data/vanilla-26.2.ids
 check "Java and Bedrock together"                               python3 -I tests/crossplay_test.py --port $PORT
+check "region ticks: falling blocks, plants"                    python3 -I tests/region_test.py --port $PORT
 check "bans, whitelist, server icon"                            python3 -I tests/lists_test.py --port $PORT --dir "$WORK/srv"
 check "Java online mode (fake session server)"                  python3 -I tests/online_test.py
 check "Bedrock Xbox login (fake authorization service)"         python3 -I tests/xbox_test.py

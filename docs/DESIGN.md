@@ -10,8 +10,9 @@ join the same world natively. No plugin API compatibility with Paper/Bukkit.
 - `game.cpp`: tick thread, player registry, interest management (512 block region grid), world time, autosave; workers talk to it through
   `Game::` calls and receive `GEvent`s through `Worker::post_fn`, so every protocol layer only encodes events for its own clients.
 - `java_game.cpp` and `bedrock_game.cpp`: the Java and Bedrock encoders for those events and the input handlers (movement, digging, placing).
-- Regions are currently an indexing structure for visibility, not yet independent ticking units: all ticking happens on one thread. That is
-  enough while nothing but players is simulated; entities, fluids and redstone would be sharded by region first.
+- `region.cpp`: scheduled block updates sharded by 512 x 512 block region. Each region has its own queue and lock, the game thread hands the regions
+  that are due to a small pool (itself included) and waits for them, so a region is never processed by two threads at once and distant
+  regions tick in parallel. Entities, fluids and redstone would plug into the same queues.
 
 ## Threading and autoscaling
 - Folia-style regions: the world is split into regions, each ticked by one worker.

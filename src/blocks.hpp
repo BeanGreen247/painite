@@ -14,6 +14,8 @@ struct BlockInfo {
     bool air = false, fluid = false, solid = true;
     bool replaceable = false;
     uint8_t emit = 0;       // block light emitted
+    bool falling = false;   // sand, gravel, concrete powder
+    bool needs_floor = false;  // plants, torches, rails, carpets: removed when the block below goes
 };
 
 class Blocks {

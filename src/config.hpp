@@ -44,6 +44,7 @@ struct Config {
     int retire_idle_s = 60;
     std::string generator = "auto";  // chunks that are not on disk: auto (flat for a new world, void for an existing one) | flat | void
     int autosave_s = 300;
+    int tick_threads = 0;   // threads that tick regions in parallel (0 = automatic)
     int spawn_protection = 0;
     std::string data_dir;      // where vanilla-<ver>.bin/.ids live; empty = search
 

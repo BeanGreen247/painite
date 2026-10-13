@@ -161,7 +161,8 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         reply("Plugins (0): Painite does not load Java plugins");
     } else if (cmd == "tps" || cmd == "status") {
         char b[200];
-        snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, ", tps_, mspt_, players(), s_.world.loaded());
+        snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, block updates %lld (%lld changed, %zu queued, %d region threads), ", tps_, mspt_, players(), s_.world.loaded(),
+                 static_cast<long long>(ticker_.processed.load()), static_cast<long long>(ticker_.changed.load()), ticker_.pending(), ticker_.threads() + 1);
         reply(std::string(b) + s_.console_status());
     } else if (cmd == "me") {
         if (a.size() < 2) { reply("Usage: /me <action>"); return; }

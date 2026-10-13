@@ -34,6 +34,7 @@ retire_after_idle_s = 60    # retire a worker with no connections after this lon
 [world]
 generator   = "auto"   # for chunks not on disk: auto (flat for a new world, void when region files exist) | flat | void
 autosave_s  = 300      # write changed chunks and player data this often (seconds)
+tick_threads = 0       # threads that tick regions (block updates) in parallel; 0 = half the cores, at most 4
 
 [paths]
 # data_dir = "data"         # where vanilla-<version>.bin/.ids from tools/fetch_vanilla_data.py live

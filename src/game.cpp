@@ -15,6 +15,7 @@ void Game::start() {
     game_time_ = s_.world.game_time;
     day_time_ = s_.world.day_time;
     last_autosave_ = now_ms();
+    ticker_.start(s_.cfg.tick_threads > 0 ? s_.cfg.tick_threads : std::max(1, std::min(4, static_cast<int>(s_.cores.size()) / 2)));
     th_ = std::thread([this] { loop(); });
 }
 
@@ -22,6 +23,7 @@ void Game::stop() {
     if (stop_.exchange(true)) return;
     task_cv_.notify_all();
     if (th_.joinable()) th_.join();
+    ticker_.stop();
 }
 
 void Game::post_task(std::function<void()> fn) {
@@ -124,6 +126,7 @@ void Game::swing(uint64_t gid) {
 }
 
 void Game::block_changed(int x, int y, int z, uint16_t id) {
+    ticker_.schedule_around(x, y, z);
     std::lock_guard<std::mutex> l(mu_);
     int cx = x >> 4, cz = z >> 4;
     for (auto& kv : players_) {
@@ -305,6 +308,7 @@ static int64_t region_key(double x, double z) {
 
 void Game::tick() {
     game_time_++;
+    ticker_.run(game_time_);
     day_time_++;
     if (game_time_ % 20 == 0) broadcast_time();
     std::lock_guard<std::mutex> l(mu_);
