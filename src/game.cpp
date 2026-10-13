@@ -1,4 +1,5 @@
 #include "game.hpp"
+#include "perf.hpp"
 #include "anvil.hpp"
 #include "log.hpp"
 #include "server.hpp"
@@ -276,6 +277,7 @@ void Game::save_player_data(uint64_t gid) {
 }
 
 void Game::save_everything(bool unload) {
+    PN_PERF("save.world_and_players");
     std::vector<uint64_t> gids;
     {
         std::lock_guard<std::mutex> l(mu_);
@@ -307,12 +309,14 @@ static int64_t region_key(double x, double z) {
 }
 
 void Game::tick() {
+    PN_PERF("tick.total");
     game_time_++;
-    ticker_.run(game_time_);
+    { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
     day_time_++;
     if (game_time_ % 20 == 0) broadcast_time();
     std::lock_guard<std::mutex> l(mu_);
     if (players_.empty()) return;
+    PN_PERF("tick.players");
     struct Move { PState* p; GEvent ev; bool any = false; };
     std::vector<Move> moves;
     std::unordered_map<int64_t, std::vector<PState*>> grid;   // 512 block regions
@@ -435,7 +439,9 @@ void Game::loop() {
             try { t(); } catch (const std::exception& e) { error(std::string("game task failed: ") + e.what()); }
         }
         if (clock::now() >= next) {
+            auto tt0 = clock::now();
             try { tick(); } catch (const std::exception& e) { error(std::string("tick failed: ") + e.what()); }
+            tick_us[tick_idx++ & 255] = static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::microseconds>(clock::now() - tt0).count());
             win_ticks++;
             next += std::chrono::milliseconds(50);
             if (clock::now() > next + std::chrono::milliseconds(500)) next = clock::now() + std::chrono::milliseconds(50);  // fell behind: skip, do not burst

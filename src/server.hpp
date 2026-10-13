@@ -108,6 +108,9 @@ public:
     std::atomic<uint64_t> busy_ns{0}, wall_ns{0};
     std::atomic<bool> finished{false};
     std::atomic<int64_t> idle_since_ms{0};
+    std::atomic<uint64_t> bytes_in{0}, bytes_out{0};
+    uint64_t rep_busy = 0, rep_in = 0, rep_out = 0;   // snapshot at the last `perf` report
+    int64_t rep_ms = 0;
 
 private:
     void run();
@@ -219,6 +222,7 @@ public:
     void unregister_player(const std::string& n);
     bool local_peer(const std::string& addr) const;
     int worker_count();
+    std::vector<std::string> perf_report();   // PERF lines for the dashboard and the `perf` command
     void route_auth(const AuthRequest& r, AuthResult&& res);
 
 private:

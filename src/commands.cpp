@@ -164,6 +164,8 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, block updates %lld (%lld changed, %zu queued, %d region threads), ", tps_, mspt_, players(), s_.world.loaded(),
                  static_cast<long long>(ticker_.processed.load()), static_cast<long long>(ticker_.changed.load()), ticker_.pending(), ticker_.threads() + 1);
         reply(std::string(b) + s_.console_status());
+    } else if (cmd == "perf") {
+        for (auto& l : s_.perf_report()) reply(l);
     } else if (cmd == "me") {
         if (a.size() < 2) { reply("Usage: /me <action>"); return; }
         announce("* " + who + " " + rest(a, 1));

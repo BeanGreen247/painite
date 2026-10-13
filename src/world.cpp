@@ -1,4 +1,5 @@
 #include "world.hpp"
+#include "perf.hpp"
 #include "anvil.hpp"
 #include "log.hpp"
 #include "server.hpp"
@@ -274,6 +275,7 @@ void World::to_nbt(Chunk& c, Nbt& root) {
 }
 
 std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
+    PN_PERF("chunk.load");
     auto c = std::make_shared<Chunk>();
     c->x = cx;
     c->z = cz;
@@ -422,6 +424,7 @@ bool World::save_player(const std::string& uuid, const Nbt& out) {
 // ---- lighting -------------------------------------------------------------------------------------------
 
 void compute_light(const Chunk& c, Light& L) {
+    PN_PERF("chunk.light");
     const Blocks& B = Blocks::get();
     const int S = kSections + 2;
     L.height_ws.assign(256, kMinY);

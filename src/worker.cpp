@@ -244,6 +244,7 @@ void Worker::tcp_readable(JConn& c) {
         ssize_t n = recv(c.fd, scratch_.data(), scratch_.size(), 0);
         if (n > 0) {
             c.in.insert(c.in.end(), scratch_.data(), scratch_.data() + n);
+            bytes_in += static_cast<uint64_t>(n);
             total += static_cast<size_t>(n);
             if (c.in.size() - c.inpos > 4 * 1024 * 1024) { c.dead = true; return; }
         } else if (n == 0) {
@@ -276,7 +277,7 @@ void Worker::udp_readable() {
 void Worker::flush(JConn& c) {
     while (c.outpos < c.out.size()) {
         ssize_t n = ::send(c.fd, c.out.data() + c.outpos, c.out.size() - c.outpos, MSG_NOSIGNAL);
-        if (n > 0) c.outpos += static_cast<size_t>(n);
+        if (n > 0) { c.outpos += static_cast<size_t>(n); bytes_out += static_cast<uint64_t>(n); }
         else if (n < 0 && errno == EINTR) continue;
         else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
         else { c.out.clear(); c.outpos = 0; c.dead = true; return; }

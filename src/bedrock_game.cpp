@@ -4,6 +4,7 @@
 #include "bedrock.hpp"
 #include "game.hpp"
 #include "log.hpp"
+#include "perf.hpp"
 #include "server.hpp"
 #include "util.hpp"
 #include <algorithm>
@@ -219,6 +220,7 @@ void Bedrock::kick(uint64_t conn, const std::string& reason) {
 }
 
 void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
+    PN_PERF("event.bedrock");
     BSession* b = by_id(conn);
     if (!b || b->rak->closed || b->st != BSession::St::Playing) return;
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> out;

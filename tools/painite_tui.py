@@ -33,6 +33,8 @@ class Running:
         self.proc = subprocess.Popen([binary, "nogui"], cwd=directory, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         self.lines, self.q = [], queue.Queue()
         self.stat, self.players, self.stat_time = None, [], 0
+        self.tick, self.tasks, self.workers, self.pstat = None, {}, {}, None
+        self.perf_t = 0.0
         self.started = time.time()
         threading.Thread(target=self._read, daemon=True).start()
 
@@ -62,13 +64,27 @@ class Running:
             if s:
                 self.stat, self.stat_time = s.groups(), time.time()
                 continue                       # status polls are not log content
-            l = LIST_RE.match(msg)
-            if l:
-                self.players = [n.strip() for n in l.group(3).split(",") if n.strip()]
+            if msg.startswith("PERF "):
+                self._perf(msg.split())
                 continue
             self.lines.append(line)
             if len(self.lines) > 5000:
                 del self.lines[:1000]
+
+    def _perf(self, f):
+        now = time.time()
+        if f[1] == "tick":
+            self.tick = (float(f[2]), float(f[3]), float(f[4]), float(f[5]))
+        elif f[1] == "task":
+            interval = max(0.5, now - self.perf_t) if self.perf_t else 2.0
+            self.tasks[f[2]] = (int(f[3]) / interval, float(f[4]), float(f[5]))
+        elif f[1] == "worker":
+            self.workers[int(f[2])] = (float(f[3]), int(f[4]), float(f[5]), float(f[6]))
+        elif f[1] == "process":
+            self.pstat = (float(f[2]), float(f[3]), int(f[4]), int(f[5]), int(f[6]))
+        elif f[1] == "players":
+            self.players = [n for n in (f[2].split(",") if len(f) > 2 else []) if n]
+            self.perf_t = now      # players is the last line of a report
 
     def alive(self):
         return self.proc.poll() is None
@@ -101,6 +117,86 @@ def put(win, y, x, text, attr=0, width=None):
         pass
 
 
+def bar(frac, width):
+    frac = max(0.0, min(1.0, frac))
+    n = int(round(frac * width))
+    return "[" + "#" * n + "." * (width - n) + "]"
+
+
+def us(v):
+    return f"{v:.0f} us" if v < 1000 else f"{v / 1000:.2f} ms"
+
+
+def panels(r, w):
+    """Lines of the performance panels (text, attr) for a terminal w columns wide."""
+    out = []
+    bw = max(8, min(30, w // 4))
+    if r.tick:
+        avg, p99, mx, pct = r.tick
+        col = curses.color_pair(1) if pct < 40 else curses.color_pair(2) if pct < 80 else curses.color_pair(3)
+        out.append((f" Tick  avg {us(avg)}  p99 {us(p99)}  max {us(mx)}   budget used {pct:.1f}% of 50 ms {bar(pct / 100, bw)}", col))
+    if r.workers:
+        out.append((" Workers (one epoll loop per core; busy = time handling packets, not waiting)", curses.A_BOLD))
+        for wid in sorted(r.workers):
+            busy, conns, kin, kout = r.workers[wid]
+            out.append((f"  #{wid} busy {busy:5.1f}% {bar(busy / 100, bw)}  conns {conns:3d}  in {kin:7.1f} KB/s  out {kout:8.1f} KB/s", 0))
+    if r.pstat:
+        cpu, rss, thr, chunks, pl = r.pstat
+        per = f"   per player: {cpu / pl:.2f}% CPU, {rss / pl:.0f} MB" if pl else ""
+        out.append((f" Process  cpu {cpu:.1f}% of one core  rss {rss:.0f} MB  threads {thr}  chunks loaded {chunks}{per}", 0))
+    if r.tasks and w >= 70:
+        out.append((" Tasks (since the last 2 s poll)                          calls/s       avg        max", curses.A_BOLD))
+        for name in sorted(r.tasks):
+            rate, avg, mx = r.tasks[name]
+            out.append((f"  {name:<26}{rate:>31.1f} {us(avg):>10} {us(mx):>10}", 0))
+    return out
+
+
+WHY = [
+    "Why a native rewrite (the live figures above come from this server)",
+    "",
+    "A Java server has to fit everything in one tick thread plus a garbage collector. Painite is built around what limits a Minecraft server:",
+    "",
+    "* Tick budget: a tick must finish in 50 ms. The 'budget used' figure on the dashboard is how much of that this server spends right now.",
+    "  Block updates are sharded per 512x512 region and run in parallel; nothing in the tick waits for the network.",
+    "* Network: each core runs its own epoll loop (SO_REUSEPORT), pinned to its CPU; workers start and retire with load inside a memory cap.",
+    "  A chunk is encoded and compressed once and sent to every client that needs it.",
+    "* Memory: no JVM heap, no garbage collection pauses. The 'per player' lines show real RSS and CPU divided by players online.",
+    "* Both editions in one process: Java and Bedrock players share the same world, entities and block state, no proxy such as Geyser in between.",
+    "* Startup: seconds, not minutes; an idle server uses well under 1% of one core.",
+    "",
+    "Be honest about the other side: Painite has no plugins, mobs, terrain generation or survival inventory yet.",
+    "Compare it on your own machine: run Paper on the same world and use tests/load_test.py against both (bots, CPU and memory are printed).",
+    "",
+    "Press F2 to go back.",
+]
+
+
+def draw_why(win, r):
+    win.erase()
+    h, w = win.getmaxyx()
+    put(win, 0, 0, " Why a rewrite ".ljust(w - 1), curses.A_REVERSE | curses.A_BOLD)
+    row = 2
+    if r.tick:
+        put(win, row, 2, f"Right now: tick uses {r.tick[3]:.1f}% of its 50 ms budget (avg {us(r.tick[0])}, p99 {us(r.tick[1])}).", curses.A_BOLD)
+        row += 1
+    if r.pstat:
+        cpu, rss, thr, chunks, pl = r.pstat
+        put(win, row, 2, f"Process: {cpu:.1f}% of one core, {rss:.0f} MB resident, {thr} threads, {chunks} chunks in memory, {pl} players.", curses.A_BOLD)
+        row += 1
+    if r.workers:
+        busy = ", ".join(f"#{k} {v[0]:.0f}%" for k, v in sorted(r.workers.items()))
+        put(win, row, 2, f"Network workers busy: {busy}", curses.A_BOLD)
+        row += 1
+    row += 1
+    import textwrap
+    for line in WHY:
+        for chunk in (textwrap.wrap(line, max(20, w - 6), subsequent_indent="    ") or [""]):
+            put(win, row, 2, chunk, curses.A_BOLD if line.startswith("Why") else 0)
+            row += 1
+    win.refresh()
+
+
 def draw_run(win, r, props, inp, scroll):
     win.erase()
     h, w = win.getmaxyx()
@@ -116,8 +212,7 @@ def draw_run(win, r, props, inp, scroll):
         tps, ms, pl, ch, bu, bc, bq, rt, pc, pm, workers, mem, memcap, cores = s
         tps_f = float(tps)
         tcol = curses.color_pair(1) if tps_f >= 19 else curses.color_pair(2) if tps_f >= 15 else curses.color_pair(3)
-        cells = [("TPS", tps, tcol), ("Tick", f"{ms} ms", 0), ("Players", f"{pc}/{pm}", 0), ("Chunks", ch, 0),
-                 ("Memory", f"{mem}/{memcap} MiB", 0), ("Workers", workers, 0), ("Block updates", f"{bu} ({bc} changed, {bq} queued)", 0),
+        cells = [("TPS", tps, tcol), ("Players", f"{pc}/{pm}", 0), ("Memory", f"{mem}/{memcap} MiB", 0), ("Block updates", f"{bu} ({bc} changed, {bq} queued)", 0),
                  ("Region threads", rt, 0), ("Cores", cores, 0)]
         colw = max(24, min(44, (w - 2) // max(1, (w - 2) // 36)))
         per = max(1, (w - 2) // colw)
@@ -129,20 +224,23 @@ def draw_run(win, r, props, inp, scroll):
     else:
         put(win, row, 1, "waiting for the first status ...", curses.A_DIM)
         row += 1
-    names = ", ".join(r.players) if r.players else "nobody online"
-    put(win, row, 1, f"Online: {names}")
+    put(win, row, 1, "Online: " + (", ".join(r.players) if r.players else "nobody online"))
     row += 1
+    budget = max(0, h - row - 5)           # keep at least 4 log lines
+    pl_lines = panels(r, w)
+    for text, attr in pl_lines[:budget]:
+        put(win, row, 0, text, attr)
+        row += 1
     put(win, row, 0, "-" * (w - 1), curses.A_DIM)
     row += 1
     logh = h - row - 2
     if logh > 0:
         lines = r.lines
         end = len(lines) - scroll
-        view = lines[max(0, end - logh): end]
-        for i, line in enumerate(view):
+        for i, line in enumerate(lines[max(0, end - logh): end]):
             put(win, row + i, 0, line, curses.color_pair(color_for(line)))
     status = "" if r.alive() else "  [server stopped, press Enter for the menu]"
-    put(win, h - 2, 0, ("scrolled up " + str(scroll) + " lines  " if scroll else "") + "PgUp/PgDn scroll, Ctrl-C stops the server" + status, curses.A_DIM)
+    put(win, h - 2, 0, ("scrolled up " + str(scroll) + " lines  " if scroll else "") + "PgUp/PgDn scroll  F2 why a rewrite  Ctrl-C stops the server" + status, curses.A_DIM)
     put(win, h - 1, 0, "> " + inp, curses.A_BOLD)
     win.refresh()
 
@@ -150,15 +248,18 @@ def draw_run(win, r, props, inp, scroll):
 def run_server(stdscr, sid, name, directory):
     r = Running(sid, name, directory)
     props = ps.props(directory)
-    inp, scroll, last_poll = "", 0, 0
+    inp, scroll, last_poll, why = "", 0, 0, False
     stdscr.timeout(200)
     while True:
         r.drain()
         if r.alive() and time.time() - last_poll > 2:
             last_poll = time.time()
             r.send("tps")
-            r.send("list")
-        draw_run(stdscr, r, props, inp, scroll)
+            r.send("perf")
+        if why:
+            draw_why(stdscr, r)
+        else:
+            draw_run(stdscr, r, props, inp, scroll)
         try:
             k = stdscr.getch()
         except KeyboardInterrupt:
@@ -170,6 +271,9 @@ def run_server(stdscr, sid, name, directory):
             stdscr.refresh()
             r.stop()
             return
+        if k == curses.KEY_F2:
+            why = not why
+            continue
         if k == curses.KEY_RESIZE:
             stdscr.erase()
         elif k == curses.KEY_PPAGE:

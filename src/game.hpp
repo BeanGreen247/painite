@@ -85,6 +85,9 @@ public:
     int64_t day_time() const { return day_time_; }
     void set_day_time(int64_t t) { day_time_ = t; broadcast_time(); }
     double tps() const { return tps_; }
+    // duration of the last 256 ticks in microseconds (written by the game thread, read for reports)
+    std::atomic<uint32_t> tick_us[256] = {};
+    std::atomic<uint32_t> tick_idx{0};
     double mspt() const { return mspt_; }
     bool saving_enabled = true;
 

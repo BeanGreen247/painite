@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "log.hpp"
 #include "util.hpp"
+#include "perf.hpp"
 #include "bchunk.hpp"
 #include <algorithm>
 #include <chrono>
@@ -110,6 +111,74 @@ bool Server::spawn_worker(std::string& err) {
     if (!w->start(err)) return false;
     workers_.push_back(std::move(w));
     return true;
+}
+
+std::vector<std::string> Server::perf_report() {
+    std::vector<std::string> out;
+    char b[256];
+    int64_t now = now_ms();
+    // tick time over the last 256 ticks
+    std::vector<uint32_t> t;
+    for (auto& v : game.tick_us) if (v.load()) t.push_back(v.load());
+    if (!t.empty()) {
+        std::sort(t.begin(), t.end());
+        double avg = 0;
+        for (auto v : t) avg += v;
+        avg /= static_cast<double>(t.size());
+        snprintf(b, sizeof b, "PERF tick %.0f %u %u %.2f", avg, t[t.size() * 99 / 100], t.back(), avg / 500.0);   // percent of the 50 ms budget
+        out.push_back(b);
+    }
+    // timers since the previous report
+    for (PerfTimer* pt : perf_all()) {
+        uint64_t n = pt->n.exchange(0), tot = pt->total_ns.exchange(0), mx = pt->max_ns.exchange(0);
+        if (!n) continue;
+        snprintf(b, sizeof b, "PERF task %s %llu %.1f %.1f", pt->name.c_str(), static_cast<unsigned long long>(n), static_cast<double>(tot) / static_cast<double>(n) / 1000.0, static_cast<double>(mx) / 1000.0);
+        out.push_back(b);
+    }
+    {
+        std::lock_guard<std::mutex> l(wm_);
+        for (auto& w : workers_) {
+            if (w->finished) continue;
+            uint64_t busy = w->busy_ns.load(), in = w->bytes_in.load(), o = w->bytes_out.load();
+            double dt = static_cast<double>(now - w->rep_ms);
+            if (w->rep_ms && dt > 0) {
+                snprintf(b, sizeof b, "PERF worker %d %.1f %d %.1f %.1f", w->id(), 100.0 * static_cast<double>(busy - w->rep_busy) / (dt * 1e6), w->nconn.load(),
+                         static_cast<double>(in - w->rep_in) / dt, static_cast<double>(o - w->rep_out) / dt);   // bytes per ms = KB/s
+                out.push_back(b);
+            }
+            w->rep_busy = busy; w->rep_in = in; w->rep_out = o; w->rep_ms = now;
+        }
+    }
+    // process
+    static uint64_t last_cpu = 0;
+    static int64_t last_ms = 0;
+    uint64_t cpu = 0;
+    long rss_kb = 0, threads = 0;
+    if (FILE* f = fopen("/proc/self/stat", "r")) {
+        char buf[1024];
+        if (fgets(buf, sizeof buf, f)) {
+            char* p = strrchr(buf, ')');
+            unsigned long ut = 0, st = 0;
+            if (p) sscanf(p + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu %lu %*d %*d %*d %*d %ld", &ut, &st, &threads);
+            cpu = ut + st;
+        }
+        fclose(f);
+    }
+    if (FILE* f = fopen("/proc/self/status", "r")) {
+        char line[256];
+        while (fgets(line, sizeof line, f)) if (!strncmp(line, "VmRSS:", 6)) rss_kb = atol(line + 6);
+        fclose(f);
+    }
+    double hz = static_cast<double>(sysconf(_SC_CLK_TCK));
+    double cpu_pct = last_ms && now > last_ms ? 100.0 * (static_cast<double>(cpu - last_cpu) / hz) / (static_cast<double>(now - last_ms) / 1000.0) : 0;
+    last_cpu = cpu;
+    last_ms = now;
+    snprintf(b, sizeof b, "PERF process %.1f %.1f %ld %d %d", cpu_pct, static_cast<double>(rss_kb) / 1024.0, threads, world.loaded(), game.players());
+    out.push_back(b);
+    std::string names;
+    for (auto& id : game.identities()) names += (names.empty() ? "" : ",") + id->name;
+    out.push_back("PERF players " + names);
+    return out;
 }
 
 void Server::route_auth(const AuthRequest& r, AuthResult&& res) {

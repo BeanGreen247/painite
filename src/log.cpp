@@ -43,7 +43,8 @@ void log(const char* level, const std::string& msg) {
     snprintf(head, sizeof head, "[%s] [%s %s]: ", t.c_str(), t.c_str(), level);
     fprintf(stdout, "%s%s\n", head, msg.c_str());
     fflush(stdout);
-    if (g_file) { fprintf(g_file, "%s%s\n", head, msg.c_str()); fflush(g_file); }
+    bool polled = msg.compare(0, 5, "PERF ") == 0 || msg.compare(0, 4, "TPS ") == 0;   // the dashboard asks every couple of seconds; keep latest.log readable
+    if (g_file && !polled) { fprintf(g_file, "%s%s\n", head, msg.c_str()); fflush(g_file); }
 }
 
 }  // namespace pn

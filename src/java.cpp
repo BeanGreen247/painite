@@ -4,6 +4,7 @@
 #include "util.hpp"
 #include "hash.hpp"
 #include "jchunk.hpp"
+#include "perf.hpp"
 #include "skin.hpp"
 #include <algorithm>
 #include <cmath>
@@ -572,7 +573,7 @@ void Worker::send_chunk(JConn& c, int x, int z) {
     if (it == chunk_cache_.end()) {
         Wr w;
         w.varint(id.pl_chunk);
-        encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w);
+        { PN_PERF("chunk.encode_java"); encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w); }
         ver = ch->version.load();
         std::vector<uint8_t> f;
         frame_into(f, w.b.data(), w.b.size(), c.threshold, s_.cfg.compression_level);

@@ -1,5 +1,6 @@
 // Java Edition side of the shared game: entity/tab-list/block/time packets for events, and player input handling.
 #include "log.hpp"
+#include "perf.hpp"
 #include "server.hpp"
 #include <algorithm>
 #include <cmath>
@@ -114,6 +115,7 @@ void Worker::teleport_player(JConn& c, const GPos& p) {
 }
 
 void Worker::java_event(JConn& c, const GEvent& ev) {
+    PN_PERF("event.java");
     const VanillaData& vd = *c.vd;
     const auto& id = vd.id;
     Wr w;
