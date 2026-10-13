@@ -63,8 +63,12 @@ def main():
                 chunks += 1
                 if not asked_sub:
                     asked_sub = True
+                    zx, i = b.read_varuint(pl)
+                    zz, i = b.read_varuint(pl, i)
+                    cx = (zx >> 1) ^ -(zx & 1)
+                    cz = (zz >> 1) ^ -(zz & 1)
                     offs = b"".join(bytes([0, k, 0]) for k in range(24))
-                    c.send_packets([(175, b.varuint(0) + b.varuint(24) + offs + struct.pack("<iii", 0, -4, 0))])
+                    c.send_packets([(175, b.varuint(0) + b.varuint(24) + offs + struct.pack("<iii", cx, -4, cz))])
             elif pid == 174:
                 sub = pl
             elif pid == 2 and len(pl) == 4 and struct.unpack(">i", pl)[0] == 3:
@@ -81,6 +85,42 @@ def main():
     check(seen.get(63, 0) >= 1, "player list received (patched with our name)")
     check(chunks >= 40, f"LevelChunk packets: {chunks}")
     check(sub is not None and len(sub) > 1000, f"SubChunk response: {len(sub) if sub else 0} bytes")
+    if sub:
+        i = 1
+        _, i = b.read_varuint(sub, i)
+        i += 12
+        n, i = b.read_varuint(sub, i)
+        good = air = bad = 0
+        for _ in range(n):
+            i += 3
+            res = sub[i]
+            i += 1
+            pres = sub[i]
+            i += 1
+            if pres:
+                ln, i = b.read_varuint(sub, i)
+                data = sub[i:i + ln]
+                i += ln
+                if res == 1 and data[0] == 9 and data[1] in (1, 2):
+                    good += 1
+                else:
+                    bad += 1
+            else:
+                air += 1
+            ht = sub[i]
+            i += 1
+            if ht == 1:
+                i += 1
+                for _r in range(16):
+                    ln, i = b.read_varuint(sub, i)
+                    i += ln
+            else:
+                i += 1
+            rt = sub[i]
+            i += 1
+            i += 1 if rt != 1 else 1
+            i += 1
+        check(i == len(sub) and bad == 0 and good > 0, f"SubChunk entries parse: {good} with blocks, {air} empty, {bad} bad, consumed {i}/{len(sub)}")
     check(spawned, "PlayStatus player_spawn")
     check(chat, "chat echoed back to the Bedrock client")
     print("OK" if ok else "FAILED")

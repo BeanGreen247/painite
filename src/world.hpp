@@ -68,6 +68,9 @@ public:
     void save_level();
     uint8_t biome_index(const std::string& name) const;
     std::string player_dir() const;
+    // last known position from players/data (when there is one), else the world spawn above the surface
+    struct Spawn { double x, y, z; float yaw, pitch; int gamemode; bool saved; };
+    Spawn pick_spawn(const std::string& uuid, int default_gamemode);
 
 private:
     std::shared_ptr<Chunk> load_chunk(int cx, int cz);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <dirent.h>
 #include <fstream>
+#include <unistd.h>
 #include <sstream>
 
 namespace pn {
@@ -28,6 +29,15 @@ std::vector<std::string> list_vanilla_bins(const std::string& cfg_dir, const std
         if (!out.empty()) break;
     }
     return out;
+}
+
+std::string find_data_file(const std::string& cfg_dir, const std::string& exe_dir, const std::string& name) {
+    for (auto& d : {cfg_dir, std::string("data"), exe_dir + "/data", exe_dir + "/../data"}) {
+        if (d.empty()) continue;
+        std::string p = d + "/" + name;
+        if (access(p.c_str(), R_OK) == 0) return p;
+    }
+    return "";
 }
 
 bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err) {

@@ -344,6 +344,27 @@ void World::save_level() {
     write_nbt_file(dir + "/level.dat", level_);
 }
 
+World::Spawn World::pick_spawn(const std::string& uuid, int default_gamemode) {
+    Spawn s{spawn_x + 0.5, spawn_y, spawn_z + 0.5, 0, 0, default_gamemode, false};
+    Nbt pd;
+    if (load_player(uuid, pd)) {
+        const Nbt* pos = pd.get("Pos");
+        if (pos && pos->type == Nbt::List && pos->list.size() == 3) {
+            double x = pos->list[0].f, y = pos->list[1].f, z = pos->list[2].f;
+            if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::fabs(x) < 3e7 && std::fabs(z) < 3e7) {
+                s.x = x; s.y = y; s.z = z;
+                if (const Nbt* rot = pd.get("Rotation")) if (rot->list.size() == 2) { s.yaw = static_cast<float>(rot->list[0].f); s.pitch = static_cast<float>(rot->list[1].f); }
+                s.gamemode = static_cast<int>(pd.geti("playerGameType", default_gamemode));
+                s.saved = true;
+                return s;
+            }
+        }
+    }
+    int top = top_y(spawn_x, spawn_z);
+    if (top >= kMinY) s.y = top + 1;
+    return s;
+}
+
 // 26.x keeps player files in players/data, older worlds in playerdata
 std::string World::player_dir() const { return is_dir(dir + "/players/data") || (data_version >= 4900 && !is_dir(dir + "/playerdata")) ? dir + "/players/data" : dir + "/playerdata"; }
 

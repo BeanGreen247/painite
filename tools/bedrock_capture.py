@@ -82,6 +82,9 @@ def build(out, rec, protocol):
         records.append((6, 64 + off[1] - 0, entry))   # id = 64 + sub chunk y offset (request center y is -4)
     name = CAPTURE_NAME.encode()
     records.append((7, 1, name))
+    ap = next((bytes.fromhex(h) for p, h in rec if p == 12), None)
+    if ap:
+        records.append((8, 12, ap))
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     with open(out, "wb") as f:
         f.write(b"PNBE" + struct.pack("<II", 1, protocol) + struct.pack("<I", len(records)))
@@ -130,6 +133,40 @@ def main():
                     c.send_packets([(175, b.varuint(b.zigzag(0)) + b.varuint(24) + offs + struct.pack('<iii', cx, -4, 0))])
             elif pid == 2 and len(pl) == 4 and struct.unpack(">i", pl)[0] == 3:  # player spawn
                 c.send_packets([(113, b.varuint(runtime_id or 1))])
+    # second player: what the first one is sent when someone else joins (AddPlayer), recorded as a template for other players
+    add_player = None
+    try:
+        o = b.BedrockClient(host, port)
+        o.connect()
+        o.request_settings()
+        o.login("PainiteOther", f"{host}:{port}")
+        o_rt = None
+        t2 = time.time() + 25
+        while time.time() < t2 and add_player is None:
+            pk = o.recv_packets(0.2)
+            for pid, pl in pk or []:
+                if pid == 3:
+                    ln, i = b.read_varuint(pl)
+                    o.start_encryption(pl[i:i + ln].decode())
+                    o.send_packets([(4, b"")])
+                elif pid == 6:
+                    o.send_packets([(8, b.varuint(2) + _s("downloadingfinished"))])
+                elif pid == 7:
+                    o.send_packets([(8, b.varuint(3) + _s("resourcepackstackfinished"))])
+                elif pid == 11:
+                    _, i = b.read_varuint(pl)
+                    o_rt, i = b.read_varuint(pl, i)
+                    o.send_packets([(129, b"\x00"), (69, b.varuint(b.zigzag(4)) + bytes([4]))])
+                elif pid == 2 and len(pl) == 4 and struct.unpack(">i", pl)[0] == 3:
+                    o.send_packets([(113, b.varuint(o_rt or 1))])
+            pk = c.recv_packets(0.2)
+            for pid, pl in pk or []:
+                if pid == 12:
+                    add_player = pl
+                    rec.append((12, pl.hex()))
+        o.s.close()
+    except Exception as e:   # the template is optional; Painite falls back to no entity visibility for Bedrock viewers
+        print("could not record AddPlayer:", e)
     if out.endswith(".json"):
         json.dump(rec, open(out, "w"))
         print(f"recorded {len(rec)} packets; runtime id {runtime_id}")

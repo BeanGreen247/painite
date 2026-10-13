@@ -14,18 +14,24 @@ namespace pn {
 
 class Server;
 struct GEvent;
+struct GIdentity;
 
 struct BedrockData {
     int protocol = 0;
     std::vector<uint8_t> info, stack;                      // ResourcePacksInfo / ResourcePackStack payloads
-    struct Segment { bool patch_player_list = false; std::vector<uint8_t> batch; };  // batch = algorithm byte + deflate
+    // batch = algorithm byte + deflate; patch: 0 none, 1 PlayerList, 2 StartGame, 3 Respawn (raw holds the packet payload)
+    struct Segment { bool patch_player_list = false; int patch = 0; std::vector<uint8_t> raw; std::vector<uint8_t> batch; };
     std::vector<Segment> start;                            // replayed after the resource pack handshake
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> extras;                   // per-player packets sent just before spawn
     std::vector<uint8_t> player_list_raw;                  // PlayerList payload to patch (uuid/name)
     std::vector<uint8_t> chunk_tail;                       // LevelChunk payload after the x/z varints
     std::unordered_map<int, std::vector<uint8_t>> subchunks;  // sub chunk index (0 = y -4) -> entry bytes after the 3-byte offset
     std::string capture_name;
+    std::vector<uint8_t> add_player_tpl;                  // AddPlayer packet recorded from a real BDS (kind 8), patched per player
 };
+
+// replaces a length-prefixed string inside a packet
+std::vector<uint8_t> replace_string_bytes(const std::vector<uint8_t>& in, const std::string& from, const std::string& to);
 
 bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, BedrockData& out, std::string& err);
 
@@ -39,7 +45,15 @@ struct BSession {
     bool reserved = false, counted = false;
     int radius = 0;
     int cx = 0, cz = 0;
-    float x = 0.5f, z = 0.5f;
+    uint64_t id = 0;         // connection id (valid on this worker)
+    uint64_t gid = 0;        // Game registry id once the player spawned
+    int eid = 0;             // entity id, both unique and runtime id
+    double x = 0.5, y = 0, z = 0.5;   // feet position
+    float yaw = 0, pitch = 0;
+    int gamemode = 0;
+    bool sneaking = false;
+    uint64_t break_tick_ = 0;
+    int held = 0;
     std::unordered_set<int64_t> sent;
     std::vector<std::pair<int, int>> pending;   // chunks still to send, nearest last
     bool spawn_sent = false;
@@ -62,6 +76,7 @@ public:
     void chat_to(uint64_t conn, const std::string& text);
     void kick(uint64_t conn, const std::string& reason);
     void shutdown();
+    void block_event(uint64_t conn, int x, int y, int z, uint16_t block);
     size_t sessions() const { return rak_->session_count(); }
     int playing() const { return playing_; }
 
@@ -75,6 +90,20 @@ private:
     void on_subchunk_request(BSession& b, const uint8_t* p, size_t n);
     void on_text(BSession& b, const uint8_t* p, size_t n);
     void on_move(BSession& b, float x, float z);
+    void on_auth_input(BSession& b, const uint8_t* p, size_t n);
+    void on_command_request(BSession& b, const uint8_t* p, size_t n);
+    void begin_play(BSession& b);
+    BSession* by_id(uint64_t id);
+    std::vector<uint8_t> patched_start_game(const BSession& b, const std::vector<uint8_t>& raw) const;
+    std::vector<uint8_t> patched_respawn(const BSession& b, const std::vector<uint8_t>& raw) const;
+    std::vector<uint8_t> player_list_entry(const GIdentity& id, bool add) const;
+    void send_time_to(BSession& b, int64_t day_time);
+    void send_game_mode(BSession& b, int mode);
+    const std::vector<uint8_t>& level_chunk_tail(int x, int z);
+    std::unordered_map<uint64_t, BSession*> by_id_;
+    struct CachedTail { uint32_t ver = 0; std::vector<uint8_t> tail; };
+    std::unordered_map<int64_t, CachedTail> tail_cache_;
+    size_t tail_cache_bytes_ = 0;
     void send_start(BSession& b);
     void begin_chunks(BSession& b);
     void queue_chunks(BSession& b);
@@ -89,6 +118,7 @@ private:
     void disconnect(BSession& b, const std::string& msg);
     bool start_encryption(BSession& b, const std::string& client_pub_b64, std::string& jwt);
     std::vector<uint8_t> patched_player_list(const BSession& b) const;
+    std::vector<uint8_t> player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid) const;
     Server& s_;
     BedrockData d_;
     std::unique_ptr<Rak> rak_;

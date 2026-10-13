@@ -1,5 +1,6 @@
 // Bedrock server logic. The join sequence (resource packs, StartGame, registries, chunks) is replayed from a
 // session recorded off a real Bedrock Dedicated Server by tools/bedrock_capture.py; only per-player parts are patched.
+#include "bchunk.hpp"
 #include "bedrock.hpp"
 #include "game.hpp"
 #include "hash.hpp"
@@ -130,7 +131,7 @@ static bool read_varuint(const uint8_t*& p, const uint8_t* e, uint32_t& v) {
 
 static void put_str(std::vector<uint8_t>& o, const std::string& s) { put_varuint(o, static_cast<uint32_t>(s.size())); o.insert(o.end(), s.begin(), s.end()); }
 
-static std::vector<uint8_t> replace_string(const std::vector<uint8_t>& in, const std::string& from, const std::string& to) {
+std::vector<uint8_t> replace_string_bytes(const std::vector<uint8_t>& in, const std::string& from, const std::string& to) {
     std::vector<uint8_t> pat;
     put_str(pat, from);
     std::vector<uint8_t> rep;
@@ -218,7 +219,13 @@ bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, i
             case 1: d.info = std::move(pl); break;
             case 2: d.stack = std::move(pl); break;
             case 3:
-                if (id == 63) {
+                if (id == 11 || id == 45) {
+                    flush_body(false);
+                    BedrockData::Segment seg;
+                    seg.patch = id == 11 ? 2 : 3;
+                    seg.raw = std::move(pl);
+                    d.start.push_back(std::move(seg));
+                } else if (id == 63) {
                     if (d.player_list_raw.empty()) d.player_list_raw = pl;
                     flush_body(true);
                 } else {
@@ -234,6 +241,7 @@ bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, i
             case 5: d.chunk_tail = std::move(pl); break;
             case 6: d.subchunks[id - 64] = std::move(pl); break;
             case 7: d.capture_name.assign(pl.begin(), pl.end()); break;
+            case 8: if (id == 12) d.add_player_tpl = std::move(pl); break;
         }
     }
     flush_body(false);
@@ -295,6 +303,8 @@ void Bedrock::on_close(RakSession& r) {
     auto* b = static_cast<BSession*>(r.user);
     if (!b) return;
     r.user = nullptr;
+    by_id_.erase(b->id);
+    if (b->gid) { s_.game.remove_player(b->gid); b->gid = 0; }
     if (b->reserved) s_.release_name(b->name);
     if (b->counted) {
         s_.unregister_player(b->name);
@@ -310,7 +320,7 @@ void Bedrock::on_close(RakSession& r) {
 void Bedrock::on_payload(RakSession& r, const uint8_t* p, size_t n) {
     if (!has_data_) { rak_->close(r, true); return; }
     auto* b = static_cast<BSession*>(r.user);
-    if (!b) { b = new BSession(); b->rak = &r; b->threshold = std::max(1, std::min(s_.cfg.compression_threshold < 0 ? 1 : s_.cfg.compression_threshold, 65535)); r.user = b; }
+    if (!b) { b = new BSession(); b->rak = &r; b->threshold = std::max(1, std::min(s_.cfg.compression_threshold < 0 ? 1 : s_.cfg.compression_threshold, 65535)); r.user = b; b->id = s_.next_conn_id++; by_id_[b->id] = b; }
     std::vector<uint8_t> buf(p, p + n);
     if (b->dec) {
         if (buf.size() < 9) { rak_->close(r, false); return; }
@@ -544,6 +554,13 @@ void Bedrock::on_login(BSession& b, const uint8_t* p, size_t n) {
     if (s_.online.load() >= s_.cfg.max_players) { disconnect(b, "The server is full!"); return; }
     if (!s_.reserve_name(b.name)) { disconnect(b, "A player with that name is already online."); return; }
     b.reserved = true;
+    b.eid = s_.next_entity++;
+    {
+        auto sp = s_.world.pick_spawn(uuid_string(b.uuid), s_.cfg.gamemode);
+        b.x = sp.x; b.y = sp.y; b.z = sp.z; b.yaw = sp.yaw; b.pitch = sp.pitch; b.gamemode = sp.gamemode;
+        b.cx = static_cast<int>(std::floor(b.x / 16));
+        b.cz = static_cast<int>(std::floor(b.z / 16));
+    }
     info("UUID of player " + b.name + " is " + uuid_from_bytes(b.uuid));
     if (s_.cfg.bedrock_encryption && !client_pub.empty()) {
         std::string jwt;
@@ -586,31 +603,14 @@ void Bedrock::on_pack_response(BSession& b, const uint8_t* p, size_t n) {
     }
 }
 
-std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const {
-    const auto& in = d_.player_list_raw;
-    const uint8_t* p = in.data() + 1;
-    const uint8_t* e = in.data() + in.size();
-    uint32_t cnt;
-    if (!read_varuint(p, e, cnt) || e - p < 16) return in;
-    std::vector<uint8_t> out(in.data(), p);
-    out.insert(out.end(), b.uuid, b.uuid + 16);
-    p += 16;
-    const uint8_t* q = p;
-    uint32_t tmp;
-    while (q < e) { uint8_t c = *q++; if (!(c & 0x80)) break; }        // unique entity id (zigzag varint64)
-    out.insert(out.end(), p, q);
-    if (!read_varuint(q, e, tmp) || tmp > static_cast<uint32_t>(e - q)) return in;
-    put_str(out, b.name);
-    q += tmp;
-    out.insert(out.end(), q, e);
-    return out;
-}
-
 void Bedrock::send_start(BSession& b) {
     for (auto& seg : d_.start) {
         if (seg.patch_player_list) send_packets(b, {{63, patched_player_list(b)}});
+        else if (seg.patch == 2) send_packets(b, {{11, patched_start_game(b, seg.raw)}});
+        else if (seg.patch == 3) send_packets(b, {{45, patched_respawn(b, seg.raw)}});
         else send_batch(b, seg.batch);
     }
+    send_time_to(b, s_.game.day_time());
     rak_->flush(*b.rak, now_ms());
 }
 
@@ -661,7 +661,6 @@ void Bedrock::queue_chunks(BSession& b) {
 
 void Bedrock::begin_chunks(BSession& b) {
     b.st = BSession::St::Spawning;
-    b.cx = b.cz = 0;
     send_npu(b);
     queue_chunks(b);
     pump_chunks(b);
@@ -678,7 +677,8 @@ void Bedrock::pump_chunks(BSession& b) {
         std::vector<uint8_t> pl;
         put_varuint(pl, zz_enc(x));
         put_varuint(pl, zz_enc(z));
-        pl.insert(pl.end(), d_.chunk_tail.begin(), d_.chunk_tail.end());
+        const auto& tail = level_chunk_tail(x, z);
+        pl.insert(pl.end(), tail.begin(), tail.end());
         b.sent.insert(pack(x, z));
         batch.emplace_back(58, std::move(pl));
     }
@@ -692,7 +692,7 @@ void Bedrock::finish_spawn(BSession& b) {
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> pk;
     for (auto& ex : d_.extras) {
         if (ex.first == 42) continue;
-        pk.emplace_back(ex.first, ex.first == 39 ? replace_string(ex.second, d_.capture_name, b.name) : ex.second);
+        pk.emplace_back(ex.first, ex.first == 39 ? replace_string_bytes(ex.second, d_.capture_name, b.name) : ex.second);
     }
     for (auto& ex : d_.extras) if (ex.first == 42) pk.emplace_back(42, ex.second);
     pk.emplace_back(2, std::vector<uint8_t>{0, 0, 0, 3});   // PlayStatus: player spawn
@@ -712,21 +712,23 @@ void Bedrock::on_subchunk_request(BSession& b, const uint8_t* p, size_t n) {
     put_varuint(pl, dim);
     pl.insert(pl.end(), p, p + 12);
     put_varuint(pl, cnt);
+    std::vector<uint8_t> entry;
     for (uint32_t i = 0; i < cnt; i++) {
         const uint8_t* o = offs + i * 3;
         int k = c[1] + static_cast<int8_t>(o[1]) + 4;
+        int cx = c[0] + static_cast<int8_t>(o[0]), cz = c[2] + static_cast<int8_t>(o[2]);
         pl.insert(pl.end(), o, o + 3);
-        auto it = d_.subchunks.find(k);
-        if (dim == 0 && it != d_.subchunks.end()) pl.insert(pl.end(), it->second.begin(), it->second.end());
-        else pl.insert(pl.end(), {5, 0, 0, 0, 0, 0, 0, 0});   // Y_INDEX_OUT_OF_BOUNDS, no data
+        if (dim == 0 && k >= 0 && k < kSections) {
+            auto ch = s_.world.chunk(cx, cz);
+            encode_bedrock_subchunk(*ch, k, entry);
+            pl.insert(pl.end(), entry.begin(), entry.end());
+        } else pl.insert(pl.end(), {5, 0, 0, 0, 0, 0, 0, 0});   // Y_INDEX_OUT_OF_BOUNDS, no data
     }
     send_packets(b, {{174, pl}});
 }
 
 void Bedrock::on_move(BSession& b, float x, float z) {
     if (!std::isfinite(x) || !std::isfinite(z) || std::fabs(x) > 3e7f || std::fabs(z) > 3e7f) return;
-    b.x = x;
-    b.z = z;
     if (b.st != BSession::St::Playing && b.st != BSession::St::Spawning) return;
     int ncx = static_cast<int>(std::floor(x / 16)), ncz = static_cast<int>(std::floor(z / 16));
     if (ncx == b.cx && ncz == b.cz) return;
@@ -767,9 +769,9 @@ void Bedrock::on_text(BSession& b, const uint8_t* p, size_t n) {
     std::string msg;
     if (type == 1) { r.str(64); msg = r.str(512); }
     else if (type == 0) msg = r.str(512);
-    if (r.bad || msg.empty()) return;
-    info("<" + b.name + "> " + msg);
-    s_.broadcast("<" + b.name + "> " + msg);
+    if (r.bad || msg.empty() || !b.gid) return;
+    if (msg[0] == '/') { s_.game.command(b.gid, msg.substr(1)); return; }
+    s_.game.chat(b.gid, msg);
 }
 
 // ---------------------------------------------------------------- dispatch
@@ -817,28 +819,25 @@ void Bedrock::on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n) {
                     s_.register_player(b.name);
                     info(b.name + " joined the game");
                     char loc[96];
-                    snprintf(loc, sizeof loc, "([minecraft:overworld]%.1f, %.1f, %.1f)", b.x, 0.0, b.z);
+                    snprintf(loc, sizeof loc, "([minecraft:overworld]%.1f, %.1f, %.1f)", b.x, b.y, b.z);
                     info(b.name + "[/" + std::string("bedrock") + "] logged in with Bedrock edition at " + loc);
                     s_.broadcast(b.name + " joined the game");
                 }
                 b.st = BSession::St::Playing;
+                begin_play(b);
             }
             break;
         case 175:
             on_subchunk_request(b, p, n);
             break;
         case 144:
-            if (n >= 20) {
-                float f[5];
-                memcpy(f, p, 20);
-                on_move(b, f[2], f[4]);
-            }
+            on_auth_input(b, p, n);
             break;
         case 9:
             on_text(b, p, n);
             break;
         case 77:
-            if (b.st == BSession::St::Playing) send_text(b, "Unknown or incomplete command");
+            on_command_request(b, p, n);
             break;
         default:
             break;
@@ -847,8 +846,3 @@ void Bedrock::on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n) {
 
 }  // namespace pn
 
-namespace pn {
-void Bedrock::on_game_event(uint64_t, const GEvent&) {}
-void Bedrock::chat_to(uint64_t, const std::string&) {}
-void Bedrock::kick(uint64_t, const std::string&) {}
-}  // namespace pn

@@ -1,6 +1,7 @@
 #include "server.hpp"
 #include "log.hpp"
 #include "util.hpp"
+#include "bchunk.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -154,6 +155,15 @@ bool Server::start(std::string& err) {
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
         if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
         if (!world.open(cfg.level_name, cfg.generator, data.back(), err)) return false;
+        if (cfg.bedrock) {
+            std::string bb = find_data_file(cfg.data_dir, exe_dir, "blocks-bedrock.bin"), berr;
+            if (bb.empty() || !Blocks::get().load_bedrock(bb, berr)) {
+                warn("Bedrock world data missing" + (berr.empty() ? std::string(" (data/blocks-bedrock.bin)") : ": " + berr) + ": run tools/fetch_bedrock_blocks.py; Bedrock players will see wrong blocks");
+            } else {
+                std::string bio = find_data_file(cfg.data_dir, exe_dir, "biomes-bedrock.txt");
+                bedrock_set_biomes(world.biome_names, bio);
+            }
+        }
     }
 
     if (cfg.online_mode) {

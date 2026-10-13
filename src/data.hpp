@@ -42,6 +42,8 @@ struct VanillaData {
 
 // All vanilla-*.bin files in the first directory that has any (cfg_dir, ./data, <exe>/data, <exe>/../data).
 std::vector<std::string> list_vanilla_bins(const std::string& cfg_dir, const std::string& exe_dir);
+// Path of data/<name> in the first data directory that has it (cfg_dir, ./data, <exe>/data, <exe>/../data), or empty.
+std::string find_data_file(const std::string& cfg_dir, const std::string& exe_dir, const std::string& name);
 bool load_vanilla_file(const std::string& bin, VanillaData& out, std::string& err);
 
 }  // namespace pn

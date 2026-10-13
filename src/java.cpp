@@ -385,24 +385,8 @@ uint64_t pack_block_pos(int x, int y, int z) {
 }
 
 void Worker::choose_spawn(JConn& c) {
-    World& w = s_.world;
-    Nbt pd;
-    char u[40];
-    snprintf(u, sizeof u, "%s", uuid_str(c.uuid).c_str());
-    if (w.load_player(u, pd)) {
-        const Nbt* pos = pd.get("Pos");
-        if (pos && pos->type == Nbt::List && pos->list.size() == 3) {
-            c.x = pos->list[0].f; c.y = pos->list[1].f; c.z = pos->list[2].f;
-            if (const Nbt* rot = pd.get("Rotation")) if (rot->list.size() == 2) { c.yaw = static_cast<float>(rot->list[0].f); c.pitch = static_cast<float>(rot->list[1].f); }
-            c.gamemode = static_cast<int>(pd.geti("playerGameType", s_.cfg.gamemode));
-            if (std::isfinite(c.x) && std::isfinite(c.y) && std::isfinite(c.z) && std::fabs(c.x) < 3e7 && std::fabs(c.z) < 3e7) return;
-        }
-    }
-    c.gamemode = s_.cfg.gamemode;
-    c.x = w.spawn_x + 0.5;
-    c.z = w.spawn_z + 0.5;
-    int top = w.top_y(w.spawn_x, w.spawn_z);
-    c.y = top >= kMinY ? top + 1 : w.spawn_y;
+    auto sp = s_.world.pick_spawn(uuid_str(c.uuid), s_.cfg.gamemode);
+    c.x = sp.x; c.y = sp.y; c.z = sp.z; c.yaw = sp.yaw; c.pitch = sp.pitch; c.gamemode = sp.gamemode;
 }
 
 static int64_t pack_chunk(int x, int z) { return (static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z); }

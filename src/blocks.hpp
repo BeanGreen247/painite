@@ -32,6 +32,11 @@ public:
     // protocol state id for an internal id
     int proto_state(int protocol, uint16_t id) const;
     int proto_total(int protocol) const { auto it = total_.find(protocol); return it == total_.end() ? 0 : it->second; }
+    // Bedrock runtime ids (data/bedrock-blocks.bin); empty until load_bedrock() succeeds
+    bool load_bedrock(const std::string& path, std::string& err);
+    bool has_bedrock() const { return !bedrock_.empty(); }
+    int32_t bedrock_id(uint16_t id) const { return id < bedrock_.size() ? bedrock_[id] : bedrock_air_; }
+    uint16_t from_bedrock(int32_t rid) const;   // reverse lookup, 0 (air) when unknown
     uint16_t air() const { return 0; }
     uint16_t stone() const { return stone_; }
 
@@ -40,6 +45,9 @@ private:
     std::unordered_map<std::string, uint16_t> by_key_;      // name[props] or name
     std::unordered_map<std::string, uint16_t> defaults_;
     std::unordered_map<int, std::vector<int>> proto_;       // protocol -> internal id -> state id
+    std::vector<int32_t> bedrock_;
+    int32_t bedrock_air_ = 0;
+    std::unordered_map<int32_t, uint16_t> from_bedrock_;
     std::unordered_map<int, int> total_;
     uint16_t stone_ = 1;
 };

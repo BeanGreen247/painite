@@ -1,5 +1,6 @@
 #include "blocks.hpp"
 #include <algorithm>
+#include <cstring>
 #include <fstream>
 #include <tuple>
 #include <sstream>
@@ -134,6 +135,37 @@ uint16_t Blocks::find(const std::string& name, const std::string& props) const {
 uint16_t Blocks::default_state(const std::string& name) const {
     auto d = defaults_.find(name);
     return d != defaults_.end() ? d->second : 0;
+}
+
+bool Blocks::load_bedrock(const std::string& path, std::string& err) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) { err = "cannot open " + path; return false; }
+    char magic[4];
+    uint32_t n = 0;
+    f.read(magic, 4);
+    f.read(reinterpret_cast<char*>(&n), 4);
+    if (!f || memcmp(magic, "PNBB", 4) != 0 || n == 0 || n > 200000) { err = "bad Bedrock block file " + path; return false; }
+    bedrock_.resize(n);
+    f.read(reinterpret_cast<char*>(bedrock_.data()), static_cast<std::streamsize>(n) * 4);
+    if (!f) { err = "truncated " + path; bedrock_.clear(); return false; }
+    bedrock_air_ = bedrock_[0];
+    from_bedrock_.clear();
+    // reverse map: the first (lowest state id, i.e. default-ish) Java state wins, but never prefer waterlogged variants
+    for (size_t i = 0; i < bedrock_.size() && i < info_.size(); i++) {
+        auto it = from_bedrock_.find(bedrock_[i]);
+        auto d = defaults_.find(info_[i].name);
+        bool is_default = d != defaults_.end() && d->second == i;
+        bool cur_default = it != from_bedrock_.end() && defaults_.count(info_[it->second].name) && defaults_[info_[it->second].name] == it->second;
+        if (it == from_bedrock_.end() || (is_default && !cur_default) ||
+            (!cur_default && info_[it->second].props.find("waterlogged=true") != std::string::npos && info_[i].props.find("waterlogged=true") == std::string::npos))
+            from_bedrock_[bedrock_[i]] = static_cast<uint16_t>(i);
+    }
+    return true;
+}
+
+uint16_t Blocks::from_bedrock(int32_t rid) const {
+    auto it = from_bedrock_.find(rid);
+    return it == from_bedrock_.end() ? 0 : it->second;
 }
 
 int Blocks::proto_state(int protocol, uint16_t id) const {
