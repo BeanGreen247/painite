@@ -23,13 +23,18 @@ Console commands: `help`, `list`, `say <msg>`, `status`, `stop`. `nogui` is acce
 
 ## Build and run
 
+Build on the machine that will run the server. `build.sh` installs the build dependencies (apt, dnf/yum, pacman, zypper or apk; needs root or sudo)
+and compiles with `-O3 -march=native` and link-time optimisation, which ties the binary to that machine's CPU.
+
 ```
-python3 tools/fetch_vanilla_data.py          # one-time: Java protocol data from Mojang's own server jar (downloads a JRE if needed)
-python3 tools/fetch_vanilla_data.py --version 26.2
-python3 tools/fetch_bedrock_data.py          # one-time: Bedrock join data, recorded from Mojang's Bedrock Dedicated Server
-cmake -S . -B build && cmake --build build -j
-cd /path/to/server-dir && /path/to/painite/build/painite
+./build.sh --data                 # install deps, build, and generate the Java + Bedrock protocol data (downloads Mojang's servers)
+./build.sh --prefix /opt/painite  # optional: install bin/ and data/ there
+cd /path/to/server-dir && /path/to/painite
 ```
+
+Other flags: `--pgo` (profile-guided build, about 3 minutes, optional), `--no-deps`, `--check`, `--jobs N`.
+In my test (12 Java and 3 Bedrock joins) the server used 0.13 s of CPU either way, so `--pgo` made no measurable difference there; measure on your own load before relying on it.
+Without the script: `cmake -S . -B build && cmake --build build -j`, then `python3 tools/fetch_vanilla_data.py` and `python3 tools/fetch_bedrock_data.py`.
 
 `tools/fetch_vanilla_data.py` writes `data/vanilla-<version>.bin/.ids` (packet IDs, registries, a flat chunk) and
 `tools/fetch_bedrock_data.py` writes `data/bedrock-<version>.bin` (the packet sequence a Bedrock client needs to join).
