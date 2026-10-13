@@ -1,0 +1,33 @@
+# Painite example config (design draft; keys may change before 0.1)
+
+[network]
+java_port    = 25565          # TCP
+bedrock_port = 19132          # UDP (RakNet); Geyser's default, not 28258
+bedrock      = true           # built-in, no Geyser/addon
+proxy_protocol = "none"       # none | haproxy-v2 | velocity | bungee
+
+[bandwidth]
+profile            = "auto"   # auto | lan | wan | lossy
+compression        = "zstd"   # zstd | zlib | none (per-protocol fallback)
+compression_threshold = 256
+adaptive_view      = true     # shrink view/send rate on high RTT or loss
+min_view_distance  = 4
+max_chunks_per_sec = 0        # 0 = adaptive
+chunk_cache_mb     = 256
+
+[cpu]
+cores   = "all"               # "all" or list like [0,1,2,3] or "0-7"
+pin     = true
+io_uring = true
+
+[workers]
+min        = 1
+max        = 0                # 0 = number of allowed cores
+memory_cap_mb = 4096          # hard cap for the whole worker pool
+spawn_at_tick_ms   = 40       # spawn a worker above this region tick time
+retire_after_idle_s = 60
+
+[antixray]
+mode        = 2               # 0 off, 1 hide ores, 2 fake ores
+worlds      = ["world", "world_nether"]
+hidden_blocks = ["diamond_ore", "ancient_debris", "emerald_ore"]

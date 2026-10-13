@@ -1,0 +1,37 @@
+BeanGreen247 Source-Available License (All Rights Reserved)
+
+Copyright (c) 2026 BeanGreen247. All rights reserved.
+
+This source code is published so that people can read and learn from it.
+It is not open source.
+
+You MAY:
+  1. Read and study the source code.
+  2. Build and run an unmodified copy for your own personal use, including
+     on servers you operate for yourself or your own community, free of charge.
+
+You MAY NOT, without prior written permission from the copyright holder:
+  1. Fork, mirror, clone for the purpose of republishing, or otherwise host
+     copies of this repository or any substantial part of it on any platform.
+  2. Distribute, sublicense, sell, or offer the software or any derivative of
+     it, in source or binary form, as a product or service.
+  3. Publish modified versions or derivative works.
+  4. Copy substantial portions of the code into other projects.
+  5. Use the name "Painite" or its branding for a derived or unauthorized work.
+
+Third-party components bundled in this repository remain under their own
+licenses, which are listed in the repository where they apply, and are not
+affected by this license.
+
+Platform terms: hosting this repository on a service that permits others to
+technically fork or view it (for example GitHub) does not grant any right to
+do so beyond what is stated above. Unauthorized copies may be reported for
+removal.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+For permission requests, contact the copyright holder via their GitHub profile.
