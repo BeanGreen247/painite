@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 #include <dirent.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <set>
 #include <sys/stat.h>
 
@@ -25,7 +27,7 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
     dirty = true;
 }
 
-World::~World() {}
+World::~World() { if (lock_fd_ >= 0) ::close(lock_fd_); }
 
 static bool is_dir(const std::string& p) { struct stat st; return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode); }
 
@@ -38,6 +40,20 @@ uint8_t World::biome_index(const std::string& name) const {
 bool World::open(const std::string& d, const std::string& generator, const VanillaData& newest, std::string& err) {
     dir = d;
     biome_names = newest.biomes;
+    mkdir(dir.c_str(), 0755);
+    // the same lock vanilla and Paper take (an fcntl write lock on session.lock), so two servers never write one world at the same time
+    lock_fd_ = ::open((dir + "/session.lock").c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (lock_fd_ >= 0) {
+        struct flock fl{};
+        fl.l_type = F_WRLCK;
+        fl.l_whence = SEEK_SET;
+        if (fcntl(lock_fd_, F_SETLK, &fl) != 0) {
+            err = "the world \"" + dir + "\" is locked by another server process (is Paper or vanilla running on it?)";
+            return false;
+        }
+        (void)!ftruncate(lock_fd_, 0);
+        (void)!write(lock_fd_, "\xE2\x98\x83", 3);
+    }
     data_version = newest.data_version;
     mkdir(dir.c_str(), 0755);
     // vanilla layouts: world/region (<= 1.21) or world/dimensions/minecraft/overworld/region (26.x)

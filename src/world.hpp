@@ -75,6 +75,7 @@ private:
     bool from_nbt(Chunk& c, const Nbt& root);
     void to_nbt(Chunk& c, Nbt& root);
     std::mutex mu_;
+    int lock_fd_ = -1;
     std::unordered_map<int64_t, std::shared_ptr<Chunk>> chunks_;
     Nbt level_;
     bool have_level_ = false;
