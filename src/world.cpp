@@ -1,11 +1,15 @@
 #include "world.hpp"
 #include "perf.hpp"
+#include "worldgen.hpp"
 #include "anvil.hpp"
 #include "log.hpp"
 #include "server.hpp"
 #include <algorithm>
 #include <cmath>
+#include <condition_variable>
 #include <dirent.h>
+#include <fstream>
+#include "json.hpp"
 #include <fcntl.h>
 #include <unistd.h>
 #include <set>
@@ -28,6 +32,7 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
     dirty = true;
 }
 
+World::World() {}
 World::~World() { if (lock_fd_ >= 0) ::close(lock_fd_); }
 
 static bool is_dir(const std::string& p) { struct stat st; return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode); }
@@ -38,7 +43,7 @@ uint8_t World::biome_index(const std::string& name) const {
     return 0;
 }
 
-bool World::open(const std::string& d, const std::string& generator, const VanillaData& newest, std::string& err) {
+bool World::open(const std::string& d, const std::string& generator, const std::string& level_type, const std::string& seed_str, const VanillaData& newest, std::string& err) {
     dir = d;
     biome_names = newest.biomes;
     mkdir(dir.c_str(), 0755);
@@ -69,7 +74,32 @@ bool World::open(const std::string& d, const std::string& generator, const Vanil
     }
     mkdir(region_dir.c_str(), 0755);
     bool existing = region_dir_has_chunks(region_dir);
-    flat_fallback = generator == "flat" || (generator == "auto" && !existing);
+    // what fills chunks that are not on disk: remembered per world (painite.json) so a changed setting cannot put terrain next to a flat area
+    std::string kind = generator;
+    std::string stored_type, stored_seed;
+    {
+        std::ifstream pj(dir + "/painite.json");
+        std::string txt((std::istreambuf_iterator<char>(pj)), {});
+        JP jp{txt.data(), txt.data() + txt.size()};
+        JV v = jp.val();
+        if (!jp.bad && v.t == JV::Obj) {
+            if (auto* t = v.get("type")) stored_type = t->s;
+            if (auto* s2 = v.get("seed")) stored_seed = s2->s;
+        }
+    }
+    std::string lt = level_type;
+    if (lt == "superflat") lt = "flat";
+    if (!stored_type.empty()) { lt = stored_type; kind = "terrain"; }
+    else if (kind == "auto") kind = existing ? "void" : (lt == "void" ? "void" : lt == "flat" ? "flat" : "terrain");
+    GenKind gk = kind == "void" ? GenKind::Void : kind == "flat" ? GenKind::Flat : lt == "large_biomes" ? GenKind::LargeBiomes : lt == "amplified" ? GenKind::Amplified : GenKind::Normal;
+    if (kind == "terrain" && (lt == "flat" || lt == "void")) gk = lt == "flat" ? GenKind::Flat : GenKind::Void;
+    seed = stored_seed.empty() ? seed_from_string(seed_str) : static_cast<uint64_t>(strtoll(stored_seed.c_str(), nullptr, 10));
+    gen = std::make_unique<WorldGen>(gk, seed, biome_names);
+    gen_name = gk == GenKind::Void ? "void" : gk == GenKind::Flat ? "flat" : gk == GenKind::LargeBiomes ? "large_biomes" : gk == GenKind::Amplified ? "amplified" : "normal";
+    if (!existing && gk != GenKind::Void) {
+        std::ofstream pj(dir + "/painite.json");
+        pj << "{\"type\": \"" << gen_name << "\", \"seed\": " << static_cast<long long>(seed) << "}\n";
+    }
     have_level_ = read_nbt_file(dir + "/level.dat", level_);
     if (have_level_) {
         const Nbt* data = level_.get("Data");
@@ -94,26 +124,16 @@ bool World::open(const std::string& d, const std::string& generator, const Vanil
             if (int dv = static_cast<int>(data->geti("DataVersion"))) data_version = dv;
         }
     }
-    info(std::string("World \"") + dir + "\": " + (existing ? "existing region files in " + region_dir : std::string("no chunks yet")) + (flat_fallback ? ", flat generator for missing chunks" : ", void for missing chunks"));
+    if (!have_level_ && (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified)) {
+        int sx, sz;
+        gen->find_spawn(sx, sz);
+        spawn_x = sx;
+        spawn_z = sz;
+        spawn_y = gen->surface_height(sx, sz) + 1;
+    }
+    info(std::string("World \"") + dir + "\": " + (existing ? "existing region files in " + region_dir : std::string("no chunks yet")) + (", missing chunks: " + gen_name + (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified ? " terrain, seed " + std::to_string(static_cast<long long>(seed)) : std::string())));
     (void)err;
     return true;
-}
-
-void World::flat(Chunk& c) {
-    const Blocks& B = Blocks::get();
-    uint16_t bedrock = B.default_state("minecraft:bedrock"), dirt = B.default_state("minecraft:dirt"), grass = B.find("minecraft:grass_block", "snowy=false");
-    uint8_t plains = biome_index("minecraft:plains");
-    auto fill = [&](int s, int layers, const uint16_t* ids) {
-        c.sec[s] = std::make_unique<Section>();
-        memset(c.sec[s]->biome, plains, 64);
-        for (int y = 0; y < layers; y++)
-            for (int i = 0; i < 256; i++) c.sec[s]->b[(y << 8) | i] = ids[y];
-    };
-    uint16_t ids[4] = {bedrock, dirt, dirt, grass};
-    fill(0, 4, ids);
-    memset(c.air_biomes, plains, sizeof c.air_biomes);
-    c.extra = Nbt::compound();
-    c.extra.put("Status", Nbt::str("minecraft:full"));
 }
 
 static int ceil_log2(int v) { int b = 0; while ((1 << b) < v) b++; return b; }
@@ -283,9 +303,9 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
     Nbt root;
     if (anvil_read(region_dir, cx, cz, root) && from_nbt(*c, root)) {
         // loaded
-    } else if (flat_fallback) {
-        flat(*c);
-        c->dirty = true;
+    } else if (gen) {
+        gen->generate(*c);
+        c->dirty = gen->kind() != GenKind::Void;
     } else {
         c->extra = Nbt::compound();
     }
@@ -293,11 +313,23 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
 }
 
 std::shared_ptr<Chunk> World::chunk(int cx, int cz) {
-    std::lock_guard<std::mutex> l(mu_);
-    auto& slot = chunks_[ckey(cx, cz)];
-    if (!slot) slot = load_chunk(cx, cz);
-    slot->last_used_ms = now_ms();
-    return slot;
+    int64_t key = ckey(cx, cz);
+    std::unique_lock<std::mutex> l(mu_);
+    for (;;) {
+        auto it = chunks_.find(key);
+        if (it != chunks_.end()) { it->second->last_used_ms = now_ms(); return it->second; }
+        if (loading_.count(key)) { loaded_cv_.wait(l); continue; }
+        loading_.insert(key);
+        l.unlock();
+        std::shared_ptr<Chunk> c;
+        try { c = load_chunk(cx, cz); } catch (...) { l.lock(); loading_.erase(key); loaded_cv_.notify_all(); throw; }
+        l.lock();
+        c->last_used_ms = now_ms();
+        chunks_[key] = c;
+        loading_.erase(key);
+        loaded_cv_.notify_all();
+        return c;
+    }
 }
 
 std::shared_ptr<Chunk> World::chunk_if_loaded(int cx, int cz) {
@@ -416,7 +448,7 @@ bool World::load_player(const std::string& uuid, Nbt& out) { return read_nbt_fil
 
 bool World::save_player(const std::string& uuid, const Nbt& out) {
     std::string d = player_dir();
-    if (d.size() > 13 && d.substr(d.size() - 13) == "players/data") mkdir((dir + "/players").c_str(), 0755);
+    if (d.size() > 12 && d.substr(d.size() - 12) == "players/data") mkdir((dir + "/players").c_str(), 0755);
     mkdir(d.c_str(), 0755);
     return write_nbt_file(d + "/" + uuid + ".dat", out);
 }

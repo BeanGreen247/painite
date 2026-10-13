@@ -225,13 +225,7 @@ bool Server::start(std::string& err) {
         std::vector<std::pair<int, std::string>> files;
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
         if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
-        std::string gen = cfg.generator;
-        if (gen == "auto") {
-            if (cfg.level_type == "flat" || cfg.level_type == "superflat") gen = "flat";
-            else if (cfg.level_type == "void") gen = "void";
-            else if (cfg.level_type != "normal" && !cfg.level_type.empty()) warn("level-type=" + cfg.level_type + " needs terrain generation, which Painite does not have; using the flat generator for new chunks");
-        }
-        if (!world.open(cfg.level_name, gen, data.back(), err)) return false;
+        if (!world.open(cfg.level_name, cfg.generator, cfg.level_type, cfg.level_seed, data.back(), err)) return false;
         if (cfg.bedrock) {
             std::string bb = find_data_file(cfg.data_dir, exe_dir, "blocks-bedrock.bin"), berr;
             if (bb.empty() || !Blocks::get().load_bedrock(bb, berr)) {

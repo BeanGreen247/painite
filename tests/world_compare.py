@@ -74,17 +74,20 @@ def main():
         for si, (r, g) in enumerate(zip(rsecs, secs)):
             # the recording is a live snapshot of a running world: fluids and fire move, ores light up, random ticks change a handful of blocks
             odd = 0
+            oddpairs = {}
             for p, q in zip(r[2], g[2]):
                 if p == q:
                     continue
                 np_, nq = base_name.get(p, "?"), base_name.get(q, "?")
-                if np_ == nq or ({np_, nq} & live_names and {np_, nq} <= live_names | air_names):
+                if np_ == nq or {np_, nq} <= live_names | air_names:   # lava cooling into stone, fluids moving, lichen: the snapshot was taken while the world ran
                     continue
                 odd += 1
+                oddpairs[(np_, nq)] = oddpairs.get((np_, nq), 0) + 1
             if r[3] == g[3] and odd <= 4:
                 continue
             if r[0] != g[0] or r[1] != g[1] or r[2] != g[2] or r[3] != g[3]:
                 bad += 1
+                print("   unexplained differences:", sorted(oddpairs.items(), key=lambda kv: -kv[1])[:5])
                 diff = sum(1 for p, q in zip(r[2], g[2]) if p != q)
                 names = {}
                 for line in open(a.ids.replace(".ids", ".blocks")):

@@ -296,8 +296,33 @@ def run_server(stdscr, sid, name, directory):
             inp += chr(k)
 
 
+def confirm_remove(stdscr, name, d):
+    h, w = stdscr.getmaxyx()
+    stdscr.erase()
+    put(stdscr, 0, 0, f" Remove {name} ".ljust(w - 1), curses.A_REVERSE | curses.A_BOLD)
+    put(stdscr, 2, 2, d)
+    put(stdscr, 4, 2, "f  forget it (remove from this list and from CreeperCrest, keep the files)")
+    put(stdscr, 5, 2, "x  forget it AND delete the whole folder with its world (cannot be undone)")
+    put(stdscr, 6, 2, "any other key  cancel")
+    stdscr.refresh()
+    k = stdscr.getch()
+    if k == ord("f"):
+        return ps.remove(d, False)
+    if k == ord("x"):
+        put(stdscr, 8, 2, "type DELETE and press Enter to confirm: ", curses.A_BOLD)
+        curses.echo()
+        curses.curs_set(1)
+        try:
+            s = stdscr.getstr(8, 42, 10).decode(errors="replace")
+        finally:
+            curses.noecho()
+            curses.curs_set(0)
+        return ps.remove(d, True) if s.strip() == "DELETE" else "cancelled"
+    return ""
+
+
 def menu(stdscr):
-    sel = 0
+    sel, note = 0, ""
     stdscr.timeout(-1)
     while True:
         servers = ps.all_servers()
@@ -310,7 +335,9 @@ def menu(stdscr):
             p = ps.props(d)
             line = f"{name}   port {p.get('server-port', '25565')}   {p.get('gamemode', 'survival')}   {d}"
             put(stdscr, 2 + i, 2, line, curses.A_REVERSE if i == sel else 0)
-        put(stdscr, h - 1, 0, "Up/Down choose   Enter start   q quit", curses.A_DIM)
+        if note:
+            put(stdscr, h - 3, 2, note, curses.A_BOLD)
+        put(stdscr, h - 1, 0, "Up/Down choose   Enter start   d remove   q quit", curses.A_DIM)
         stdscr.refresh()
         k = stdscr.getch()
         if k in (ord("q"), 27):
@@ -319,7 +346,11 @@ def menu(stdscr):
             sel = max(0, sel - 1)
         elif k == curses.KEY_DOWN:
             sel = min(max(0, len(servers) - 1), sel + 1)
+        elif k == ord("d") and servers:
+            note = confirm_remove(stdscr, servers[sel][1], servers[sel][2])
+            sel = 0
         elif k in (curses.KEY_ENTER, 10, 13) and servers:
+            note = ""
             run_server(stdscr, *servers[sel])
             stdscr.timeout(-1)
 

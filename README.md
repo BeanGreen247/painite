@@ -5,6 +5,21 @@ connect natively on one port, with no Geyser or other addon.
 
 **Status: early prototype.** It is not a replacement for Paper yet. See "What works".
 
+## Why this exists
+
+A normal Minecraft server for both editions is a stack: a JVM running Paper or vanilla, plus Geyser and Floodgate to let Bedrock players in, plus ViaVersion
+and friends to cover client versions. That stack needs a lot of memory, starts slowly, stutters when the garbage collector runs, and spends most of its tick thread on
+things that are not the game. Painite asks what the same job looks like when it is written for the machine from the start:
+
+- **One native process for both editions.** Java and Bedrock players share one world, one block state and one entity model. No proxy translating between them.
+- **Fast and small on purpose.** One epoll loop per core for the network, chunks encoded once and shared, block updates ticked per region in parallel, no heap
+  to collect. An idle server is about 40 MB; 60 moving bots cost about a third of one core (numbers and how to measure them in `docs/WHY.md`).
+- **Understandable.** About ten thousand lines of C++ you can read in an evening, with a test suite that checks packets and world files against Mojang's own servers.
+- **A base to build on**, not a finished product: it reads and writes real Paper/vanilla worlds, so you can try it on a copy of your world, but plugins, mobs and
+  survival gameplay are not there yet (see "What does not work yet").
+
+Keep running Paper for anything that needs plugins. Painite is for people who want to see how far a small native server can go, and for hosts where memory and CPU matter.
+
 ## Server directory
 
 Same layout as a vanilla/Paper server, so existing tooling (CreeperCrest, panels, scripts) keeps working:
@@ -81,7 +96,7 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 ## What works
 
 - Java 26.3 (protocol 777) and 26.2 (776) handshake, status/ping, online and offline login (RSA + AES/CFB8, session-server check), configuration, play join, chunk streaming, movement-driven chunk loading, keep-alive, chat, a client command tree.
-- **Real worlds.** Region files are read and written in the 26.x format (palette entries as strings or compounds, block states mapped by name and properties between versions), with skylight and block light computed for the client. Chunks Painite saves load in Mojang's own server (`tests/vanilla_roundtrip.py`). Chunks missing on disk come from a flat generator for a new world and are void in an existing world (`[world] generator`). Players spawn at their saved position (`players/data/<uuid>.dat`, updated on leave and on autosave) or the world spawn.
+- **Real worlds.** Region files are read and written in the 26.x format (palette entries as strings or compounds, block states mapped by name and properties between versions), with skylight and block light computed for the client. Chunks Painite saves load in Mojang's own server (`tests/vanilla_roundtrip.py`). Chunks missing on disk come from the world generator for a new world (`level-type`, `level-seed`) and are void in an existing world (`[world] generator`). Players spawn at their saved position (`players/data/<uuid>.dat`, updated on leave and on autosave) or the world spawn.
 - **Editing.** Players break and place blocks (creative building from the hotbar, survival breaking without drops), `/setblock` and `/fill` work, changes are broadcast to everybody who can see the chunk and are saved (autosave every `[world] autosave_s`, on `/save-all` and at shutdown). Placement derives log axis, stairs, slabs, torches and facing from where you click and look.
 - **Game loop and regions.** A 20 Hz tick thread owns world time, the player registry, visibility between players, movement relay, autosave and unloading of idle chunks. Block updates are scheduled per 512 x 512 block region and the regions that have work run in parallel on `tick_threads` threads (like Folia): sand, gravel and concrete powder fall, plants, torches, rails and carpets pop off when their ground goes, tall plants lose their other half. Water and lava do not flow yet.
 - **Players see each other**, across editions: tab list, spawn, movement with relative or absolute updates, head and body rotation, arm swing, skin layers, leaving. Java sees Bedrock players with the default Steve/Alex skin (Java clients only accept Mojang-signed textures); Bedrock sees Java players with their real skin when the Java server is in online mode, otherwise a plain default skin, and sees other Bedrock players' own skins.
@@ -94,7 +109,7 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 
 - No inventory: Java creative players can place what they pick, survival players cannot build or collect drops; Bedrock players can break blocks but not place them (their creative inventory is server-authoritative).
 - No mobs, no physics beyond what the clients simulate, no fluids flowing or redstone, no block entities (chests and signs are not sent to clients, so they are invisible; their data is kept in the world files), no weather, no nether or end (dimensions other than the overworld are ignored).
-- Terrain is not generated: use an existing world, or the flat fallback.
+- Terrain generation is basic: seeded hills, oceans, beaches, deserts, snow, forests, caves, ores and simple trees (level-type normal, large_biomes, amplified), superflat and void. No villages, structures, rivers, ravines, nether or end.
 - Real-Mojang online login for Java and Microsoft login for Bedrock are untested against the live services (tests use local fakes).
 - Anti-xray, Velocity/BungeeCord forwarding, io_uring.
 - Java plugins and mods. Painite is native code and does not load Paper/Spigot/Bukkit plugins or Forge/Fabric mods; keep using Paper for those.

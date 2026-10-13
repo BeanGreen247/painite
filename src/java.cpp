@@ -597,9 +597,9 @@ void Worker::send_chunk(JConn& c, int x, int z) {
 void Worker::pump_chunks(JConn& c) {
     if (c.pending.empty() || c.dead) return;
     size_t cap = static_cast<size_t>(s_.cfg.backlog_cap_kb) * 1024;
-    if (c.batches_out >= 3 || c.out.size() - c.outpos > cap) return;
+    if (c.batches_out >= 4 || c.out.size() - c.outpos > cap) return;
     const auto& id = c.vd->id;
-    int n = std::max(1, std::min(32, static_cast<int>(std::ceil(c.chunk_rate))));
+    int n = std::max(1, std::min(64, static_cast<int>(std::ceil(c.chunk_rate)) * 2));
     n = std::min<int>(n, static_cast<int>(c.pending.size()));
     Wr st;
     st.varint(id.pl_batch_start);

@@ -3,6 +3,9 @@
 #include "blocks.hpp"
 #include "nbt.hpp"
 #include "data.hpp"
+#include <condition_variable>
+#include <memory>
+#include <unordered_set>
 #include <atomic>
 #include <cstring>
 #include <memory>
@@ -41,9 +44,11 @@ struct Chunk {
 
 class World {
 public:
+    World();
     ~World();
     // dir = world directory; the region directory is found (or created) from the vanilla layouts
-    bool open(const std::string& dir, const std::string& generator, const VanillaData& newest, std::string& err);
+    // generator: auto | flat | void | terrain; level_type picks the terrain flavour (normal, large_biomes, amplified, flat, void); seed as in level-seed
+    bool open(const std::string& dir, const std::string& generator, const std::string& level_type, const std::string& seed, const VanillaData& newest, std::string& err);
     std::shared_ptr<Chunk> chunk(int cx, int cz);            // loads or generates
     std::shared_ptr<Chunk> chunk_if_loaded(int cx, int cz);
     uint16_t get_block(int x, int y, int z);
@@ -57,7 +62,9 @@ public:
     int difficulty = 2;                  // 0 peaceful .. 3 hard, from level.dat
     int data_version = 0;
     std::string dir, region_dir;
-    bool flat_fallback = true;
+    std::unique_ptr<class WorldGen> gen;   // fills chunks that are not on disk; null = leave them empty
+    uint64_t seed = 0;
+    std::string gen_name;
     std::atomic<int64_t> blocks_changed{0};
     // player data (playerdata/<uuid>.dat)
     bool load_player(const std::string& uuid, Nbt& out);
@@ -71,10 +78,11 @@ public:
 
 private:
     std::shared_ptr<Chunk> load_chunk(int cx, int cz);
-    void flat(Chunk& c);
     bool from_nbt(Chunk& c, const Nbt& root);
     void to_nbt(Chunk& c, Nbt& root);
     std::mutex mu_;
+    std::condition_variable loaded_cv_;
+    std::unordered_set<int64_t> loading_;
     int lock_fd_ = -1;
     std::unordered_map<int64_t, std::shared_ptr<Chunk>> chunks_;
     Nbt level_;

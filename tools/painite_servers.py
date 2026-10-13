@@ -57,3 +57,54 @@ def props(directory):
     except OSError:
         pass
     return p
+
+
+def is_locked(directory):
+    """True when a server is running on this folder (its world holds the session.lock write lock)."""
+    import fcntl
+    for lock in [os.path.join(directory, n, "session.lock") for n in (props(directory).get("level-name", "world"),)]:
+        try:
+            fd = os.open(lock, os.O_RDWR)
+        except OSError:
+            continue
+        try:
+            fcntl.lockf(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return True
+        finally:
+            os.close(fd)
+    return False
+
+
+def remove(directory, delete_files=False):
+    """Forget the server in this folder everywhere (run.sh list and CreeperCrest config). With delete_files the folder is deleted too,
+    but only when it looks like a Painite server (server.properties inside) and nothing is running on it. Returns a message."""
+    real = os.path.realpath(directory)
+    reg = load()
+    for sid in [k for k, v in reg.items() if os.path.realpath(v.get("dir", "")) == real]:
+        del reg[sid]
+    save(reg)
+    msg = ["removed from the run.sh list"]
+    cc = creepercrest_dir()
+    if cc:
+        path = os.path.join(cc, "config.json")
+        try:
+            cfg = json.load(open(path))
+            gone = [k for k, v in cfg.get("servers", {}).items() if os.path.realpath(os.path.expanduser(v.get("directory", ""))) == real]
+            for k in gone:
+                del cfg["servers"][k]
+            if gone:
+                json.dump(cfg, open(path, "w"), indent=2)
+                msg.append("removed from CreeperCrest (restart it to refresh)")
+        except (OSError, ValueError):
+            pass
+    if delete_files:
+        if not os.path.isfile(os.path.join(real, "server.properties")):
+            msg.append("folder NOT deleted: no server.properties in it")
+        elif is_locked(real):
+            msg.append("folder NOT deleted: a server is running on it")
+        else:
+            import shutil
+            shutil.rmtree(real)
+            msg.append("folder deleted")
+    return "; ".join(msg)

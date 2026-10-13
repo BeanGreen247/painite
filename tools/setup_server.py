@@ -40,7 +40,23 @@ def num(lo, hi):
     return v
 
 
+def remove_mode():
+    servers = ps.all_servers()
+    if not servers:
+        sys.exit("no servers registered")
+    for i, (sid, name, d) in enumerate(servers, 1):
+        print(f"{i}) {name}  {d}")
+    n = ask("Number of the server to remove", "", lambda s: None if s.isdigit() and 1 <= int(s) <= len(servers) else "pick a number from the list")
+    sid, name, d = servers[int(n) - 1]
+    delete = yesno(f"Also DELETE the folder {d} including its world", False)
+    if delete and ask("Type DELETE to confirm", "") != "DELETE":
+        sys.exit("cancelled")
+    print(ps.remove(d, delete))
+
+
 def main():
+    if "--remove" in sys.argv:
+        return remove_mode()
     print(f"\n{B}Painite server setup{R}  (Enter keeps the value in brackets)\n")
     name = ask("Server name", "Painite")
     sid = re.sub(r"[^a-z0-9_-]+", "-", name.lower()).strip("-") or "painite"

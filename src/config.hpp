@@ -38,7 +38,7 @@ struct Config {
     int bedrock_protocol = 2193;
     std::string profile = "auto";  // auto | lan | wan | lossy
     int compression_level = 3;
-    int chunk_cache_mb = 64;
+    int chunk_cache_mb = 256;
     int backlog_cap_kb = 256;  // per-connection outbound backlog before chunk sending pauses
     std::vector<int> cores;    // empty = every core this process may use
     bool pin = true;

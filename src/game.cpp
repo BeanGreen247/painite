@@ -457,7 +457,7 @@ void Game::loop() {
         }
         if (now - last_unload > 30000) {   // keep memory bounded when players roam: write and drop chunks nobody touched for a minute
             last_unload = now;
-            if (saving_enabled && s_.world.loaded() > 1500) s_.world.save(true, now);
+            if (saving_enabled && s_.world.loaded() > std::max(1500, s_.cfg.memory_cap_mb * 5)) s_.world.save(true, now);
         }
         if (s_.cfg.autosave_s > 0 && now - last_autosave_ >= static_cast<int64_t>(s_.cfg.autosave_s) * 1000) {
             last_autosave_ = now;
