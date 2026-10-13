@@ -29,6 +29,45 @@ static void put_entry(Wr& w, const GIdentity& id, int gamemode) {
     w.boolean(true);       // hat
 }
 
+struct CmdDef { const char* name; int level; };
+static const CmdDef kCommands[] = {{"help", 0}, {"list", 0}, {"tps", 0}, {"me", 0}, {"tell", 0}, {"msg", 0}, {"w", 0}, {"version", 0}, {"say", 2}, {"tp", 2},
+    {"teleport", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
+    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}};
+
+// Command tree for the client: every command is a literal with one greedy text argument, so tab completion and highlighting
+// know the names; the server does the parsing.
+void Worker::send_command_tree(JConn& c) {
+    int string_parser = c.vd->reg_id("command_argument_type/string", -1);
+    int level = s_.game.op_level(c.gid);
+    std::vector<const CmdDef*> avail;
+    for (auto& d : kCommands) if (d.level <= level) avail.push_back(&d);
+    Wr w;
+    w.varint(c.vd->id.pl_commands);
+    size_t n = avail.size();
+    w.varint(static_cast<int32_t>(1 + 2 * n));
+    w.u8(0);                                         // root
+    w.varint(static_cast<int32_t>(n));
+    for (size_t i = 0; i < n; i++) w.varint(static_cast<int32_t>(1 + 2 * i));
+    for (size_t i = 0; i < n; i++) {
+        w.u8(0x01 | 0x04);                           // literal, executable
+        if (string_parser >= 0) { w.varint(1); w.varint(static_cast<int32_t>(2 + 2 * i)); } else w.varint(0);
+        w.str(avail[i]->name);
+        if (string_parser >= 0) {
+            w.u8(0x02 | 0x04);                       // argument, executable
+            w.varint(0);
+            w.str("args");
+            w.varint(string_parser);
+            w.varint(2);                             // greedy phrase
+        } else {
+            w.u8(0x01 | 0x04);                       // keep the node count right: an unused literal
+            w.varint(0);
+            w.str("-");
+        }
+    }
+    w.varint(0);                                     // root index
+    send(c, w.b);
+}
+
 void Worker::send_block_ack(JConn& c, int seq) {
     Wr w;
     w.varint(c.vd->packet("play/c/block_changed_ack"));
@@ -107,6 +146,14 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.u8(angle_byte(ev.pos.head));
             w.varint(0);
             send(c, w.b);
+            {
+                Wr m;   // skin layers: entity data index 16, type byte (checked against a vanilla server by tools/capture_play.py)
+                m.varint(vd.packet("play/c/set_entity_data"));
+                m.varint(ev.id->eid);
+                m.u8(16); m.varint(0); m.u8(ev.pos.skin_parts);
+                m.u8(0xff);
+                send(c, m.b);
+            }
             break;
         }
         case GEvent::Despawn:
@@ -117,21 +164,24 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             break;
         case GEvent::Move: {
             if (ev.id->gid == c.gid) return;
+            bool v3 = vd.protocol >= 777;   // 26.3 packs the ground flag and a step count into a varint and puts it before the deltas
             int props = ev.pos.ground ? 1 : 0;
+            auto head = [&](const char* name) { w.varint(vd.packet(name)); w.varint(ev.id->eid); if (v3) w.varint(props); };
+            auto deltas = [&]() { w.be16(static_cast<uint16_t>(ev.dx)); w.be16(static_cast<uint16_t>(ev.dy)); w.be16(static_cast<uint16_t>(ev.dz)); };
             if (ev.moved && ev.turned) {
-                w.varint(vd.packet("play/c/move_entity_pos_rot"));
-                w.varint(ev.id->eid); w.varint(props);
-                w.be16(static_cast<uint16_t>(ev.dx)); w.be16(static_cast<uint16_t>(ev.dy)); w.be16(static_cast<uint16_t>(ev.dz));
+                head("play/c/move_entity_pos_rot");
+                deltas();
                 w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch));
+                if (!v3) w.boolean(ev.pos.ground);
             } else if (ev.moved || !ev.turned) {
-                w.varint(vd.packet("play/c/move_entity_pos"));
-                w.varint(ev.id->eid); w.varint(props);
-                w.be16(static_cast<uint16_t>(ev.dx)); w.be16(static_cast<uint16_t>(ev.dy)); w.be16(static_cast<uint16_t>(ev.dz));
+                head("play/c/move_entity_pos");
+                deltas();
+                if (!v3) w.boolean(ev.pos.ground);
             } else {
                 w.varint(vd.packet("play/c/move_entity_rot"));
                 w.varint(ev.id->eid);
-                w.boolean(ev.pos.ground);
-                w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch));
+                if (v3) { w.boolean(ev.pos.ground); w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch)); }
+                else { w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch)); w.boolean(ev.pos.ground); }
             }
             send(c, w.b);
             if (ev.turned) {
@@ -147,8 +197,9 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             if (ev.id->gid == c.gid) { if (ev.value == 1) teleport_player(c, ev.pos); return; }
             w.varint(vd.packet("play/c/entity_position_sync"));
             w.varint(ev.id->eid);
-            w.varint(0);
+            if (vd.protocol >= 777) w.varint(0);   // linear path
             w.f64(ev.pos.x); w.f64(ev.pos.y); w.f64(ev.pos.z);
+            if (vd.protocol < 777) { w.f64(0); w.f64(0); w.f64(0); }   // velocity
             w.f32(ev.pos.yaw); w.f32(ev.pos.pitch);
             w.boolean(ev.pos.ground);
             send(c, w.b);
@@ -160,11 +211,17 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             break;
         }
         case GEvent::Swing:
-            w.varint(vd.packet("play/c/swing_animation"));
-            w.varint(ev.id->eid);
-            w.varint(0);
-            w.varint(1);
-            w.varint(6);
+            if (vd.protocol >= 777) {
+                w.varint(vd.packet("play/c/swing_animation"));
+                w.varint(ev.id->eid);
+                w.varint(0);
+                w.varint(1);
+                w.varint(6);
+            } else {
+                w.varint(vd.packet("play/c/animate"));
+                w.varint(ev.id->eid);
+                w.u8(0);   // swing main arm
+            }
             send(c, w.b);
             break;
         case GEvent::Block: send_block_update(c, ev.bx, ev.by, ev.bz, ev.block); break;

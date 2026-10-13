@@ -213,10 +213,20 @@ def pick(entries, want):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--blocks", default="data/vanilla-26.3.blocks")
+    ap.add_argument("--blocks", help="Java block state list (default: the newest data/vanilla-*.blocks)")
     ap.add_argument("--out", default="data")
     ap.add_argument("--palette", default="26_50")
     a = ap.parse_args()
+    if not a.blocks:
+        best = None
+        for fn in os.listdir(a.out):
+            if fn.startswith("vanilla-") and fn.endswith(".ids"):
+                proto = next((int(l.split()[1]) for l in open(os.path.join(a.out, fn)) if l.startswith("protocol ")), 0)
+                if best is None or proto > best[0]:
+                    best = (proto, os.path.join(a.out, fn[:-4] + ".blocks"))
+        if not best:
+            sys.exit("no data/vanilla-*.ids found; run tools/fetch_vanilla_data.py first")
+        a.blocks = best[1]
     raw = gzip.decompress(get(PAL.format(a.palette)))
     root, _ = nbt_read(raw, 3, raw[0])
     pal = {}

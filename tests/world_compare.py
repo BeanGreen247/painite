@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import smoke
 
 
-from world_compare_lib import rv, container, parse
+from world_compare_lib import rv, container, parse, parse_tail
 
 
 def main():
@@ -92,6 +92,15 @@ def main():
         if len(rsecs) != len(secs):
             bad += 1
             print("section count", len(rsecs), len(secs))
+    # structure of the part after the sections: block entity list and light data must parse exactly, and the masks must be consistent
+    for k, (secs, rest, size) in list(got.items())[:8]:
+        t = parse_tail(rest)
+        if not t["exact"] or bin(t["masks"][0]).count("1") != t["arrays"][0] or bin(t["masks"][1]).count("1") != t["arrays"][1] or t["masks"][0] & t["masks"][2] or t["masks"][1] & t["masks"][3]:
+            bad += 1
+            print("light/tail structure wrong for", k, t)
+    for k, rd in list(ref.items())[:3]:
+        t = parse_tail(parse(rd)[2])
+        assert t["exact"], "the reference chunk itself does not parse: my parser is wrong"
     print(f"compared {checked} chunks (painite sent {len(got)}), {bad} mismatching sections")
     sys.exit(1 if bad or not checked else 0)
 

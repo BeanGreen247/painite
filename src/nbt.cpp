@@ -109,6 +109,7 @@ void write_payload(std::vector<uint8_t>& o, const Nbt& t) {
 }  // namespace
 
 bool nbt_read(const uint8_t* p, size_t n, Nbt& out, bool named, size_t* used) {
+    out = Nbt();
     R r{p, p + n};
     uint8_t t = r.u8();
     if (r.bad || (t != Nbt::Compound && t != Nbt::List)) return false;

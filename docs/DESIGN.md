@@ -4,6 +4,15 @@
 Fast, low-resource Linux-first Minecraft server in C++. Java and Bedrock clients
 join the same world natively. No plugin API compatibility with Paper/Bukkit.
 
+## Implemented so far
+
+- `world.cpp`/`anvil.cpp`: chunk map with per-chunk locks, region files, flat/void fallback, idle unloading, light (`ensure_light`).
+- `game.cpp`: tick thread, player registry, interest management (512 block region grid), world time, autosave; workers talk to it through
+  `Game::` calls and receive `GEvent`s through `Worker::post_fn`, so every protocol layer only encodes events for its own clients.
+- `java_game.cpp` and `bedrock_game.cpp`: the Java and Bedrock encoders for those events and the input handlers (movement, digging, placing).
+- Regions are currently an indexing structure for visibility, not yet independent ticking units: all ticking happens on one thread. That is
+  enough while nothing but players is simulated; entities, fluids and redstone would be sharded by region first.
+
 ## Threading and autoscaling
 - Folia-style regions: the world is split into regions, each ticked by one worker.
 - Worker pool grows when a region's tick time exceeds `spawn_at_tick_ms`, shrinks after idle.

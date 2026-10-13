@@ -37,6 +37,8 @@ def login(port, name, ids, proto):
         elif pid == 0:
             sys.exit("login refused: " + d.decode(errors="replace"))
     c.send(ids[("login", "s", "login_acknowledged")])
+    # client information: locale, view distance, chat mode, chat colours, skin parts, main hand, filtering, listings, particles
+    c.send(ids[("configuration", "s", "client_information")], vi(5) + b"en_us" + bytes([8]) + vi(0) + b"\x01" + bytes([0x7f]) + vi(1) + b"\x00\x01" + vi(0))
     while True:
         pid, d = c.recv()
         if pid == ids[("configuration", "c", "select_known_packs")]:
@@ -84,6 +86,7 @@ def main():
             n, i = rvi(d)
             proto = json.loads(d[i:i + n])["version"]["protocol"]
             obs = login(a.port, "Observer", ids, proto)
+            obs.name = "obs"
             act = None
             obs.s.settimeout(0.5)
             S = lambda n: ids[("play", "s", n)]
@@ -103,7 +106,7 @@ def main():
                     if os.environ.get("DBG") and conn is obs:
                         print("obs got", nm, len(d), file=sys.stderr)
                     if nm == "disconnect":
-                        print("DISCONNECT", label, d, file=sys.stderr)
+                        print("DISCONNECT", "observer" if conn is obs else "actor", label, d, file=sys.stderr)
                     if nm == "player_position":
                         tid, k = rvi(d)
                         conn.spawn = struct.unpack(">ddd", d[k:k + 24])
@@ -111,10 +114,11 @@ def main():
                         conn.send(S("keep_alive"), d)
                     elif nm == "chunk_batch_finished":
                         conn.send(S("chunk_batch_received"), struct.pack(">f", 10.0))
-                    elif log is not None and nm not in ("level_chunk_with_light", "chunk_batch_start", "chunk_batch_finished", "set_time", "update_attributes", "container_set_content", "set_cursor_item", "set_entity_data", "update_recipes", "update_advancements", "recipe_book_add", "commands", "tab_list", "server_data", "initialize_border", "game_event", "set_chunk_cache_center", "set_chunk_cache_radius", "set_simulation_distance", "set_default_spawn_position", "ticking_state", "ticking_step", "set_held_slot", "set_experience", "set_health", "player_abilities", "player_position", "login", "update_tags", "waypoint", "sound", "game_rule_values", "select_advancements_tab"):
+                    elif log is not None and nm not in ("level_chunk_with_light", "chunk_batch_start", "chunk_batch_finished", "set_time", "update_attributes", "container_set_content", "set_cursor_item", "update_recipes", "update_advancements", "recipe_book_add", "tab_list", "server_data", "initialize_border", "game_event", "set_chunk_cache_center", "set_chunk_cache_radius", "set_simulation_distance", "set_default_spawn_position", "ticking_state", "ticking_step", "set_held_slot", "set_experience", "set_health", "player_abilities", "player_position", "login", "update_tags", "waypoint", "sound", "game_rule_values", "select_advancements_tab"):
                         log.append((label, nm, d))
-            pump(obs, 3)
             log = []
+            pump(obs, 3, log, "observer-join")
+            log = [l for l in log if l[1] in ("commands",)]
             act = login(a.port, "Actor", ids, proto)
             act.s.settimeout(0.5)
             pump(act, 3)
@@ -137,12 +141,14 @@ def main():
                 act.send(S("client_tick_end"))
                 pump(act, 0.05, None, "move%d" % k)
             pump(obs, 1, log, "observer-after-small-moves")
-            act.send(S("move_player_pos_rot"), pos_rot(x0 + 3, y0, z0 + 2, 90.0, 20.0))
+            for k in range(1, 6):
+                act.send(S("move_player_pos_rot"), pos_rot(x0 + 0.5 + k * 0.3, y0, z0, 90.0, 20.0))
+                act.send(S("client_tick_end"))
+                pump(act, 0.05, None, "mpr%d" % k)
             pump(obs, 1, log, "observer-after-move-rot")
             act.send(S("move_player_rot"), struct.pack(">ffB", 180.0, -10.0, 1))
+            act.send(S("client_tick_end"))
             pump(obs, 1, log, "observer-after-rot-only")
-            act.send(S("move_player_pos"), struct.pack(">dddB", x0 + 7, y0, z0, 1))
-            pump(obs, 1, log, "observer-after-big-move")
             # creative inventory: stone block into hotbar slot 0 (slot 36), select it
             item_stone = vi(64) + vi(ids and 1) + vi(0) + vi(0)  # count 64, item id 1 (stone), no components
             act.send(S("set_creative_mode_slot"), struct.pack(">h", 36) + item_stone)
@@ -151,7 +157,7 @@ def main():
             import math
             tx, tz = math.floor(x0 + 2.5) + 1, math.floor(z0 + 2.5)
             pos = lambda x, y, z: struct.pack(">Q", ((x & 0x3FFFFFF) << 38) | ((z & 0x3FFFFFF) << 12) | (y & 0xFFF))
-            act.send(S("move_player_pos"), struct.pack(">dddB", x0 + 2.5, y0, z0 + 2.5, 1))
+            act.send(S("move_player_pos"), struct.pack(">dddB", x0 + 2.0, y0, z0 + 0.3, 1))
             pump(act, 0.3)
             # place on top face of the grass block at (3,-61,3): hand, pos, face(up=1), cursor, inside, worldborder, sequence
             act.send(S("use_item_on"), vi(0) + pos(tx, -61, tz) + vi(1) + struct.pack(">fff", 0.5, 1.0, 0.5) + b"\x00\x00" + vi(1))
@@ -161,7 +167,7 @@ def main():
             act.send(S("player_action"), vi(0) + pos(tx, -60, tz) + b"\x01" + vi(2))
             pump(act, 0.5, log, "actor-own-after-break")
             pump(obs, 1, log, "observer-after-break")
-            act.send(S("punch"), vi(0))
+            act.send(S("punch" if ("play", "s", "punch") in ids else "swing"), vi(0))
             pump(obs, 1, log, "observer-after-swing")
             act.send(S("chat_command"), vi(len(b"say hello")) + b"say hello")
             pump(obs, 1, log, "observer-after-say")
@@ -171,7 +177,7 @@ def main():
             srv.terminate()
             srv.wait(timeout=60)
         for label, nm, d in log:
-            print(f"[{label}] {nm} ({len(d)} bytes): {d[:96].hex(' ')}", file=out)
+            print(f"[{label}] {nm} ({len(d)} bytes): {d[:(600 if nm == 'commands' else 96)].hex(' ')}", file=out)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

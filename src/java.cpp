@@ -365,6 +365,10 @@ void Worker::on_config(JConn& c, Rd& r, int pid) {
     if (pid == id.cfs_client_information) {
         r.str(16);
         int vdist = r.u8();
+        r.varint();
+        r.boolean();
+        uint8_t parts = r.u8();
+        if (!r.bad) c.skin_parts = parts;
         if (!r.bad) c.radius = std::max(2, std::min(vdist, s_.cfg.view_distance));
     } else if (pid == id.cfs_known_packs) {
         for (size_t i = c.vd->index_known_packs + 1; i < c.vd->config_packets.size(); i++) send(c, c.vd->config_packets[i]);
@@ -526,8 +530,9 @@ void Worker::start_play(JConn& c) {
     }
     ident->addr = c.addr;
     GPos gp;
-    gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw;
+    gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.skin_parts = c.skin_parts;
     c.gid = s_.game.add_player(ident, gp, c.gamemode, c.radius);
+    send_command_tree(c);
 }
 
 void Worker::rebuild_pending(JConn& c) {
@@ -619,7 +624,7 @@ void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float
     c.ground = ground;
     if (c.gid) {
         GPos gp;
-        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking;
+        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking; gp.skin_parts = c.skin_parts;
         s_.game.update_pos(c.gid, gp);
     }
     int ncx = static_cast<int>(std::floor(nx / 16)), ncz = static_cast<int>(std::floor(nz / 16));
@@ -682,7 +687,7 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     } else if (pid == c.vd->packet("play/s/set_carried_item")) {
         int slot = static_cast<int16_t>(r.be16());
         if (!r.bad && slot >= 0 && slot < 9) c.held = slot;
-    } else if (pid == c.vd->packet("play/s/punch")) {
+    } else if (pid == c.vd->packet("play/s/punch") || pid == c.vd->packet("play/s/swing")) {
         if (c.gid) s_.game.swing(c.gid);
     } else if (pid == id.pls_batch_received) {
         float rate = r.f32();
@@ -701,6 +706,10 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     } else if (pid == id.pls_client_information) {
         r.str(16);
         int vdist = r.u8();
+        r.varint();
+        r.boolean();
+        uint8_t parts = r.u8();
+        if (!r.bad) c.skin_parts = parts;
         if (!r.bad) {
             int nr = std::max(2, std::min(vdist, s_.cfg.view_distance));
             if (nr != c.radius) { c.radius = nr; rebuild_pending(c); }

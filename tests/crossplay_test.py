@@ -130,7 +130,7 @@ def main():
     check(len(mv) >= 1, f"Java: movement packets for the Bedrock player ({len(mv)})")
     # block edits across editions: the Java operator fills a platform, the Bedrock bot must see UpdateBlock
     B.take(21)
-    J.c.send(J.S("chat_command"), vs("setblock ~ ~3 ~ gold_block"))
+    J.c.send(J.S("chat_command"), vs(f"setblock ~ ~3 ~ {gt.PLATFORM}"))
     J.pump(0.5)
     B.pump(1.0)
     ub = B.take(21)
@@ -150,7 +150,7 @@ def main():
             t = line.rstrip("\n").split("\t")
             names[int(t[0])] = t[1]
         match = [names[k] for k, v in enumerate(ids_) if v == rid]
-        check("minecraft:gold_block" in match, f"UpdateBlock runtime id {rid} maps back to {match[:2]}")
+        check("minecraft:" + gt.PLATFORM in match, f"UpdateBlock runtime id {rid} maps back to {match[:2]}")
     # chat both ways
     J.take("system_chat")
     B.c.send_packets([(9, bytes([0, 1, 1]) + pstr(B.name) + pstr("hi from bedrock") + pstr("") + pstr("") + b"\x00")])

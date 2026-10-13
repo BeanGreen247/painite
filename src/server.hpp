@@ -77,6 +77,7 @@ struct JConn {
     uint16_t hotbar[9] = {};  // internal block ids of the creative hotbar items (0 = none / not a block)
     int held = 0;
     bool sneaking = false, ground = true;
+    uint8_t skin_parts = 0x7f;
     int batches_out = 0;
     std::unordered_set<int64_t> sent;
     std::vector<std::pair<int, int>> pending;  // chunks still to send, nearest last (pop_back)
@@ -154,6 +155,7 @@ private:
     void send_block_ack(JConn& c, int seq);
     void send_block_update(JConn& c, int x, int y, int z, uint16_t block);
     void send_time(JConn& c, int64_t age, int64_t day);
+    void send_command_tree(JConn& c);
     void teleport_player(JConn& c, const GPos& p);
     void plan_view(JConn& c, int ncx, int ncz);
 

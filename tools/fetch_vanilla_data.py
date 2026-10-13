@@ -275,7 +275,7 @@ def main():
                     f.write(f"{st['id']}\t{name}\t{props}\t{1 if st.get('default') else 0}\n")
         # registry entries the server needs by name: entity types, block entity types, biomes (dynamic, from the sync packet)
         with open(base + ".ids", "a") as f:
-            for reg in ("minecraft:entity_type", "minecraft:block_entity_type", "minecraft:item"):
+            for reg in ("minecraft:entity_type", "minecraft:block_entity_type", "minecraft:item", "minecraft:command_argument_type"):
                 for k, v in registries[reg]["entries"].items():
                     f.write(f"reg {reg.split(':')[1]} {k.split(':')[1]} {v['protocol_id']}\n")
             for p in cfg:

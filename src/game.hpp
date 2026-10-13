@@ -35,6 +35,7 @@ struct GPos {
     double x = 0, y = 0, z = 0;
     float yaw = 0, pitch = 0, head = 0;
     bool ground = true, sneaking = false;
+    uint8_t skin_parts = 0x7f;   // displayed skin layers (Java client information)
 };
 
 struct GEvent {

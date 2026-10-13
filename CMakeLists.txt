@@ -38,9 +38,9 @@ if(PAINITE_LTO)
   endif()
 endif()
 
-add_executable(painite_unit EXCLUDE_FROM_ALL tests/unit.cpp src/hash.cpp src/config.cpp src/log.cpp)
+add_executable(painite_unit EXCLUDE_FROM_ALL tests/unit.cpp src/hash.cpp src/config.cpp src/log.cpp src/nbt.cpp src/anvil.cpp src/lists.cpp src/skin.cpp)
 target_include_directories(painite_unit PRIVATE src)
-target_link_libraries(painite_unit PRIVATE OpenSSL::Crypto)
+target_link_libraries(painite_unit PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 
 install(TARGETS painite RUNTIME DESTINATION bin)
 install(FILES painite.toml DESTINATION share/painite)
