@@ -66,6 +66,7 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
         pos += len;
     }
 
+    v.blocks_path = bin.substr(0, bin.size() - 4) + ".blocks";
     std::ifstream f(ids);
     if (!f) { err = "missing " + ids; return false; }
     std::map<std::string, int> tbl;
@@ -80,10 +81,18 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
             ls >> k >> val;
             if (k == "dim_type_overworld") v.dim_type_overworld = val;
             else if (k == "biome_plains") v.biome_plains = val;
+            else if (k == "data_version") v.data_version = val;
+        } else if (kind == "reg") {
+            std::string r, name; int num;
+            ls >> r >> name >> num;
+            v.reg[r + "/" + name] = num;
+            if (r == "item") { if (v.items.size() <= static_cast<size_t>(num)) v.items.resize(static_cast<size_t>(num) + 1); v.items[static_cast<size_t>(num)] = "minecraft:" + name; }
+            if (r == "biome") { if (v.biomes.size() <= static_cast<size_t>(num)) v.biomes.resize(static_cast<size_t>(num) + 1); v.biomes[static_cast<size_t>(num)] = "minecraft:" + name; }
         } else if (kind == "id") {
             std::string st, dir, name; int num;
             ls >> st >> dir >> name >> num;
             tbl[st + "/" + dir + "/" + name] = num;
+            v.pid[st + "/" + dir + "/" + name] = num;
         }
     }
     bool ok = true;

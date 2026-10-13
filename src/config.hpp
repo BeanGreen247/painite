@@ -41,6 +41,9 @@ struct Config {
     int memory_cap_mb = 1024;  // total pool cap (connection buffers + chunk cache)
     int spawn_busy_pct = 70;
     int retire_idle_s = 60;
+    std::string generator = "auto";  // chunks that are not on disk: auto (flat for a new world, void for an existing one) | flat | void
+    int autosave_s = 300;
+    int spawn_protection = 0;
     std::string data_dir;      // where vanilla-<ver>.bin/.ids live; empty = search
 
     int bedrock_port_effective() const { return bedrock_port < 0 ? java_port : bedrock_port; }

@@ -31,5 +31,9 @@ retire_after_idle_s = 60    # retire a worker with no connections after this lon
 # session_host    = "sessionserver.mojang.com"   # host or host:port, used when online-mode=true
 # session_ca_file = ""                          # optional CA bundle for a private auth server
 
+[world]
+generator   = "auto"   # for chunks not on disk: auto (flat for a new world, void when region files exist) | flat | void
+autosave_s  = 300      # write changed chunks and player data this often (seconds)
+
 [paths]
 # data_dir = "data"         # where vanilla-<version>.bin/.ids from tools/fetch_vanilla_data.py live

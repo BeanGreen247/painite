@@ -82,3 +82,12 @@ std::string trim(std::string_view s);
 std::string lower(std::string_view s);
 
 }  // namespace pn
+
+namespace pn {
+inline std::string uuid_string(const uint8_t u[16]) {
+    char b[40];
+    snprintf(b, sizeof b, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7], u[8], u[9],
+             u[10], u[11], u[12], u[13], u[14], u[15]);
+    return b;
+}
+}  // namespace pn

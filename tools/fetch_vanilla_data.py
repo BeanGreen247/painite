@@ -120,6 +120,8 @@ def main():
         subprocess.run([java, "-DbundlerMainClass=net.minecraft.data.Main", "-jar", jar, "--reports", "--server", "--output", gen],
                        check=True, capture_output=True, cwd=work)
         packets = json.load(open(os.path.join(gen, "reports", "packets.json")))
+        blocks = json.load(open(os.path.join(gen, "reports", "blocks.json")))
+        registries = json.load(open(os.path.join(gen, "reports", "registries.json")))
         run = os.path.join(work, "run")
         os.makedirs(run)
         open(os.path.join(run, "eula.txt"), "w").write("eula=true\n")
@@ -201,6 +203,14 @@ def main():
         finally:
             srv.terminate()
             srv.wait(timeout=60)
+        data_version = 0
+        try:
+            import gzip
+            raw = gzip.open(os.path.join(run, "world", "level.dat")).read()
+            k = raw.find(b"\x03\x00\x0bDataVersion")
+            data_version = struct.unpack(">i", raw[k + 14:k + 18])[0]
+        except Exception as e:
+            print("could not read DataVersion:", e)
 
         # registry ids needed for constants
         def reg_index(regname, entry):
@@ -251,12 +261,39 @@ def main():
         with open(base + ".ids", "w") as f:
             f.write(f"version {ver}\nprotocol {proto}\n")
             f.write(f"const dim_type_overworld {dim_type}\n")
+            f.write(f"const data_version {data_version}\n")
             f.write(f"const biome_plains {reg_index('minecraft:worldgen/biome', 'minecraft:plains')}\n")
             for st in ("handshake", "status", "login", "configuration", "play"):
                 for d, short in (("clientbound", "c"), ("serverbound", "s")):
                     for k, v in packets.get(st, {}).get(d, {}).items():
                         f.write(f"id {st} {short} {k.split(':')[1]} {v['protocol_id']}\n")
-        print("wrote", base + ".bin", "and .ids")
+        # block states: id <TAB> name <TAB> k=v,k=v (state ids are protocol ids; the world keeps its own palette)
+        with open(base + ".blocks", "w") as f:
+            for name, b in blocks.items():
+                for st in b["states"]:
+                    props = ",".join(f"{k}={v}" for k, v in sorted(st.get("properties", {}).items()))
+                    f.write(f"{st['id']}\t{name}\t{props}\t{1 if st.get('default') else 0}\n")
+        # registry entries the server needs by name: entity types, block entity types, biomes (dynamic, from the sync packet)
+        with open(base + ".ids", "a") as f:
+            for reg in ("minecraft:entity_type", "minecraft:block_entity_type", "minecraft:item"):
+                for k, v in registries[reg]["entries"].items():
+                    f.write(f"reg {reg.split(':')[1]} {k.split(':')[1]} {v['protocol_id']}\n")
+            for p in cfg:
+                pid, i = rvi(p)
+                if pid != 7:
+                    continue
+                n, i = rvi(p, i)
+                if p[i:i + n].decode() != "minecraft:worldgen/biome":
+                    continue
+                i += n
+                cnt, i = rvi(p, i)
+                for k in range(cnt):
+                    n, i = rvi(p, i)
+                    nm = p[i:i + n].decode()
+                    i += n
+                    i += 1
+                    f.write(f"reg biome {nm.split(':')[1]} {k}\n")
+        print("wrote", base + ".bin", ".ids and .blocks")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 

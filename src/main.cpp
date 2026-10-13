@@ -5,6 +5,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstring>
+#include <thread>
 #include <dirent.h>
 #include <iostream>
 #include <sys/stat.h>
@@ -44,28 +45,15 @@ static std::string exe_dir() {
 }
 
 static void console(Server& s) {
-    std::string line;
-    while (!g_sig && !s.stopping && std::getline(std::cin, line)) {
-        line = trim(line);
-        if (!line.empty() && line[0] == '/') line = line.substr(1);
-        if (line.empty()) continue;
-        std::string cmd = lower(line.substr(0, line.find(' ')));
-        std::string arg = line.find(' ') == std::string::npos ? "" : trim(line.substr(line.find(' ') + 1));
-        if (cmd == "stop") { info("Stopping the server"); g_sig = 1; return; }
-        else if (cmd == "help" || cmd == "?") info("Commands: help, list, say <msg>, status, stop");
-        else if (cmd == "list") {
-            auto n = s.player_names();
-            std::string o = "There are " + std::to_string(n.size()) + " of a max of " + std::to_string(s.cfg.max_players) + " players online:";
-            for (size_t i = 0; i < n.size(); i++) o += (i ? ", " : " ") + n[i];
-            info(o);
-        } else if (cmd == "say") {
-            info("[Server] " + arg);
-            s.broadcast("[Server] " + arg);
-        } else if (cmd == "status") info(s.console_status());
-        else info("Unknown or incomplete command, see below for error");
-    }
-    // stdin closed (e.g. started detached): keep running until signalled
-    while (!g_sig && !s.stopping) usleep(200000);
+    // stdin is read on a helper thread so /stop (or a signal) can end the server even while getline blocks
+    std::thread([&s] {
+        std::string line;
+        while (!g_sig && !s.stopping && std::getline(std::cin, line)) {
+            line = trim(line);
+            if (!line.empty()) s.game.command(0, line);
+        }
+    }).detach();
+    while (!g_sig && !s.stopping && !s.stop_requested) usleep(100000);
 }
 
 int main(int argc, char** argv) {
@@ -137,5 +125,7 @@ int main(int argc, char** argv) {
     info("Stopping server");
     server.shutdown();
     info("Server stopped");
-    return 0;
+    fflush(stdout);
+    fflush(stderr);
+    _exit(0);   // a detached stdin reader may still be blocked in read(); do not wait for it at exit
 }

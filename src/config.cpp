@@ -153,6 +153,9 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = tget("workers.retire_after_idle_s")) c.retire_idle_s = to_int(*v, c.retire_idle_s);
     if (auto v = tget("auth.session_host")) c.session_host = *v;
     if (auto v = tget("auth.session_ca_file")) c.session_ca_file = *v;
+    if (auto v = tget("world.generator")) c.generator = lower(*v);
+    if (auto v = tget("world.autosave_s")) c.autosave_s = to_int(*v, c.autosave_s);
+    if (auto v = get("spawn-protection")) c.spawn_protection = to_int(*v, 0);
     if (auto v = tget("paths.data_dir")) c.data_dir = *v;
     if (c.profile == "lan") c.compression_threshold = -1;
     return true;

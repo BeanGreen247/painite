@@ -13,6 +13,7 @@ typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
 namespace pn {
 
 class Server;
+struct GEvent;
 
 struct BedrockData {
     int protocol = 0;
@@ -57,6 +58,9 @@ public:
     void on_datagram(const sockaddr_storage& from, socklen_t fl, const uint8_t* p, size_t n, int64_t now);
     void tick(int64_t now);
     void broadcast_chat(const std::string& text);   // worker thread only
+    void on_game_event(uint64_t conn, const GEvent& ev);
+    void chat_to(uint64_t conn, const std::string& text);
+    void kick(uint64_t conn, const std::string& reason);
     void shutdown();
     size_t sessions() const { return rak_->session_count(); }
     int playing() const { return playing_; }

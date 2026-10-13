@@ -1,6 +1,7 @@
 // Bedrock server logic. The join sequence (resource packs, StartGame, registries, chunks) is replayed from a
 // session recorded off a real Bedrock Dedicated Server by tools/bedrock_capture.py; only per-player parts are patched.
 #include "bedrock.hpp"
+#include "game.hpp"
 #include "hash.hpp"
 #include "json.hpp"
 #include "log.hpp"
@@ -537,8 +538,9 @@ void Bedrock::on_login(BSession& b, const uint8_t* p, size_t n) {
         disconnect(b, "Bedrock logins are disabled while online-mode=true (Xbox authentication is not implemented yet)");
         return;
     }
-    if (s_.banned(b.name)) { disconnect(b, "You are banned from this server."); return; }
-    if (s_.cfg.white_list && !s_.whitelisted(b.name)) { disconnect(b, "You are not white-listed on this server!"); return; }
+    std::string why;
+    if (s_.lists.banned(b.name, uuid_string(b.uuid), &why)) { disconnect(b, "You are banned from this server.\nReason: " + (why.empty() ? std::string("Banned by an operator.") : why)); return; }
+    if (s_.cfg.white_list && !s_.whitelisted(b.name, uuid_string(b.uuid))) { disconnect(b, "You are not white-listed on this server!"); return; }
     if (s_.online.load() >= s_.cfg.max_players) { disconnect(b, "The server is full!"); return; }
     if (!s_.reserve_name(b.name)) { disconnect(b, "A player with that name is already online."); return; }
     b.reserved = true;
@@ -843,4 +845,10 @@ void Bedrock::on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n) {
     }
 }
 
+}  // namespace pn
+
+namespace pn {
+void Bedrock::on_game_event(uint64_t, const GEvent&) {}
+void Bedrock::chat_to(uint64_t, const std::string&) {}
+void Bedrock::kick(uint64_t, const std::string&) {}
 }  // namespace pn

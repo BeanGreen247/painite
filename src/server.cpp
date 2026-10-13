@@ -10,26 +10,6 @@
 
 namespace pn {
 
-static std::vector<std::string> scan_names(const std::string& path) {
-    std::vector<std::string> out;
-    std::ifstream f(path);
-    if (!f) return out;
-    std::stringstream ss;
-    ss << f.rdbuf();
-    std::string s = ss.str();
-    size_t pos = 0;
-    while ((pos = s.find("\"name\"", pos)) != std::string::npos) {
-        pos += 6;
-        size_t q1 = s.find('"', s.find(':', pos));
-        if (q1 == std::string::npos) break;
-        size_t q2 = s.find('"', q1 + 1);
-        if (q2 == std::string::npos) break;
-        out.push_back(lower(s.substr(q1 + 1, q2 - q1 - 1)));
-        pos = q2;
-    }
-    return out;
-}
-
 static std::string base64(const std::string& in) {
     static const char* t = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string o;
@@ -43,17 +23,16 @@ static std::string base64(const std::string& in) {
     return o;
 }
 
-void Server::reload_lists() {
-    std::lock_guard<std::mutex> l(pm_);
-    whitelist_ = scan_names("whitelist.json");
-    banlist_ = scan_names("banned-players.json");
+void Server::post_to_worker(int worker_id, std::function<void(Worker&)> fn) {
+    std::lock_guard<std::mutex> l(wm_);
+    for (auto& w : workers_) if (w->id() == worker_id) { w->post_fn(std::move(fn)); return; }
 }
 
-bool Server::whitelisted(const std::string& n) const {
-    return std::find(whitelist_.begin(), whitelist_.end(), lower(n)) != whitelist_.end();
-}
-bool Server::banned(const std::string& n) const {
-    return std::find(banlist_.begin(), banlist_.end(), lower(n)) != banlist_.end();
+bool Server::kick_player(const std::string& name, const std::string& reason) {
+    auto id = game.find_name(name);
+    if (!id) return false;
+    post_to_worker(id->worker, [conn = id->conn, reason](Worker& w) { w.kick_conn(conn, reason); });
+    return true;
 }
 
 const VanillaData* Server::find_data(int protocol) const {
@@ -170,12 +149,18 @@ bool Server::start(std::string& err) {
     }
     if (data.empty()) { err = "none of the protocol data files could be loaded"; return false; }
     std::sort(data.begin(), data.end(), [](auto& a, auto& b) { return a.protocol < b.protocol; });
+    {
+        std::vector<std::pair<int, std::string>> files;
+        for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
+        if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
+        if (!world.open(cfg.level_name, cfg.generator, data.back(), err)) return false;
+    }
 
     if (cfg.online_mode) {
         if (!auth.init(cfg.session_host, cfg.session_ca_file, cfg.prevent_proxy, err)) return false;
         auth.start(2, [this](const AuthRequest& r, AuthResult&& res) { route_auth(r, std::move(res)); });
     }
-    reload_lists();
+    lists.load_all();
     {
         std::ifstream f("server-icon.png", std::ios::binary);
         if (f) {
@@ -188,6 +173,7 @@ bool Server::start(std::string& err) {
         for (int i = 0; i < cfg.workers_min; i++)
             if (!spawn_worker(err)) return false;
     }
+    game.start();
     mon_ = std::thread([this] { monitor(); });
     return true;
 }
@@ -248,6 +234,8 @@ void Server::shutdown() {
     }
     for (auto& w : ws) w->stop();
     for (auto& w : ws) w->join();
+    game.stop();
+    game.save_everything(false);
 }
 
 }  // namespace pn

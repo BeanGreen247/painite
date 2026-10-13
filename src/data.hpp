@@ -30,6 +30,14 @@ struct VanillaData {
     std::vector<uint8_t> set_time;                     // play set_time payload
     PacketIds id{};
     size_t index_known_packs = 0;  // position of the known-packs packet inside config_packets
+    std::string blocks_path;       // vanilla-<ver>.blocks (block state report)
+    std::map<std::string, int> reg;  // "entity_type/player", "biome/plains", "block_entity_type/chest", "item/stone"
+    std::map<std::string, int> pid;  // every packet id by "play/c/add_entity"
+    std::vector<std::string> biomes; // biome names in registry order
+    std::vector<std::string> items;  // item names (minecraft:stone) by registry id
+    int data_version = 0;
+    int reg_id(const std::string& k, int def = -1) const { auto it = reg.find(k); return it == reg.end() ? def : it->second; }
+    int packet(const char* k) const { auto it = pid.find(k); return it == pid.end() ? -1 : it->second; }
 };
 
 // All vanilla-*.bin files in the first directory that has any (cfg_dir, ./data, <exe>/data, <exe>/../data).

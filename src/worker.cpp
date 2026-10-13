@@ -135,6 +135,37 @@ void Worker::post_chat(const std::string& text) {
     (void)!write(evfd_, &one, 8);
 }
 
+void Worker::post_fn(std::function<void(Worker&)> fn) {
+    {
+        std::lock_guard<std::mutex> l(inbox_mu_);
+        fn_inbox_.push_back(std::move(fn));
+    }
+    uint64_t one = 1;
+    (void)!write(evfd_, &one, 8);
+}
+
+JConn* Worker::conn_by_id(uint64_t id) {
+    auto it = id_fd_.find(id);
+    if (it == id_fd_.end()) return nullptr;
+    auto c = conns_.find(it->second);
+    return c == conns_.end() ? nullptr : c->second.get();
+}
+
+void Worker::send_chat_to(uint64_t conn, const std::string& text) {
+    if (JConn* c = conn_by_id(conn)) { if (c->st == St::Play && !c->dead) send_chat(*c, text); }
+    else if (bedrock_) bedrock_->chat_to(conn, text);
+}
+
+void Worker::kick_conn(uint64_t conn, const std::string& reason) {
+    if (JConn* c = conn_by_id(conn)) kick(*c, reason);
+    else if (bedrock_) bedrock_->kick(conn, reason);
+}
+
+void Worker::on_game_event(uint64_t conn, const GEvent& ev) {
+    if (JConn* c = conn_by_id(conn)) { if (c->st == St::Play && !c->dead) java_event(*c, ev); }
+    else if (bedrock_) bedrock_->on_game_event(conn, ev);
+}
+
 void Worker::post_auth(uint64_t conn_id, AuthResult&& r) {
     {
         std::lock_guard<std::mutex> l(inbox_mu_);
@@ -147,11 +178,15 @@ void Worker::post_auth(uint64_t conn_id, AuthResult&& r) {
 void Worker::drain_inbox() {
     std::vector<std::string> msgs;
     std::vector<std::pair<uint64_t, AuthResult>> auths;
+    std::vector<std::function<void(Worker&)>> fns;
     {
         std::lock_guard<std::mutex> l(inbox_mu_);
         msgs.swap(inbox_);
         auths.swap(auth_inbox_);
+        fns.swap(fn_inbox_);
     }
+    for (auto& f : fns) f(*this);
+    for (auto& kv : conns_) if (!kv.second->out.empty() && !kv.second->dead) flush(*kv.second);
     for (auto& a : auths) on_auth_result(a.first, a.second);
     if (bedrock_) for (auto& m : msgs) bedrock_->broadcast_chat(m);
     for (auto& m : msgs)
@@ -197,6 +232,7 @@ void Worker::accept_ready() {
         ev.events = EPOLLIN | EPOLLRDHUP;
         ev.data.fd = fd;
         epoll_ctl(ep_, EPOLL_CTL_ADD, fd, &ev);
+        id_fd_[c->id] = fd;
         conns_[fd] = std::move(c);
         nconn++;
     }
@@ -265,6 +301,7 @@ void Worker::flush(JConn& c) {
 
 void Worker::close_conn(JConn& c) {
     if (c.reserved) s_.release_name(c.name);
+    if (c.gid) { s_.game.remove_player(c.gid); c.gid = 0; }
     if (c.counted) {
         s_.unregister_player(c.name);
         s_.online--;
@@ -276,6 +313,7 @@ void Worker::close_conn(JConn& c) {
     close(c.fd);
     s_.mem_sub(static_cast<int64_t>(c.acct));
     int fd = c.fd;
+    id_fd_.erase(c.id);
     conns_.erase(fd);
     nconn--;
     if (conns_.empty()) idle_since_ms = now_ms();

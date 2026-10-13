@@ -3,6 +3,7 @@
 #include "log.hpp"
 #include "util.hpp"
 #include "hash.hpp"
+#include "jchunk.hpp"
 #include <algorithm>
 #include <cmath>
 #include <openssl/evp.h>
@@ -26,7 +27,7 @@ static std::string json_escape(const std::string& s) {
     return o;
 }
 
-static std::string uuid_str(const uint8_t u[16]) {
+std::string uuid_str(const uint8_t u[16]) {
     char b[40];
     snprintf(b, sizeof b, "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", u[0], u[1], u[2], u[3], u[4], u[5], u[6], u[7],
              u[8], u[9], u[10], u[11], u[12], u[13], u[14], u[15]);
@@ -311,9 +312,11 @@ void Worker::finish_login(JConn& c) {
         kick(c, "Unsupported Minecraft version. Painite supports: " + sup);
         return;
     }
-    if (s_.banned(c.name)) { kick(c, "You are banned from this server."); return; }
-    if (s_.cfg.white_list && !s_.whitelisted(c.name)) { kick(c, "You are not white-listed on this server!"); return; }
-    if (s_.online.load() >= s_.cfg.max_players) { kick(c, "The server is full!"); return; }
+    std::string ustr = uuid_string(c.uuid), why;
+    if (s_.lists.banned(c.name, ustr, &why)) { kick(c, "You are banned from this server.\nReason: " + (why.empty() ? std::string("Banned by an operator.") : why)); return; }
+    if (s_.lists.ip_banned(c.addr.substr(0, c.addr.rfind(':')), &why)) { kick(c, "Your IP address is banned from this server.\nReason: " + (why.empty() ? std::string("Banned by an operator.") : why)); return; }
+    if (s_.cfg.white_list && !s_.whitelisted(c.name, ustr)) { kick(c, "You are not white-listed on this server!"); return; }
+    if (s_.online.load() >= s_.cfg.max_players && s_.lists.op_level(c.name, ustr) == 0) { kick(c, "The server is full!"); return; }
     if (!s_.reserve_name(c.name)) { kick(c, "A player with that name is already online."); return; }
     c.reserved = true;
     info("UUID of player " + c.name + " is " + uuid_str(c.uuid));
@@ -377,6 +380,31 @@ void Worker::send_chat(JConn& c, const std::string& text) {
     send(c, w.b);
 }
 
+uint64_t pack_block_pos(int x, int y, int z) {
+    return ((static_cast<uint64_t>(x) & 0x3FFFFFF) << 38) | ((static_cast<uint64_t>(z) & 0x3FFFFFF) << 12) | (static_cast<uint64_t>(y) & 0xFFF);
+}
+
+void Worker::choose_spawn(JConn& c) {
+    World& w = s_.world;
+    Nbt pd;
+    char u[40];
+    snprintf(u, sizeof u, "%s", uuid_str(c.uuid).c_str());
+    if (w.load_player(u, pd)) {
+        const Nbt* pos = pd.get("Pos");
+        if (pos && pos->type == Nbt::List && pos->list.size() == 3) {
+            c.x = pos->list[0].f; c.y = pos->list[1].f; c.z = pos->list[2].f;
+            if (const Nbt* rot = pd.get("Rotation")) if (rot->list.size() == 2) { c.yaw = static_cast<float>(rot->list[0].f); c.pitch = static_cast<float>(rot->list[1].f); }
+            c.gamemode = static_cast<int>(pd.geti("playerGameType", s_.cfg.gamemode));
+            if (std::isfinite(c.x) && std::isfinite(c.y) && std::isfinite(c.z) && std::fabs(c.x) < 3e7 && std::fabs(c.z) < 3e7) return;
+        }
+    }
+    c.gamemode = s_.cfg.gamemode;
+    c.x = w.spawn_x + 0.5;
+    c.z = w.spawn_z + 0.5;
+    int top = w.top_y(w.spawn_x, w.spawn_z);
+    c.y = top >= kMinY ? top + 1 : w.spawn_y;
+}
+
 static int64_t pack_chunk(int x, int z) { return (static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z); }
 
 void Worker::start_play(JConn& c) {
@@ -390,6 +418,7 @@ void Worker::start_play(JConn& c) {
     s_.register_player(c.name);
     c.last_ka_sent = now_ms();
     c.last_ka_ack = c.last_ka_sent;
+    choose_spawn(c);
 
     Wr w;  // Login (play)
     w.varint(id.pl_login);
@@ -409,10 +438,10 @@ void Worker::start_play(JConn& c) {
     w.str("minecraft:overworld");
     w.be64(0x5a17c0de5a17c0deull);
     if (vd.protocol >= 777) {
-        w.varint(s_.cfg.gamemode);
+        w.varint(c.gamemode);
         w.varint(0);  // previous game mode: 0 = undefined
     } else {
-        w.u8(static_cast<uint8_t>(s_.cfg.gamemode));
+        w.u8(static_cast<uint8_t>(c.gamemode));
         w.u8(0xff);   // previous game mode: -1 = undefined (checked against recorded samples by tests/check_layouts.py)
     }
     w.boolean(false);
@@ -426,7 +455,7 @@ void Worker::start_play(JConn& c) {
 
     Wr ab;
     ab.varint(id.pl_abilities);
-    int gm = s_.cfg.gamemode;
+    int gm = c.gamemode;
     ab.u8(gm == 1 ? 0x0d : gm == 3 ? 0x0f : 0x00);
     ab.f32(0.05f);
     ab.f32(0.1f);
@@ -445,14 +474,14 @@ void Worker::start_play(JConn& c) {
     pos.varint(1);
     pos.f64(c.x); pos.f64(c.y); pos.f64(c.z);
     pos.f64(0); pos.f64(0); pos.f64(0);
-    pos.f32(0); pos.f32(0);
+    pos.f32(c.yaw); pos.f32(c.pitch);
     pos.be32(0);
     send(c, pos.b);
 
     Wr sp;
     sp.varint(id.pl_spawn);
     sp.str("minecraft:overworld");
-    sp.be64((static_cast<uint64_t>(0) << 38) | (static_cast<uint64_t>(0) << 12) | (static_cast<uint64_t>(-60) & 0xfff));
+    sp.be64(pack_block_pos(s_.world.spawn_x, s_.world.spawn_y, s_.world.spawn_z));
     sp.f32(0); sp.f32(0);
     send(c, sp.b);
 
@@ -462,10 +491,7 @@ void Worker::start_play(JConn& c) {
     ge.f32(0);
     send(c, ge.b);
 
-    Wr tm;
-    tm.varint(id.pl_time);
-    tm.raw(vd.set_time.data(), vd.set_time.size());
-    send(c, tm.b);
+    send_time(c, s_.game.game_time(), s_.game.day_time());
 
     Wr pi;  // own tab-list entry
     pi.varint(id.pl_player_info);
@@ -498,6 +524,18 @@ void Worker::start_play(JConn& c) {
     send(c, ce.b);
     rebuild_pending(c);
     pump_chunks(c);
+
+    auto ident = std::make_shared<GIdentity>();
+    ident->worker = id_;
+    ident->conn = c.id;
+    ident->eid = c.entity_id;
+    ident->name = c.name;
+    memcpy(ident->uuid, c.uuid, 16);
+    ident->props = c.props;
+    ident->addr = c.addr;
+    GPos gp;
+    gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw;
+    c.gid = s_.game.add_player(ident, gp, c.gamemode, c.radius);
 }
 
 void Worker::rebuild_pending(JConn& c) {
@@ -517,40 +555,38 @@ void Worker::rebuild_pending(JConn& c) {
 
 void Worker::send_chunk(JConn& c, int x, int z) {
     const auto& id = c.vd->id;
-    if (c.threshold >= 0) {
-        int64_t key = pack_chunk(x, z) ^ (static_cast<int64_t>(c.vd->protocol) << 52);
-        auto it = chunk_cache_.find(key);
-        if (it == chunk_cache_.end()) {
-            Wr w;
-            w.varint(id.pl_chunk);
-            w.be32(static_cast<uint32_t>(x));
-            w.be32(static_cast<uint32_t>(z));
-            w.raw(c.vd->chunk_template.data(), c.vd->chunk_template.size());
-            std::vector<uint8_t> f;
-            frame_into(f, w.b.data(), w.b.size(), c.threshold, s_.cfg.compression_level);
-            size_t cap = static_cast<size_t>(s_.cfg.chunk_cache_mb) * 1024 * 1024;
-            if (chunk_cache_bytes_ + f.size() > cap) {
-                for (auto& kv : chunk_cache_) s_.mem_sub(static_cast<int64_t>(kv.second.size()));
-                chunk_cache_.clear();
-                chunk_cache_bytes_ = 0;
-            }
-            if (s_.mem_add(static_cast<int64_t>(f.size()))) {
-                chunk_cache_bytes_ += f.size();
-                it = chunk_cache_.emplace(key, std::move(f)).first;
-            } else {
-                append_out(c, f.data(), f.size());
-                return;
-            }
-        }
-        append_out(c, it->second.data(), it->second.size());
-        return;
+    auto ch = s_.world.chunk(x, z);
+    uint32_t ver = ch->version.load();
+    int64_t key = pack_chunk(x, z) ^ (static_cast<int64_t>(c.vd->protocol) << 52) ^ (c.threshold < 0 ? (1ll << 51) : 0);
+    auto it = chunk_cache_.find(key);
+    if (it != chunk_cache_.end() && it->second.ver != ver) {
+        chunk_cache_bytes_ -= it->second.f.size();
+        s_.mem_sub(static_cast<int64_t>(it->second.f.size()));
+        chunk_cache_.erase(it);
+        it = chunk_cache_.end();
     }
-    Wr w;
-    w.varint(id.pl_chunk);
-    w.be32(static_cast<uint32_t>(x));
-    w.be32(static_cast<uint32_t>(z));
-    w.raw(c.vd->chunk_template.data(), c.vd->chunk_template.size());
-    send(c, w.b);
+    if (it == chunk_cache_.end()) {
+        Wr w;
+        w.varint(id.pl_chunk);
+        encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w);
+        ver = ch->version.load();
+        std::vector<uint8_t> f;
+        frame_into(f, w.b.data(), w.b.size(), c.threshold, s_.cfg.compression_level);
+        size_t cap = static_cast<size_t>(s_.cfg.chunk_cache_mb) * 1024 * 1024;
+        if (chunk_cache_bytes_ + f.size() > cap) {
+            for (auto& kv : chunk_cache_) s_.mem_sub(static_cast<int64_t>(kv.second.f.size()));
+            chunk_cache_.clear();
+            chunk_cache_bytes_ = 0;
+        }
+        if (s_.mem_add(static_cast<int64_t>(f.size()))) {
+            chunk_cache_bytes_ += f.size();
+            it = chunk_cache_.emplace(key, CachedChunk{ver, std::move(f)}).first;
+        } else {
+            append_out(c, f.data(), f.size());
+            return;
+        }
+    }
+    append_out(c, it->second.f.data(), it->second.f.size());
 }
 
 void Worker::pump_chunks(JConn& c) {
@@ -576,10 +612,24 @@ void Worker::pump_chunks(JConn& c) {
     c.batches_out++;
 }
 
-void Worker::on_move(JConn& c, double nx, double nz) {
-    if (!std::isfinite(nx) || !std::isfinite(nz) || std::fabs(nx) > 3e7 || std::fabs(nz) > 3e7) { kick(c, "Invalid move player packet received"); return; }
+void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float pitch, bool has_pos, bool has_rot, bool ground) {
+    if (has_pos) {
+        if (!std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz) || std::fabs(nx) > 3e7 || std::fabs(nz) > 3e7 || std::fabs(ny) > 3e7) { kick(c, "Invalid move player packet received"); return; }
+    } else { nx = c.x; ny = c.y; nz = c.z; }
+    if (has_rot) {
+        if (!std::isfinite(yaw) || !std::isfinite(pitch)) { kick(c, "Invalid move player packet received"); return; }
+        c.yaw = yaw;
+        c.pitch = std::max(-90.0f, std::min(90.0f, pitch));
+    }
     c.x = nx;
+    c.y = ny;
     c.z = nz;
+    c.ground = ground;
+    if (c.gid) {
+        GPos gp;
+        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking;
+        s_.game.update_pos(c.gid, gp);
+    }
     int ncx = static_cast<int>(std::floor(nx / 16)), ncz = static_cast<int>(std::floor(nz / 16));
     if (ncx == c.cx && ncz == c.cz) return;
     c.cx = ncx;
@@ -609,11 +659,39 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     const auto& id = c.vd->id;
     if (pid == id.pls_keep_alive) {
         c.last_ka_ack = now_ms();
-    } else if (pid == id.pls_move_pos || pid == id.pls_move_pos_rot) {
-        double x = r.f64();
-        r.f64();
-        double z = r.f64();
-        if (!r.bad) on_move(c, x, z);
+    } else if (pid == id.pls_move_pos) {
+        double x = r.f64(), y = r.f64(), z = r.f64();
+        uint8_t fl = r.u8();
+        if (!r.bad) on_move(c, x, y, z, 0, 0, true, false, fl & 1);
+    } else if (pid == id.pls_move_pos_rot) {
+        double x = r.f64(), y = r.f64(), z = r.f64();
+        float yaw = r.f32(), pitch = r.f32();
+        uint8_t fl = r.u8();
+        if (!r.bad) on_move(c, x, y, z, yaw, pitch, true, true, fl & 1);
+    } else if (pid == id.pls_move_rot) {
+        float yaw = r.f32(), pitch = r.f32();
+        uint8_t fl = r.u8();
+        if (!r.bad) on_move(c, 0, 0, 0, yaw, pitch, false, true, fl & 1);
+    } else if (pid == id.pls_move_status) {
+        uint8_t fl = r.u8();
+        if (!r.bad) on_move(c, 0, 0, 0, 0, 0, false, false, fl & 1);
+    } else if (pid == c.vd->packet("play/s/player_input")) {
+        uint8_t fl = r.u8();
+        if (!r.bad && ((fl & 0x20) != 0) != c.sneaking) {
+            c.sneaking = fl & 0x20;
+            on_move(c, 0, 0, 0, 0, 0, false, false, c.ground);
+        }
+    } else if (pid == c.vd->packet("play/s/player_action")) {
+        on_dig(c, r);
+    } else if (pid == c.vd->packet("play/s/use_item_on")) {
+        on_place(c, r);
+    } else if (pid == c.vd->packet("play/s/set_creative_mode_slot")) {
+        if (c.gamemode == 1) on_creative_slot(c, r);
+    } else if (pid == c.vd->packet("play/s/set_carried_item")) {
+        int slot = static_cast<int16_t>(r.be16());
+        if (!r.bad && slot >= 0 && slot < 9) c.held = slot;
+    } else if (pid == c.vd->packet("play/s/punch")) {
+        if (c.gid) s_.game.swing(c.gid);
     } else if (pid == id.pls_batch_received) {
         float rate = r.f32();
         if (!r.bad && std::isfinite(rate)) c.chunk_rate = std::max(0.01f, std::min(rate, 64.0f));
@@ -622,13 +700,12 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     } else if (pid == id.pls_chat) {
         std::string m = r.str(256);
         if (r.bad || m.empty()) return;
-        info("<" + c.name + "> " + m);
-        s_.broadcast("<" + c.name + "> " + m);
+        if (c.gid) s_.game.chat(c.gid, m);
     } else if (pid == id.pls_chat_command) {
         std::string m = r.str(256);
         if (r.bad) return;
         info(c.name + " issued server command: /" + m);
-        send_chat(c, "Unknown or incomplete command");
+        if (c.gid) s_.game.command(c.gid, m);
     } else if (pid == id.pls_client_information) {
         r.str(16);
         int vdist = r.u8();
