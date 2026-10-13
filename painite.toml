@@ -4,8 +4,10 @@
 [network]
 bedrock          = true
 bedrock_port     = "same"   # a number, or "same" to reuse server-port over UDP (like Geyser's clone-remote-port)
-bedrock_version  = "26.52"  # shown in the Bedrock server list
-bedrock_protocol = 2193
+bedrock_version  = "1.26.52" # shown in the Bedrock server list; the protocol number comes from the data file
+bedrock_encryption = true   # vanilla-style encrypted session; clients expect it from Bedrock servers
+bedrock_prefix   = "."      # prepended to Bedrock player names (Floodgate does the same)
+bedrock_unauthenticated = false  # allow Bedrock logins while Java online-mode=true (no Xbox verification yet!)
 
 [bandwidth]
 profile           = "auto"  # auto: no compression for LAN/loopback peers, zlib for everyone else

@@ -24,14 +24,16 @@ Console commands: `help`, `list`, `say <msg>`, `status`, `stop`. `nogui` is acce
 ## Build and run
 
 ```
-python3 tools/fetch_vanilla_data.py          # one-time: protocol data from Mojang's own server jar (needs Java download)
+python3 tools/fetch_vanilla_data.py          # one-time: Java protocol data from Mojang's own server jar (downloads a JRE if needed)
 python3 tools/fetch_vanilla_data.py --version 26.2
+python3 tools/fetch_bedrock_data.py          # one-time: Bedrock join data, recorded from Mojang's Bedrock Dedicated Server
 cmake -S . -B build && cmake --build build -j
 cd /path/to/server-dir && /path/to/painite/build/painite
 ```
 
-`tools/fetch_vanilla_data.py` writes `data/vanilla-<version>.bin/.ids` (packet IDs, registries, a flat chunk).
-Nothing from Mojang is committed; the files are generated locally. Painite serves every version it finds data for.
+`tools/fetch_vanilla_data.py` writes `data/vanilla-<version>.bin/.ids` (packet IDs, registries, a flat chunk) and
+`tools/fetch_bedrock_data.py` writes `data/bedrock-<version>.bin` (the packet sequence a Bedrock client needs to join).
+Nothing from Mojang is committed; the files are generated locally. Painite serves every Java version it finds data for.
 
 Options: `--config`, `--port`, `--bedrock-port N|same`, `--cores 0-3`, `--max-workers`, `--memory-cap MB`, `--no-bedrock`.
 
@@ -53,16 +55,16 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 - Java 26.3 (protocol 777) and 26.2 (776) handshake, status/ping, online and offline login (RSA + AES/CFB8, session-server check), configuration, play join into a flat world, chunk streaming, movement-driven chunk loading, keep-alive, global chat.
 - Worker threads, each with its own epoll loop and `SO_REUSEPORT` listener, pinned to the cores from `painite.toml`. New workers start under load and idle ones retire, inside a total memory cap.
 - Backpressure-driven chunk sending, so slow or high-ping links are not flooded; zlib compression for non-LAN peers.
-- Bedrock: server-list ping and the RakNet open-connection handshake only.
+- Bedrock (built in, same port as Java with `bedrock_port = "same"`): full RakNet session layer (reliability, ordering, split packets, ACK/NACK, resends, congestion window), zlib batches, the encryption handshake, offline login, the resource-pack handshake, a replayed StartGame, chunk and sub-chunk streaming, movement-driven chunk loading and chat shared with Java players. Joined Bedrock players use a `.` name prefix (like Floodgate) and count toward `max-players`, the whitelist and bans.
 
 ## What does not work yet
 
 - Real-Mojang online login is untested (tests use a local fake session server); a Microsoft account is needed to try it.
-- Bedrock sessions (RakNet frames, login, world sync).
+- Bedrock: Xbox authentication (Bedrock logins are refused while `online-mode=true` unless `bedrock_unauthenticated = true`), skins of other players, seeing Java/Bedrock players across editions, block interaction, entities, commands.
 - World loading/saving, blocks, entities, other players visible to each other, commands, anti-xray.
 - Java plugins and mods. Painite is native code and does not load Paper/Spigot/Bukkit plugins or Forge/Fabric mods; keep using Paper for those.
 
-Tests: `cmake --build build --target painite_unit && build/painite_unit`, `python3 tests/smoke.py --port 25565` (running offline server), `python3 tests/online_test.py` (starts its own server and fake session server), `python3 tests/check_layouts.py`.
+Tests: `python3 tests/bedrock_smoke.py --port 25565` (Bedrock join), `tests/udp_lossy_proxy.py` (drop/delay UDP in between), `cmake --build build --target painite_unit && build/painite_unit`, `python3 tests/smoke.py --port 25565` (running offline server), `python3 tests/online_test.py` (starts its own server and fake session server), `python3 tests/check_layouts.py`.
 
 Companion web manager: [CreeperCrest](https://github.com/BeanGreen247/creepercrest).
 

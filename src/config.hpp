@@ -25,7 +25,10 @@ struct Config {
     // painite.toml
     bool bedrock = true;
     int bedrock_port = -1;  // -1 = "same" as java_port
-    std::string bedrock_version = "26.52";
+    std::string bedrock_version = "1.26.52";
+    bool bedrock_encryption = true;       // ServerToClientHandshake + AES-256 like vanilla Bedrock servers
+    bool bedrock_unauthenticated = false; // allow Bedrock logins while Java online-mode=true (no Xbox verification yet)
+    std::string bedrock_prefix = ".";     // prepended to Bedrock names, like Floodgate
     int bedrock_protocol = 2193;
     std::string profile = "auto";  // auto | lan | wan | lossy
     int compression_level = 3;

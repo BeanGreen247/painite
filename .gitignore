@@ -5,3 +5,4 @@ logs/
 world/
 /server.properties
 /eula.txt
+__pycache__/

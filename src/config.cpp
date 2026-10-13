@@ -134,6 +134,9 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = tget("network.bedrock")) c.bedrock = to_bool(*v, c.bedrock);
     if (auto v = tget("network.bedrock_port")) c.bedrock_port = lower(*v) == "same" ? -1 : to_int(*v, -1);
     if (auto v = tget("network.bedrock_version")) c.bedrock_version = *v;
+    if (auto v = tget("network.bedrock_encryption")) c.bedrock_encryption = to_bool(*v, c.bedrock_encryption);
+    if (auto v = tget("network.bedrock_unauthenticated")) c.bedrock_unauthenticated = to_bool(*v, false);
+    if (auto v = tget("network.bedrock_prefix")) c.bedrock_prefix = *v;
     if (auto v = tget("network.bedrock_protocol")) c.bedrock_protocol = to_int(*v, c.bedrock_protocol);
     if (auto v = tget("bandwidth.profile")) c.profile = lower(*v);
     if (auto v = tget("bandwidth.compression_level")) c.compression_level = to_int(*v, c.compression_level);

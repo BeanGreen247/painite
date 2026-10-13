@@ -2,6 +2,7 @@
 #pragma once
 #include "config.hpp"
 #include "auth.hpp"
+#include "bedrock.hpp"
 #include "data.hpp"
 #include "util.hpp"
 #include <atomic>
@@ -144,6 +145,7 @@ private:
     std::unordered_map<int64_t, std::vector<uint8_t>> chunk_cache_;  // framed (compressed) chunk packets
     size_t chunk_cache_bytes_ = 0;
     std::vector<uint8_t> scratch_;
+    std::unique_ptr<Bedrock> bedrock_;
     int64_t last_tick_ = 0;
 };
 

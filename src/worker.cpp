@@ -1,5 +1,6 @@
 #include "server.hpp"
 #include "log.hpp"
+#include "bedrock.hpp"
 #include "util.hpp"
 #include <arpa/inet.h>
 #include <cerrno>
@@ -84,6 +85,12 @@ bool Worker::open_udp(std::string& err) {
     ev.events = EPOLLIN;
     ev.data.fd = udp_;
     epoll_ctl(ep_, EPOLL_CTL_ADD, udp_, &ev);
+    BedrockData bd;
+    std::string derr;
+    bool ok = load_bedrock_data(s_.cfg.data_dir, s_.exe_dir, s_.cfg.compression_level, bd, derr);
+    if (!ok) warn("Bedrock: " + derr + " (only the server-list ping is answered)");
+    else s_.cfg.bedrock_protocol = bd.protocol;
+    bedrock_ = std::make_unique<Bedrock>(s_, udp_, std::move(bd), ok);
     return true;
 }
 
@@ -146,6 +153,7 @@ void Worker::drain_inbox() {
         auths.swap(auth_inbox_);
     }
     for (auto& a : auths) on_auth_result(a.first, a.second);
+    if (bedrock_) for (auto& m : msgs) bedrock_->broadcast_chat(m);
     for (auto& m : msgs)
         for (auto& kv : conns_)
             if (kv.second->st == St::Play && !kv.second->dead) send_chat(*kv.second, m);
@@ -217,6 +225,17 @@ void Worker::tcp_readable(JConn& c) {
 }
 
 void Worker::tcp_writable(JConn& c) { flush(c); }
+
+void Worker::udp_readable() {
+    uint8_t buf[2048];
+    for (int i = 0; i < 256; i++) {
+        sockaddr_storage from{};
+        socklen_t fl = sizeof from;
+        ssize_t n = recvfrom(udp_, buf, sizeof buf, 0, reinterpret_cast<sockaddr*>(&from), &fl);
+        if (n <= 0) return;
+        if (bedrock_) bedrock_->on_datagram(from, fl, buf, static_cast<size_t>(n), now_ms());
+    }
+}
 
 void Worker::flush(JConn& c) {
     while (c.outpos < c.out.size()) {
@@ -296,7 +315,7 @@ void Worker::run() {
     std::vector<int> touched;
     while (!stop_) {
         if (draining_ && conns_.empty()) break;
-        int n = epoll_wait(ep_, evs, 128, 50);
+        int n = epoll_wait(ep_, evs, 128, (bedrock_ && bedrock_->sessions()) ? 20 : 50);
         uint64_t t0 = now_ns();
         touched.clear();
         for (int i = 0; i < n; i++) {
@@ -312,6 +331,7 @@ void Worker::run() {
             touched.push_back(fd);
         }
         int64_t now = now_ms();
+        if (bedrock_) bedrock_->tick(now);
         if (now - last_tick_ >= 50) { last_tick_ = now; tick(now); for (auto& kv : conns_) touched.push_back(kv.first); }
         for (int fd : touched) {
             auto it = conns_.find(fd);
@@ -324,6 +344,7 @@ void Worker::run() {
         busy_ns += now_ns() - t0;
         wall_ns = now_ns() - wall0;
     }
+    if (bedrock_) bedrock_->shutdown();
     std::vector<int> fds;
     for (auto& kv : conns_) fds.push_back(kv.first);
     for (int fd : fds) { auto it = conns_.find(fd); if (it != conns_.end()) { it->second->out.clear(); close_conn(*it->second); } }

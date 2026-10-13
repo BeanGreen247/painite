@@ -46,3 +46,12 @@ protocol support (ViaVersion), built-in profiler (spark).
 ## Protocol data
 Packet IDs and registry packets change with every Minecraft release, so they are not hardcoded.
 `tools/fetch_vanilla_data.py` records them from Mojang's own server for a given version and Painite loads them at start.
+
+## Bedrock
+`src/rak.cpp` is a RakNet session layer written from the protocol (frames, reliability, ordering, split packets, ACK/NACK,
+resend timers, a small congestion window). `src/bedrock.cpp` runs the Bedrock protocol on top of it: batches with zlib
+(per-batch threshold from `network-compression-threshold`), the ECDH/AES-256-CTR handshake, login, and the join sequence.
+The join sequence (StartGame, registries, item/creative/crafting data, commands) is not hand-built: it is recorded from a
+real Bedrock Dedicated Server by `tools/bedrock_capture.py` and replayed, with the per-player parts (player list entry,
+name, chunk coordinates) patched. Static parts are compressed once at startup and only encrypted per client.
+Measured against a UDP relay with 5% loss and 60 ms one-way delay the full join (about 0.7 MB compressed) completes in ~7 s.
