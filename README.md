@@ -50,6 +50,17 @@ Nothing from Mojang is committed; the files are generated locally. Painite serve
 
 Options: `--config`, `--port`, `--bedrock-port N|same`, `--cores 0-3`, `--max-workers`, `--memory-cap MB`, `--no-bedrock`.
 
+## First-time setup (and CreeperCrest)
+
+`./setup.sh` builds Painite and its protocol data if they are missing, creates a server folder (default `~/painite-server`: `painite` and `data` links,
+`server.properties`, `painite.toml`), optionally copies in an existing world, and adds the server to CreeperCrest's `config.json` as a native-binary server:
+
+```
+./setup.sh --dir ~/mc/painite --world ~/mc/paper/world --offline --gamemode creative --creepercrest ~/creepercrest
+```
+
+Restart CreeperCrest afterwards (it keeps its config in memory), then start the server from its web UI. `./setup.sh --help` lists every option.
+
 ## Official and cracked clients
 
 One switch in `server.properties` (same as every Minecraft server), with CLI overrides:
