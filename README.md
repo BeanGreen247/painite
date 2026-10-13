@@ -59,6 +59,10 @@ Options: `--config`, `--port`, `--bedrock-port N|same`, `--cores 0-3`, `--max-wo
 ./setup.sh --dir ~/mc/painite --world ~/mc/paper/world --offline --gamemode creative --creepercrest ~/creepercrest
 ```
 
+`./setup-server.sh` is the interactive version: it asks for everything CreeperCrest's wizard asks for (name, folder, MOTD, world folder name, world type, seed, game mode, difficulty, players, port, view and simulation distance, spawn protection, online mode, PvP, hardcore, whitelist, Nether, flight, command blocks) plus Painite's own settings (Bedrock, fallback generator, autosave, CPU cores, workers, memory cap), can copy a world in, and registers the server with CreeperCrest. Settings that Painite does not act on yet are marked with `*`; world types other than flat and void need terrain generation, so they fall back to flat.
+
+`./run.sh` lists your servers (the ones set up here plus native servers in CreeperCrest), starts the one you pick and shows a terminal dashboard: TPS, tick time, players and their names, chunks, memory, workers, region threads, cores, address, MOTD, the live log, and a command line. It scales with the terminal; PgUp/PgDn scroll the log, Ctrl-C stops the server and returns to the list.
+
 Restart CreeperCrest afterwards (it keeps its config in memory), then start the server from its web UI. `./setup.sh --help` lists every option.
 
 ## Official and cracked clients

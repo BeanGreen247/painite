@@ -22,6 +22,11 @@ struct Config {
     int gamemode = 0;  // 0 survival, 1 creative, 2 adventure, 3 spectator
     int compression_threshold = 256;
     std::string level_name = "world";
+    std::string level_type = "normal";   // normal | flat | void ...: only flat and void exist (no terrain generator)
+    std::string level_seed;
+    int difficulty = -1;                  // -1 = whatever level.dat says
+    bool hardcore = false;
+    int simulation_distance = 10;
 
     // painite.toml
     bool bedrock = true;

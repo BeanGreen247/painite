@@ -101,6 +101,8 @@ PY
   echo "CreeperCrest keeps its config in memory: restart it (systemctl --user restart creepercrest, or restart creepercrest.py) to see the new server."
 fi
 
+PYTHONPATH="$ROOT/tools" python3 -c 'import sys, painite_servers as p; p.add(sys.argv[1], sys.argv[2], sys.argv[3])' "$ID" "$NAME" "$DIR"   # so ./run.sh lists it
+
 say "done"
 echo "server folder : $DIR"
 echo "start by hand : cd $DIR && ./painite"

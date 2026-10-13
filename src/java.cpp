@@ -414,14 +414,14 @@ void Worker::start_play(JConn& c) {
     Wr w;  // Login (play)
     w.varint(id.pl_login);
     w.be32(static_cast<uint32_t>(c.entity_id));
-    w.boolean(false);
+    w.boolean(s_.cfg.hardcore);
     w.varint(3);
     w.str("minecraft:overworld");
     w.str("minecraft:the_nether");
     w.str("minecraft:the_end");
     w.varint(s_.cfg.max_players);
     w.varint(c.radius);
-    w.varint(std::min(c.radius, 10));
+    w.varint(std::max(2, std::min(s_.cfg.simulation_distance, c.radius)));
     w.boolean(false);
     w.boolean(true);
     w.boolean(false);
@@ -486,7 +486,7 @@ void Worker::start_play(JConn& c) {
     if (int dp = vd.packet("play/c/change_difficulty"); dp >= 0) {
         Wr df;
         df.varint(dp);
-        df.u8(static_cast<uint8_t>(s_.world.difficulty));
+        df.u8(static_cast<uint8_t>(s_.cfg.difficulty >= 0 ? s_.cfg.difficulty : s_.world.difficulty));
         df.boolean(false);
         send(c, df.b);
     }

@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include <algorithm>
 #include "log.hpp"
 #include "util.hpp"
 #include <cstdlib>
@@ -121,6 +122,11 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = get("view-distance")) c.view_distance = to_int(*v, c.view_distance);
     if (auto v = get("network-compression-threshold")) c.compression_threshold = to_int(*v, c.compression_threshold);
     if (auto v = get("level-name")) c.level_name = *v;
+    if (auto v = get("level-type")) { c.level_type = lower(*v); c.level_type.erase(std::remove(c.level_type.begin(), c.level_type.end(), '\\'), c.level_type.end()); if (c.level_type.rfind("minecraft:", 0) == 0) c.level_type = c.level_type.substr(10); }
+    if (auto v = get("level-seed")) c.level_seed = *v;
+    if (auto v = get("difficulty")) { std::string d = lower(*v); c.difficulty = d == "peaceful" ? 0 : d == "easy" ? 1 : d == "normal" ? 2 : d == "hard" ? 3 : to_int(d, -1); }
+    if (auto v = get("hardcore")) c.hardcore = to_bool(*v, false);
+    if (auto v = get("simulation-distance")) c.simulation_distance = to_int(*v, c.simulation_distance);
     if (auto v = get("gamemode")) {
         std::string g = lower(*v);
         c.gamemode = g == "creative" ? 1 : g == "adventure" ? 2 : g == "spectator" ? 3 : g == "survival" ? 0 : to_int(g, 0);
