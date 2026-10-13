@@ -6,6 +6,7 @@
 #include <chrono>
 #include <fstream>
 #include <random>
+#include <pthread.h>
 #include <sched.h>
 #include <sstream>
 #include <sys/stat.h>
@@ -210,6 +211,7 @@ void Server::reload_icon(bool log_missing) {
 }
 
 void Server::monitor() {
+    pthread_setname_np(pthread_self(), "pn-monitor");
     struct Snap { uint64_t busy = 0; int64_t t = 0; };
     std::unordered_map<int, Snap> snaps;
     while (!stopping) {

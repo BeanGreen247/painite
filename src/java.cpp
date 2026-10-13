@@ -483,6 +483,13 @@ void Worker::start_play(JConn& c) {
     send(c, ge.b);
 
     send_time(c, s_.game.game_time(), s_.game.day_time());
+    if (int dp = vd.packet("play/c/change_difficulty"); dp >= 0) {
+        Wr df;
+        df.varint(dp);
+        df.u8(static_cast<uint8_t>(s_.world.difficulty));
+        df.boolean(false);
+        send(c, df.b);
+    }
 
     Wr pi;  // own tab-list entry
     pi.varint(id.pl_player_info);

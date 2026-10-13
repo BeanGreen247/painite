@@ -24,7 +24,7 @@ static void classify(BlockInfo& b) {
     b.air = n == "minecraft:air" || n == "minecraft:cave_air" || n == "minecraft:void_air";
     b.fluid = n == "minecraft:water" || n == "minecraft:lava" || n == "minecraft:bubble_column" || n == "minecraft:kelp" || n == "minecraft:kelp_plant" ||
               n == "minecraft:seagrass" || n == "minecraft:tall_seagrass" || has(b.props, "waterlogged=true");
-    b.replaceable = b.air || any(n, {":water", ":lava", "short_grass", "tall_grass", ":fern", "large_fern", "dead_bush", "seagrass", ":vine", ":snow", ":fire", ":light"}) && !has(n, "block");
+    b.replaceable = b.air || (any(n, {":water", ":lava", "short_grass", "tall_grass", ":fern", "large_fern", "dead_bush", "seagrass", ":vine", ":snow", ":fire", ":light"}) && !has(n, "block"));
     // light behaviour and collision, by name (the block report has neither)
     static const std::initializer_list<const char*> plants = {"torch", "flower", "grass", "fern", "vine", "sapling", "rail", "button", "lever", "dead_bush",
         "seagrass", "kelp", "fire", "pressure_plate", "tripwire", "redstone_wire", "sign", "banner", "portal", "wheat", "carrots", "potatoes", "beetroots",

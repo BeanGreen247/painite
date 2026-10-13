@@ -29,11 +29,7 @@ struct Chunk {
     std::atomic<uint32_t> version{1};
     bool dirty = false;
     int64_t last_used_ms = 0;
-    // derived data, rebuilt when version changes (guarded by mu)
-    uint32_t light_version = 0;
-    std::vector<uint8_t> blk;        // block light, same layout as sky
-    std::vector<uint8_t> sky;        // (kSections + 2) * 2048 nibbles, section index + 1
-    std::vector<int16_t> height_ws, height_mb;  // 256 each: highest y+1 of world surface / motion blocking, kMinY if none
+    uint8_t air_biomes[kSections][64] = {};   // biome cells of sections that hold only air (those have no Section object)
 
     uint16_t get(int lx, int y, int lz) const {
         int s = (y - kMinY) >> 4;
@@ -58,6 +54,7 @@ public:
     std::vector<std::string> biome_names;
     int spawn_x = 0, spawn_y = -60, spawn_z = 0;
     int64_t game_time = 0, day_time = 0;
+    int difficulty = 2;                  // 0 peaceful .. 3 hard, from level.dat
     int data_version = 0;
     std::string dir, region_dir;
     bool flat_fallback = true;
@@ -83,7 +80,11 @@ private:
     bool have_level_ = false;
 };
 
-// Skylight and heightmaps for a chunk (caller holds c.mu); cheap when the version is unchanged.
-void ensure_light(Chunk& c);
+// Light and heightmaps of a chunk, computed for one encode and then dropped (caller holds c.mu).
+struct Light {
+    std::vector<uint8_t> sky, blk;                 // (kSections + 2) * 2048 nibbles, section index + 1
+    std::vector<int16_t> height_ws, height_mb;     // 256 each: highest y+1 of world surface / motion blocking, kMinY if none
+};
+void compute_light(const Chunk& c, Light& out);
 
 }  // namespace pn

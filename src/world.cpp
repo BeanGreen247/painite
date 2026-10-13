@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <dirent.h>
+#include <set>
 #include <sys/stat.h>
 
 namespace pn {
@@ -17,7 +18,7 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
     if (!sec[s]) {
         if (id == 0) return;
         sec[s] = std::make_unique<Section>();
-        if (s > 0 && sec[s - 1]) memcpy(sec[s]->biome, sec[s - 1]->biome, 64);
+        memcpy(sec[s]->biome, air_biomes[s], 64);
     }
     sec[s]->b[((y & 15) << 8) | (lz << 4) | lx] = id;
     version++;
@@ -65,6 +66,14 @@ bool World::open(const std::string& d, const std::string& generator, const Vanil
             }
             game_time = data->geti("Time");
             day_time = data->geti("DayTime", game_time);
+            if (const Nbt* ds = data->get("difficulty_settings")) {
+                std::string dn = ds->gets("difficulty");
+                difficulty = dn == "peaceful" ? 0 : dn == "easy" ? 1 : dn == "hard" ? 3 : 2;
+            } else if (data->get("Difficulty")) difficulty = static_cast<int>(data->geti("Difficulty", 2));
+            // 26.x keeps the time of day in data/minecraft/world_clocks.dat
+            Nbt clocks;
+            if (read_nbt_file(dir + "/data/minecraft/world_clocks.dat", clocks))
+                if (const Nbt* cd = clocks.get("data")) if (const Nbt* ov = cd->get("minecraft:overworld")) if (ov->get("total_ticks")) day_time = ov->geti("total_ticks");
             if (int dv = static_cast<int>(data->geti("DataVersion"))) data_version = dv;
         }
     }
@@ -85,7 +94,7 @@ void World::flat(Chunk& c) {
     };
     uint16_t ids[4] = {bedrock, dirt, dirt, grass};
     fill(0, 4, ids);
-    for (int s = 1; s < kSections; s++) { c.sec[s] = std::make_unique<Section>(); memset(c.sec[s]->biome, plains, 64); }
+    memset(c.air_biomes, plains, sizeof c.air_biomes);
     c.extra = Nbt::compound();
     c.extra.put("Status", Nbt::str("minecraft:full"));
 }
@@ -119,6 +128,12 @@ bool World::from_nbt(Chunk& c, const Nbt& root) {
                     for (auto& p : pr->map) kv.emplace_back(p.first, p.second.type == Nbt::String ? p.second.s : std::to_string(p.second.i));
                     std::sort(kv.begin(), kv.end());
                     for (auto& p : kv) props += (props.empty() ? "" : ",") + p.first + "=" + p.second;
+                }
+                if (!B.known(name)) {
+                    static std::mutex um;
+                    static std::set<std::string> seen;
+                    std::lock_guard<std::mutex> ul(um);
+                    if (seen.size() < 40 && seen.insert(name).second) warn("world contains the unknown block \"" + name + "\" (shown as air; probably a pre-upgrade chunk)");
                 }
                 map.push_back(B.find(name, props));
             }
@@ -155,9 +170,11 @@ bool World::from_nbt(Chunk& c, const Nbt& root) {
                 }
             }
         }
-        c.sec[idx] = std::move(sec);
+        bool empty = true;
+        for (int i = 0; i < 4096 && empty; i++) if (sec->b[i]) empty = false;
+        if (empty) memcpy(c.air_biomes[idx], sec->biome, 64);     // air only: no Section object, the biomes are kept for saving
+        else c.sec[idx] = std::move(sec);
     }
-    for (int s = 0; s < kSections; s++) if (!c.sec[s]) { c.sec[s] = std::make_unique<Section>(); memset(c.sec[s]->biome, biome_index("minecraft:plains"), 64); }
     return true;
 }
 
@@ -179,13 +196,15 @@ void World::to_nbt(Chunk& c, Nbt& root) {
     if (!root.get("Status")) root.put("Status", Nbt::str("minecraft:full"));
     Nbt secs = Nbt::list_of(Nbt::Compound);
     for (int s = 0; s < kSections; s++) {
-        if (!c.sec[s]) continue;
         Nbt sn = Nbt::compound();
         sn.put("Y", Nbt::make(Nbt::Byte, s + (kMinY >> 4)));
+        Section tmp;   // air only sections carry just their biomes
+        const Section* sp = c.sec[s].get();
+        if (!sp) { memcpy(tmp.biome, c.air_biomes[s], 64); sp = &tmp; }
         std::vector<uint16_t> pal, idx(4096);
         std::unordered_map<uint16_t, uint16_t> pm;
         for (int i = 0; i < 4096; i++) {
-            uint16_t b = c.sec[s]->b[i];
+            uint16_t b = sp->b[i];
             auto it = pm.find(b);
             if (it == pm.end()) { it = pm.emplace(b, static_cast<uint16_t>(pal.size())).first; pal.push_back(b); }
             idx[static_cast<size_t>(i)] = it->second;
@@ -224,7 +243,7 @@ void World::to_nbt(Chunk& c, Nbt& root) {
         std::vector<uint16_t> bp, bidx(64);
         std::unordered_map<uint16_t, uint16_t> bmap;
         for (int i = 0; i < 64; i++) {
-            uint16_t b = c.sec[s]->biome[i];
+            uint16_t b = sp->biome[i];
             auto it = bmap.find(b);
             if (it == bmap.end()) { it = bmap.emplace(b, static_cast<uint16_t>(bp.size())).first; bp.push_back(b); }
             bidx[static_cast<size_t>(i)] = it->second;
@@ -242,6 +261,7 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
     auto c = std::make_shared<Chunk>();
     c->x = cx;
     c->z = cz;
+    memset(c->air_biomes, biome_index("minecraft:plains"), sizeof c->air_biomes);
     Nbt root;
     if (anvil_read(region_dir, cx, cz, root) && from_nbt(*c, root)) {
         // loaded
@@ -249,7 +269,6 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
         flat(*c);
         c->dirty = true;
     } else {
-        for (int s = 0; s < kSections; s++) { c->sec[s] = std::make_unique<Section>(); memset(c->sec[s]->biome, biome_index("minecraft:plains"), 64); }
         c->extra = Nbt::compound();
     }
     return c;
@@ -335,6 +354,12 @@ void World::save(bool unload_idle, int64_t now) {
 }
 
 void World::save_level() {
+    Nbt clocks;
+    if (read_nbt_file(dir + "/data/minecraft/world_clocks.dat", clocks))
+        if (Nbt* cd = clocks.get("data")) if (Nbt* ov = cd->get("minecraft:overworld")) {
+            ov->put("total_ticks", Nbt::make(Nbt::Long, day_time));
+            write_nbt_file(dir + "/data/minecraft/world_clocks.dat", clocks);
+        }
     if (!have_level_) return;
     Nbt* d = level_.get("Data");
     if (!d) return;
@@ -345,10 +370,11 @@ void World::save_level() {
 }
 
 World::Spawn World::pick_spawn(const std::string& uuid, int default_gamemode) {
-    Spawn s{spawn_x + 0.5, spawn_y, spawn_z + 0.5, 0, 0, default_gamemode, false};
+    Spawn s{spawn_x + 0.5, static_cast<double>(spawn_y), spawn_z + 0.5, 0, 0, default_gamemode, false};
     Nbt pd;
     if (load_player(uuid, pd)) {
-        const Nbt* pos = pd.get("Pos");
+        std::string dim = pd.gets("Dimension");
+        const Nbt* pos = (dim.empty() || dim == "minecraft:overworld" || dim == "overworld") ? pd.get("Pos") : nullptr;   // positions in the nether or end mean nothing here
         if (pos && pos->type == Nbt::List && pos->list.size() == 3) {
             double x = pos->list[0].f, y = pos->list[1].f, z = pos->list[2].f;
             if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::fabs(x) < 3e7 && std::fabs(z) < 3e7) {
@@ -379,30 +405,49 @@ bool World::save_player(const std::string& uuid, const Nbt& out) {
 
 // ---- lighting -------------------------------------------------------------------------------------------
 
-void ensure_light(Chunk& c) {
-    uint32_t ver = c.version.load();
-    if (c.light_version == ver && !c.sky.empty()) return;
+void compute_light(const Chunk& c, Light& L) {
     const Blocks& B = Blocks::get();
-    const int H = kHeight, S = kSections + 2;
-    // dense copy of opacity so the flood fill does not chase section pointers
-    std::vector<uint8_t> op(static_cast<size_t>(16 * 16 * H), 0);
+    const int S = kSections + 2;
+    L.height_ws.assign(256, kMinY);
+    L.height_mb.assign(256, kMinY);
+    // everything above the highest section that holds a block is open sky: only the part below needs work
+    int top = -1;
+    for (int s = kSections - 1; s >= 0; s--) if (c.sec[s]) { top = s; break; }
+    L.sky.assign(static_cast<size_t>(S) * 2048, 0xff);
+    L.blk.assign(static_cast<size_t>(S) * 2048, 0);
+    if (top < 0) return;
+    const int H = std::min(kHeight, (top + 1) * 16);   // rows computed; row H and above are air with full skylight
+    const size_t N = static_cast<size_t>(256) * static_cast<size_t>(H);
+    std::vector<uint8_t> op(N, 0);
     auto at = [&](int x, int y, int z) -> size_t { return (static_cast<size_t>(y) * 16 + static_cast<size_t>(z)) * 16 + static_cast<size_t>(x); };
-    c.height_ws.assign(256, kMinY);
-    c.height_mb.assign(256, kMinY);
-    for (int s = 0; s < kSections; s++) {
+    std::vector<uint32_t> bq;
+    std::vector<uint8_t> bl;
+    bool any_emit = false;
+    for (int s = 0; s <= top; s++) {
         if (!c.sec[s]) continue;
         for (int i = 0; i < 4096; i++) {
             uint16_t b = c.sec[s]->b[i];
             if (!b) continue;
             int x = i & 15, z = (i >> 4) & 15, y = s * 16 + (i >> 8);
             const BlockInfo& bi = B.info(b);
-            op[at(x, y, z)] = bi.opacity;
-            if (!bi.air) c.height_ws[static_cast<size_t>(z * 16 + x)] = static_cast<int16_t>(std::max<int>(c.height_ws[static_cast<size_t>(z * 16 + x)], y + kMinY + 1));
-            if ((bi.solid || bi.fluid) && !bi.air) c.height_mb[static_cast<size_t>(z * 16 + x)] = static_cast<int16_t>(std::max<int>(c.height_mb[static_cast<size_t>(z * 16 + x)], y + kMinY + 1));
+            size_t ix = at(x, y, z);
+            op[ix] = bi.opacity;
+            if (!bi.air) {
+                auto& h = L.height_ws[static_cast<size_t>(z * 16 + x)];
+                h = static_cast<int16_t>(std::max<int>(h, y + kMinY + 1));
+            }
+            if ((bi.solid || bi.fluid) && !bi.air) {
+                auto& h = L.height_mb[static_cast<size_t>(z * 16 + x)];
+                h = static_cast<int16_t>(std::max<int>(h, y + kMinY + 1));
+            }
+            if (bi.emit) {
+                if (!any_emit) { any_emit = true; bl.assign(N, 0); }
+                bl[ix] = bi.emit;
+                bq.push_back(static_cast<uint32_t>(ix));
+            }
         }
     }
-    std::vector<uint8_t> light(op.size(), 0);
-    std::vector<uint32_t> q;
+    std::vector<uint8_t> light(N, 0);
     for (int z = 0; z < 16; z++)
         for (int x = 0; x < 16; x++) {
             int l = 15;
@@ -411,57 +456,42 @@ void ensure_light(Chunk& c) {
                 light[at(x, y, z)] = static_cast<uint8_t>(l);
             }
         }
-    // spill sideways under overhangs and into caves near openings
+    static const int dx[6] = {1, -1, 0, 0, 0, 0}, dy[6] = {0, 0, 1, -1, 0, 0}, dz[6] = {0, 0, 0, 0, 1, -1};
+    // spill sideways under overhangs and into caves: only cells with a darker neighbour can brighten anything
+    std::vector<uint32_t> q;
     for (int y = 0; y < H; y++)
         for (int z = 0; z < 16; z++)
-            for (int x = 0; x < 16; x++)
-                if (light[at(x, y, z)] > 1) q.push_back(static_cast<uint32_t>(at(x, y, z)));
-    static const int dx[6] = {1, -1, 0, 0, 0, 0}, dy[6] = {0, 0, 1, -1, 0, 0}, dz[6] = {0, 0, 0, 0, 1, -1};
-    for (size_t h = 0; h < q.size(); h++) {
-        uint32_t cur = q[h];
-        int x = cur & 15, z = (cur >> 4) & 15, y = static_cast<int>(cur >> 8);
-        int l = light[cur];
-        if (l <= 1) continue;
-        for (int d = 0; d < 6; d++) {
-            int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
-            if (nx < 0 || nx > 15 || nz < 0 || nz > 15 || ny < 0 || ny >= H) continue;
-            size_t ni = at(nx, ny, nz);
-            if (op[ni] >= 15) continue;
-            int nl = l - std::max<int>(1, op[ni]);
-            if (nl > light[ni]) { light[ni] = static_cast<uint8_t>(nl); q.push_back(static_cast<uint32_t>(ni)); }
+            for (int x = 0; x < 16; x++) {
+                size_t ix = at(x, y, z);
+                int l = light[ix];
+                if (l <= 1) continue;
+                bool edge = false;
+                for (int d = 0; d < 6 && !edge; d++) {
+                    int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
+                    if (nx < 0 || nx > 15 || nz < 0 || nz > 15 || ny < 0 || ny >= H) continue;
+                    size_t ni = at(nx, ny, nz);
+                    if (op[ni] < 15 && light[ni] + 1 < l) edge = true;
+                }
+                if (edge) q.push_back(static_cast<uint32_t>(ix));
+            }
+    auto flood = [&](std::vector<uint32_t>& queue, std::vector<uint8_t>& lv) {
+        for (size_t h = 0; h < queue.size(); h++) {
+            uint32_t cur = queue[h];
+            int x = cur & 15, z = (cur >> 4) & 15, y = static_cast<int>(cur >> 8);
+            int l = lv[cur];
+            if (l <= 1) continue;
+            for (int d = 0; d < 6; d++) {
+                int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
+                if (nx < 0 || nx > 15 || nz < 0 || nz > 15 || ny < 0 || ny >= H) continue;
+                size_t ni = at(nx, ny, nz);
+                if (op[ni] >= 15) continue;
+                int nl = l - std::max<int>(1, op[ni]);
+                if (nl > lv[ni]) { lv[ni] = static_cast<uint8_t>(nl); queue.push_back(static_cast<uint32_t>(ni)); }
+            }
         }
-    }
-    // block light from emitters
-    std::vector<uint8_t> bl(op.size(), 0);
-    std::vector<uint32_t> bq;
-    for (int s = 0; s < kSections; s++) {
-        if (!c.sec[s]) continue;
-        for (int i = 0; i < 4096; i++) {
-            uint16_t b = c.sec[s]->b[i];
-            if (!b) continue;
-            uint8_t e = B.info(b).emit;
-            if (!e) continue;
-            size_t ix = at(i & 15, s * 16 + (i >> 8), (i >> 4) & 15);
-            bl[ix] = e;
-            bq.push_back(static_cast<uint32_t>(ix));
-        }
-    }
-    for (size_t h = 0; h < bq.size(); h++) {
-        uint32_t cur = bq[h];
-        int x = cur & 15, z = (cur >> 4) & 15, y = static_cast<int>(cur >> 8);
-        int l = bl[cur];
-        if (l <= 1) continue;
-        for (int d = 0; d < 6; d++) {
-            int nx = x + dx[d], ny = y + dy[d], nz = z + dz[d];
-            if (nx < 0 || nx > 15 || nz < 0 || nz > 15 || ny < 0 || ny >= H) continue;
-            size_t ni = at(nx, ny, nz);
-            if (op[ni] >= 15) continue;
-            int nl = l - std::max<int>(1, op[ni]);
-            if (nl > bl[ni]) { bl[ni] = static_cast<uint8_t>(nl); bq.push_back(static_cast<uint32_t>(ni)); }
-        }
-    }
-    c.sky.assign(static_cast<size_t>(S) * 2048, 0);
-    c.blk.assign(static_cast<size_t>(S) * 2048, 0);
+    };
+    flood(q, light);
+    if (any_emit) flood(bq, bl);
     for (int y = 0; y < H; y++)
         for (int z = 0; z < 16; z++)
             for (int x = 0; x < 16; x++) {
@@ -469,12 +499,12 @@ void ensure_light(Chunk& c) {
                 size_t cell = static_cast<size_t>(((y & 15) << 8) | (z << 4) | x);
                 size_t bi = static_cast<size_t>(sidx) * 2048 + (cell >> 1);
                 size_t li = at(x, y, z);
-                if (cell & 1) { c.sky[bi] = static_cast<uint8_t>(c.sky[bi] | (light[li] << 4)); c.blk[bi] = static_cast<uint8_t>(c.blk[bi] | (bl[li] << 4)); }
-                else { c.sky[bi] = static_cast<uint8_t>(c.sky[bi] | light[li]); c.blk[bi] = static_cast<uint8_t>(c.blk[bi] | bl[li]); }
+                uint8_t sv = light[li], bv = any_emit ? bl[li] : 0;
+                if (cell & 1) { L.sky[bi] = static_cast<uint8_t>((L.sky[bi] & 0x0f) | (sv << 4)); L.blk[bi] = static_cast<uint8_t>(L.blk[bi] | (bv << 4)); }
+                else { L.sky[bi] = static_cast<uint8_t>((L.sky[bi] & 0xf0) | sv); L.blk[bi] = static_cast<uint8_t>(L.blk[bi] | bv); }
             }
-    // the section above the world is fully lit
-    std::fill(c.sky.begin() + static_cast<long>((S - 1) * 2048), c.sky.end(), 0xff);
-    c.light_version = ver;
+    // section index 0 is the one below the world: dark
+    std::fill(L.sky.begin(), L.sky.begin() + 2048, 0);
 }
 
 }  // namespace pn

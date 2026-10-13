@@ -879,6 +879,9 @@ void Bedrock::on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n) {
         case 77:
             on_command_request(b, p, n);
             break;
+        case 44:   // Animate: arm swing
+            if (b.st == BSession::St::Playing && b.gid && n >= 1 && p[0] == 1) s_.game.swing(b.gid);
+            break;
         default:
             break;
     }

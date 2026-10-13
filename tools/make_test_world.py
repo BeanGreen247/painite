@@ -19,6 +19,7 @@ def main():
     ap.add_argument("--version", default="26.3")
     ap.add_argument("--radius", type=int, default=5)
     ap.add_argument("--port", type=int, default=25597)
+    ap.add_argument("--cmd", action="append", default=[], help="console command to run after the chunks were recorded (before the world is saved), e.g. 'setblock -688 100 -480 chest'")
     a = ap.parse_args()
     man = json.loads(fetch.get(fetch.MANIFEST))
     vurl = next(v["url"] for v in man["versions"] if v["id"] == a.version)
@@ -35,7 +36,7 @@ def main():
             f"online-mode=false\nserver-port={a.port}\nwhite-list=false\nlevel-seed=painite\nview-distance={a.radius}\nspawn-protection=0\n"
             "spawn-monsters=false\nspawn-animals=false\ngenerate-structures=false\nnetwork-compression-threshold=-1\n")
         log = open(os.path.join(work, "server.log"), "w")
-        srv = subprocess.Popen([java, "-Xmx1G", "-jar", jar, "nogui"], cwd=run, stdout=log, stderr=subprocess.STDOUT)
+        srv = subprocess.Popen([java, "-Xmx1G", "-jar", jar, "nogui"], cwd=run, stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
         chunks = {}
         try:
             for _ in range(180):
@@ -92,6 +93,14 @@ def main():
                 if len(chunks) >= (2 * a.radius + 1) ** 2 and time.time() - last > 3:
                     break
             print("recorded", len(chunks), "chunk packets")
+            for cmd in a.cmd:
+                srv.stdin.write((cmd + "\n").encode())
+                srv.stdin.flush()
+                time.sleep(0.5)
+            if a.cmd:
+                srv.stdin.write(b"save-all flush\n")
+                srv.stdin.flush()
+                time.sleep(3)
         finally:
             srv.terminate()
             srv.wait(timeout=120)

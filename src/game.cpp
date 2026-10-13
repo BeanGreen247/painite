@@ -4,6 +4,7 @@
 #include "server.hpp"
 #include <algorithm>
 #include <chrono>
+#include <pthread.h>
 #include <cmath>
 
 namespace pn {
@@ -33,6 +34,19 @@ void Game::post_task(std::function<void()> fn) {
 
 void Game::send_event(const std::shared_ptr<const GIdentity>& to, GEvent ev) {
     s_.post_to_worker(to->worker, [conn = to->conn, ev = std::move(ev)](Worker& w) { w.on_game_event(conn, ev); });
+}
+
+void Game::queue_event(const std::shared_ptr<const GIdentity>& to, GEvent ev) { batch_[to->worker].emplace_back(to->conn, std::move(ev)); }
+
+// One post (one lock, one wake-up) per worker per tick instead of one per event.
+void Game::flush_events() {
+    for (auto& kv : batch_) {
+        if (kv.second.empty()) continue;
+        s_.post_to_worker(kv.first, [events = std::move(kv.second)](Worker& w) {
+            for (auto& e : events) w.on_game_event(e.first, e.second);
+        });
+        kv.second.clear();
+    }
 }
 
 // ---- registry ---------------------------------------------------------------------------------------------
@@ -336,7 +350,7 @@ void Game::tick() {
                 pe.kind = GEvent::Pose;
                 pe.id = p.id;
                 pe.pos = p.sent;
-                for (auto& v : players_) if (v.first != p.id->gid && v.second.seen.count(p.id->gid)) send_event(v.second.id, pe);
+                for (auto& v : players_) if (v.first != p.id->gid && v.second.seen.count(p.id->gid)) queue_event(v.second.id, pe);
             }
             m.ev = e;
         }
@@ -366,7 +380,7 @@ void Game::tick() {
         for (auto it = v.seen.begin(); it != v.seen.end();) {
             if (!near.count(*it)) {
                 auto pit = players_.find(*it);
-                if (pit != players_.end()) { GEvent d; d.kind = GEvent::Despawn; d.id = pit->second.id; send_event(v.id, d); }
+                if (pit != players_.end()) { GEvent d; d.kind = GEvent::Despawn; d.id = pit->second.id; queue_event(v.id, d); }
                 it = v.seen.erase(it);
             } else ++it;
         }
@@ -379,7 +393,7 @@ void Game::tick() {
             e.kind = GEvent::Spawn;
             e.id = pit->second.id;
             e.pos = pit->second.sent;
-            send_event(v.id, e);
+            queue_event(v.id, e);
         }
     }
     // movement to everyone who already had the subject spawned before this tick
@@ -390,18 +404,20 @@ void Game::tick() {
             PState& v = vkv.second;
             if (!v.seen.count(m.p->id->gid)) continue;
             if (fresh.count(vkv.first * 1000003ull + m.p->id->gid)) continue;
-            send_event(v.id, m.ev);
+            queue_event(v.id, m.ev);
         }
     }
+    flush_events();
 }
 
 void Game::loop() {
+    pthread_setname_np(pthread_self(), "pn-game");
     using clock = std::chrono::steady_clock;
     auto next = clock::now() + std::chrono::milliseconds(50);
     int64_t win_start = now_ms();
     int win_ticks = 0;
     double busy_acc = 0;
-    int64_t last_lists = 0;
+    int64_t last_lists = 0, last_unload = 0;
     while (!stop_) {
         std::vector<std::function<void()>> tasks;
         {
@@ -411,9 +427,11 @@ void Game::loop() {
         }
         if (stop_) break;
         auto t0 = clock::now();
-        for (auto& t : tasks) t();
+        for (auto& t : tasks) {
+            try { t(); } catch (const std::exception& e) { error(std::string("game task failed: ") + e.what()); }
+        }
         if (clock::now() >= next) {
-            tick();
+            try { tick(); } catch (const std::exception& e) { error(std::string("tick failed: ") + e.what()); }
             win_ticks++;
             next += std::chrono::milliseconds(50);
             if (clock::now() > next + std::chrono::milliseconds(500)) next = clock::now() + std::chrono::milliseconds(50);  // fell behind: skip, do not burst
@@ -426,6 +444,10 @@ void Game::loop() {
             win_start = now;
             win_ticks = 0;
             busy_acc = 0;
+        }
+        if (now - last_unload > 30000) {   // keep memory bounded when players roam: write and drop chunks nobody touched for a minute
+            last_unload = now;
+            if (saving_enabled && s_.world.loaded() > 1500) s_.world.save(true, now);
         }
         if (s_.cfg.autosave_s > 0 && now - last_autosave_ >= static_cast<int64_t>(s_.cfg.autosave_s) * 1000) {
             last_autosave_ = now;

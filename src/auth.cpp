@@ -6,6 +6,7 @@
 #include <arpa/inet.h>
 #include <cstring>
 #include <netdb.h>
+#include <pthread.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/rsa.h>
@@ -101,6 +102,7 @@ void Auth::post_task(std::function<void()> fn) {
 }
 
 void Auth::loop() {
+    pthread_setname_np(pthread_self(), "pn-auth");
     for (;;) {
         AuthRequest r;
         {

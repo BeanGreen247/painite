@@ -72,9 +72,10 @@ void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail) {
     std::vector<int32_t> prev;
     for (int s = 0; s < kSections; s++) {
         std::vector<int32_t> vals(4096, 1);
-        if (c.sec[s]) {
+        {
+            const uint8_t* cells = c.sec[s] ? c.sec[s]->biome : c.air_biomes[s];
             for (int x = 0; x < 16; x++) for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) {
-                uint8_t b = c.sec[s]->biome[(y >> 2) * 16 + (z >> 2) * 4 + (x >> 2)];
+                uint8_t b = cells[(y >> 2) * 16 + (z >> 2) * 4 + (x >> 2)];
                 vals[static_cast<size_t>(x * 256 + z * 16 + y)] = b < g_biome_ids.size() ? g_biome_ids[b] : 1;
             }
         }

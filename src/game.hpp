@@ -103,6 +103,8 @@ private:
     void loop();
     void tick();
     void send_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);
+    void queue_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);   // tick only: batched per worker
+    void flush_events();
     void broadcast_time();
     void spawn_for(PState& viewer, PState& p);
     void despawn_for(PState& viewer, PState& p);
@@ -114,6 +116,7 @@ private:
     std::atomic<bool> stop_{false};
     std::mutex mu_;
     std::unordered_map<uint64_t, PState> players_;
+    std::unordered_map<int, std::vector<std::pair<uint64_t, GEvent>>> batch_;   // worker id -> events of the running tick
     uint64_t next_gid_ = 1;
     std::mutex task_mu_;
     std::condition_variable task_cv_;

@@ -341,6 +341,10 @@ void Worker::tick(int64_t now) {
 }
 
 void Worker::run() {
+    {
+        std::string nm = "pn-worker" + std::to_string(id_);
+        pthread_setname_np(pthread_self(), nm.c_str());
+    }
     if (s_.cfg.pin && core_ >= 0) {
         cpu_set_t set;
         CPU_ZERO(&set);
@@ -359,13 +363,28 @@ void Worker::run() {
         for (int i = 0; i < n; i++) {
             int fd = evs[i].data.fd;
             if (fd == tcp_) { accept_ready(); continue; }
-            if (fd == udp_) { udp_readable(); continue; }
-            if (fd == evfd_) { uint64_t v; (void)!read(evfd_, &v, 8); drain_inbox(); continue; }
+            if (fd == udp_) {
+                try { udp_readable(); } catch (const std::exception& e) { error(std::string("Bedrock datagram handling failed: ") + e.what()); }
+                continue;
+            }
+            if (fd == evfd_) {
+                uint64_t v;
+                (void)!read(evfd_, &v, 8);
+                try { drain_inbox(); } catch (const std::exception& e) { error(std::string("worker event failed: ") + e.what()); }
+                continue;
+            }
             auto it = conns_.find(fd);
             if (it == conns_.end()) continue;
             JConn& c = *it->second;
-            if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP)) tcp_readable(c);
-            if (evs[i].events & EPOLLOUT) tcp_writable(c);
+            try {
+                if (evs[i].events & (EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP)) tcp_readable(c);
+                if (evs[i].events & EPOLLOUT) tcp_writable(c);
+            } catch (const std::exception& e) {   // a bug triggered by one client must not take the server down
+                error("connection " + c.addr + " dropped after an internal error: " + e.what());
+                c.dead = true;
+                c.out.clear();
+                c.outpos = 0;
+            }
             touched.push_back(fd);
         }
         int64_t now = now_ms();
