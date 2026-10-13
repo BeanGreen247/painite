@@ -176,6 +176,9 @@ def main():
                     c.send(cf_fin_s)
                     break
             chunks, login, set_time = [], None, None
+            samples = {}
+            want = ["player_position", "set_default_spawn_position", "game_event", "set_chunk_cache_center", "player_abilities"]
+            want_ids = {pid_of("play", "clientbound", n): n for n in want}
             end = time.time() + 8
             while time.time() < end:
                 pid, d = c.recv()
@@ -187,6 +190,8 @@ def main():
                     login = d
                 elif pid == pid_of("play", "clientbound", "set_time") and set_time is None:
                     set_time = d
+                elif pid in want_ids and want_ids[pid] not in samples:
+                    samples[want_ids[pid]] = d
             if not chunks:
                 sys.exit("no chunk captured")
             # most common size = plain flat chunk without structures
@@ -227,7 +232,9 @@ def main():
             for p in cfg:
                 f.write(struct.pack("<I", len(p)) + p)
             f.write(struct.pack("<I", len(tpl)) + tpl)
-            blobs = {"set_time": set_time, "login_finished_sample": login_finished}
+            blobs = {"set_time": set_time, "login_finished_sample": login_finished, "play_login_sample": login}
+            for k, v in samples.items():
+                blobs["play_" + k] = v
             f.write(struct.pack("<I", len(blobs)))
             for k, v in blobs.items():
                 f.write(bytes([len(k)]) + k.encode() + struct.pack("<I", len(v)) + v)

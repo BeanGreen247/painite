@@ -14,6 +14,9 @@ struct Config {
     int max_players = 20;
     bool online_mode = false;
     bool white_list = false;
+    bool prevent_proxy = false;  // prevent-proxy-connections: pass the client IP to the session server
+    std::string session_host = "sessionserver.mojang.com";  // host or host:port
+    std::string session_ca_file;  // optional CA bundle for private auth servers
     int view_distance = 10;
     int gamemode = 0;  // 0 survival, 1 creative, 2 adventure, 3 spectator
     int compression_threshold = 256;

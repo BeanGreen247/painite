@@ -130,6 +130,11 @@ bool Server::spawn_worker(std::string& err) {
     return true;
 }
 
+void Server::route_auth(const AuthRequest& r, AuthResult&& res) {
+    std::lock_guard<std::mutex> l(wm_);
+    for (auto& w : workers_) if (w->id() == r.worker_id) { w->post_auth(r.conn_id, std::move(res)); return; }
+}
+
 bool Server::start(std::string& err) {
     mem_cap = static_cast<int64_t>(cfg.memory_cap_mb) * 1024 * 1024;
     std::random_device rd;
@@ -166,6 +171,10 @@ bool Server::start(std::string& err) {
     if (data.empty()) { err = "none of the protocol data files could be loaded"; return false; }
     std::sort(data.begin(), data.end(), [](auto& a, auto& b) { return a.protocol < b.protocol; });
 
+    if (cfg.online_mode) {
+        if (!auth.init(cfg.session_host, cfg.session_ca_file, cfg.prevent_proxy, err)) return false;
+        auth.start(2, [this](const AuthRequest& r, AuthResult&& res) { route_auth(r, std::move(res)); });
+    }
     reload_lists();
     {
         std::ifstream f("server-icon.png", std::ios::binary);
@@ -230,11 +239,15 @@ void Server::monitor() {
 
 void Server::shutdown() {
     stopping = true;
+    auth.stop();
     if (mon_.joinable()) mon_.join();
-    std::lock_guard<std::mutex> l(wm_);
-    for (auto& w : workers_) w->stop();
-    for (auto& w : workers_) w->join();
-    workers_.clear();
+    std::vector<std::unique_ptr<Worker>> ws;
+    {
+        std::lock_guard<std::mutex> l(wm_);
+        ws.swap(workers_);  // workers call back into the server while closing connections
+    }
+    for (auto& w : ws) w->stop();
+    for (auto& w : ws) w->join();
 }
 
 }  // namespace pn

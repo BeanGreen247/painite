@@ -10,7 +10,7 @@ namespace pn {
 struct PacketIds {
     // handshake/status/login are fixed by the protocol but still read from the table for consistency
     int st_status_response, st_pong_response, st_status_request, st_ping_request;
-    int lg_disconnect, lg_finished, lg_compression, lg_hello, lg_acknowledged;
+    int lg_disconnect, lg_finished, lg_compression, lg_hello, lg_acknowledged, lg_encrypt_req, lg_encrypt_resp;
     int cf_custom_payload, cf_disconnect, cf_finish, cf_keep_alive, cf_known_packs, cf_registry_data;
     int cfs_client_information, cfs_finish, cfs_keep_alive, cfs_known_packs, cfs_pong;
     int pl_login, pl_abilities, pl_commands, pl_position, pl_spawn, pl_game_event, pl_center, pl_time,

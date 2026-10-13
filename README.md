@@ -35,21 +35,34 @@ Nothing from Mojang is committed; the files are generated locally. Painite serve
 
 Options: `--config`, `--port`, `--bedrock-port N|same`, `--cores 0-3`, `--max-workers`, `--memory-cap MB`, `--no-bedrock`.
 
+## Official and cracked clients
+
+One switch in `server.properties` (same as every Minecraft server), with CLI overrides:
+
+| Setting | Behaviour |
+|---|---|
+| `online-mode=true` (or `--online`) | Encrypted login, verified against Mojang's session server; real UUID and skin properties. Cracked launchers cannot join. |
+| `online-mode=false` (or `--offline`) | No verification; official and cracked clients both join. UUID is `md5("OfflinePlayer:"+name)`, identical to Spigot/Paper/Cuberite, so existing player data keeps matching. |
+
+Verification runs on separate threads, so a slow session server never stalls the game loop.
+`prevent-proxy-connections=true` is honoured. `[auth] session_host` / `session_ca_file` in `painite.toml` allow a private auth server.
+See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
+
 ## What works
 
-- Java 26.3 (protocol 777) handshake, status/ping, offline login, configuration, play join into a flat world, chunk streaming, movement-driven chunk loading, keep-alive, global chat.
+- Java 26.3 (protocol 777) and 26.2 (776) handshake, status/ping, online and offline login (RSA + AES/CFB8, session-server check), configuration, play join into a flat world, chunk streaming, movement-driven chunk loading, keep-alive, global chat.
 - Worker threads, each with its own epoll loop and `SO_REUSEPORT` listener, pinned to the cores from `painite.toml`. New workers start under load and idle ones retire, inside a total memory cap.
 - Backpressure-driven chunk sending, so slow or high-ping links are not flooded; zlib compression for non-LAN peers.
 - Bedrock: server-list ping and the RakNet open-connection handshake only.
 
 ## What does not work yet
 
-- Online-mode authentication (the server refuses to start with `online-mode=true`).
+- Real-Mojang online login is untested (tests use a local fake session server); a Microsoft account is needed to try it.
 - Bedrock sessions (RakNet frames, login, world sync).
 - World loading/saving, blocks, entities, other players visible to each other, commands, anti-xray.
 - Java plugins and mods. Painite is native code and does not load Paper/Spigot/Bukkit plugins or Forge/Fabric mods; keep using Paper for those.
 
-Smoke test (needs a running server and its `.ids` file): `python3 tests/smoke.py --port 25565`.
+Tests: `cmake --build build --target painite_unit && build/painite_unit`, `python3 tests/smoke.py --port 25565` (running offline server), `python3 tests/online_test.py` (starts its own server and fake session server), `python3 tests/check_layouts.py`.
 
 Companion web manager: [CreeperCrest](https://github.com/BeanGreen247/creepercrest).
 

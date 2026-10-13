@@ -116,6 +116,7 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = get("motd")) c.motd = *v;
     if (auto v = get("max-players")) c.max_players = to_int(*v, c.max_players);
     if (auto v = get("online-mode")) c.online_mode = to_bool(*v, c.online_mode);
+    if (auto v = get("prevent-proxy-connections")) c.prevent_proxy = to_bool(*v, false);
     if (auto v = get("white-list")) c.white_list = to_bool(*v, false);
     if (auto v = get("view-distance")) c.view_distance = to_int(*v, c.view_distance);
     if (auto v = get("network-compression-threshold")) c.compression_threshold = to_int(*v, c.compression_threshold);
@@ -147,6 +148,8 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = tget("workers.memory_cap_mb")) c.memory_cap_mb = to_int(*v, c.memory_cap_mb);
     if (auto v = tget("workers.spawn_busy_pct")) c.spawn_busy_pct = to_int(*v, c.spawn_busy_pct);
     if (auto v = tget("workers.retire_after_idle_s")) c.retire_idle_s = to_int(*v, c.retire_idle_s);
+    if (auto v = tget("auth.session_host")) c.session_host = *v;
+    if (auto v = tget("auth.session_ca_file")) c.session_ca_file = *v;
     if (auto v = tget("paths.data_dir")) c.data_dir = *v;
     if (c.profile == "lan") c.compression_threshold = -1;
     return true;

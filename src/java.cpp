@@ -2,8 +2,10 @@
 #include "server.hpp"
 #include "log.hpp"
 #include "util.hpp"
+#include "hash.hpp"
 #include <algorithm>
 #include <cmath>
+#include <openssl/evp.h>
 #include <random>
 #include <zlib.h>
 
@@ -22,38 +24,6 @@ static std::string json_escape(const std::string& s) {
         }
     }
     return o;
-}
-
-static void md5(const std::string& in, uint8_t out[16]) {
-    static uint32_t K[64];
-    static bool init = false;
-    if (!init) { for (int i = 0; i < 64; i++) K[i] = static_cast<uint32_t>(std::floor(std::fabs(std::sin(i + 1.0)) * 4294967296.0)); init = true; }
-    static const int R[64] = {7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
-                              4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21};
-    std::vector<uint8_t> m(in.begin(), in.end());
-    uint64_t bits = static_cast<uint64_t>(in.size()) * 8;
-    m.push_back(0x80);
-    while (m.size() % 64 != 56) m.push_back(0);
-    for (int i = 0; i < 8; i++) m.push_back(static_cast<uint8_t>(bits >> (8 * i)));
-    uint32_t a0 = 0x67452301, b0 = 0xefcdab89, c0 = 0x98badcfe, d0 = 0x10325476;
-    for (size_t off = 0; off < m.size(); off += 64) {
-        uint32_t M[16];
-        for (int i = 0; i < 16; i++) M[i] = m[off + i * 4] | (m[off + i * 4 + 1] << 8) | (m[off + i * 4 + 2] << 16) | (static_cast<uint32_t>(m[off + i * 4 + 3]) << 24);
-        uint32_t A = a0, B = b0, C = c0, D = d0;
-        for (int i = 0; i < 64; i++) {
-            uint32_t F; int g;
-            if (i < 16) { F = (B & C) | (~B & D); g = i; }
-            else if (i < 32) { F = (D & B) | (~D & C); g = (5 * i + 1) % 16; }
-            else if (i < 48) { F = B ^ C ^ D; g = (3 * i + 5) % 16; }
-            else { F = C ^ (B | ~D); g = (7 * i) % 16; }
-            F = F + A + K[i] + M[g];
-            A = D; D = C; C = B;
-            B = B + ((F << R[i]) | (F >> (32 - R[i])));
-        }
-        a0 += A; b0 += B; c0 += C; d0 += D;
-    }
-    uint32_t r[4] = {a0, b0, c0, d0};
-    for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) out[i * 4 + j] = static_cast<uint8_t>(r[i] >> (8 * j));
 }
 
 static std::string uuid_str(const uint8_t u[16]) {
@@ -92,9 +62,36 @@ static void frame_into(std::vector<uint8_t>& out, const uint8_t* body, size_t n,
     out.insert(out.end(), z.begin(), z.begin() + static_cast<long>(cap));
 }
 
+void Worker::append_out(JConn& c, const uint8_t* p, size_t n) {
+    size_t off = c.out.size();
+    c.out.insert(c.out.end(), p, p + n);
+    if (c.enc) {
+        int outl = 0;
+        EVP_EncryptUpdate(c.enc, c.out.data() + off, &outl, c.out.data() + off, static_cast<int>(n));
+    }
+}
+
+void Worker::decrypt_new(JConn& c) {
+    if (!c.dec || c.dec_done >= c.in.size()) return;
+    int outl = 0;
+    EVP_DecryptUpdate(c.dec, c.in.data() + c.dec_done, &outl, c.in.data() + c.dec_done, static_cast<int>(c.in.size() - c.dec_done));
+    c.dec_done = c.in.size();
+}
+
+JConn::~JConn() {
+    if (enc) EVP_CIPHER_CTX_free(enc);
+    if (dec) EVP_CIPHER_CTX_free(dec);
+}
+
 void Worker::send_raw_frame(JConn& c, const uint8_t* body, size_t n) {
     if (c.dead) return;
-    frame_into(c.out, body, n, c.threshold, s_.cfg.compression_level);
+    if (c.enc) {
+        std::vector<uint8_t> tmp;
+        frame_into(tmp, body, n, c.threshold, s_.cfg.compression_level);
+        append_out(c, tmp.data(), tmp.size());
+    } else {
+        frame_into(c.out, body, n, c.threshold, s_.cfg.compression_level);
+    }
     if (c.out.size() - c.outpos > 16u * 1024 * 1024) { c.dead = true; c.out.clear(); c.outpos = 0; }
 }
 
@@ -123,6 +120,7 @@ void Worker::kick(JConn& c, const std::string& reason) {
 
 void Worker::parse_frames(JConn& c) {
     while (!c.dead) {
+        if (c.dec && !c.dec_pending) decrypt_new(c);
         size_t avail = c.in.size() - c.inpos;
         int32_t len = 0;
         int k = read_varint(c.in.data() + c.inpos, avail, len, 3);
@@ -149,9 +147,14 @@ void Worker::parse_frames(JConn& c) {
         }
         handle_packet(c, body, blen);
         c.inpos += static_cast<size_t>(k) + static_cast<size_t>(len);
+        if (c.dec_pending) { c.dec_pending = false; c.dec_done = c.inpos; }  // everything after the key packet is ciphertext
     }
-    if (c.inpos == c.in.size()) { c.in.clear(); c.inpos = 0; if (c.in.capacity() > 64 * 1024) std::vector<uint8_t>().swap(c.in); }
-    else if (c.inpos > 32 * 1024) { c.in.erase(c.in.begin(), c.in.begin() + static_cast<long>(c.inpos)); c.inpos = 0; }
+    if (c.inpos == c.in.size()) { c.in.clear(); c.inpos = 0; c.dec_done = 0; if (c.in.capacity() > 64 * 1024) std::vector<uint8_t>().swap(c.in); }
+    else if (c.inpos > 32 * 1024) {
+        c.in.erase(c.in.begin(), c.in.begin() + static_cast<long>(c.inpos));
+        c.dec_done = c.dec_done > c.inpos ? c.dec_done - c.inpos : 0;
+        c.inpos = 0;
+    }
 }
 
 void Worker::handle_packet(JConn& c, const uint8_t* p, size_t n) {
@@ -210,36 +213,110 @@ void Worker::on_status(JConn& c, Rd& r, int pid) {
 }
 
 void Worker::on_login(JConn& c, Rd& r, int pid) {
-    if (pid != 0) {
-        if (pid == 3 && c.vd && c.name.size() && c.reserved) start_config(c);  // login acknowledged
+    const auto& id = c.vd->id;
+    if (c.auth_pending) return;  // nothing is accepted while the session server is being asked
+    if (pid == id.lg_encrypt_resp) {
+        if (c.awaiting_key) on_encryption_response(c, r);
+        else c.dead = true;
         return;
     }
-    if (c.reserved) return;  // second hello
+    if (pid == id.lg_acknowledged) {
+        if (c.vd && c.reserved && !c.awaiting_key) start_config(c);
+        return;
+    }
+    if (pid != id.lg_hello || c.reserved || c.awaiting_key || !c.name.empty()) return;
     std::string name = r.str(16);
     uint8_t uuid_in[16];
     for (auto& b : uuid_in) b = r.u8();
     if (r.bad || name.empty() || name.size() > 16) { c.dead = true; return; }
     for (unsigned char ch : name)
         if (!(isalnum(ch) || ch == '_')) { c.dead = true; return; }
+    c.name = name;
+    if (s_.cfg.online_mode) { begin_online_login(c); return; }
+    // offline ("cracked") mode: same UUID scheme as Spigot/Paper, so player data stays compatible
+    offline_uuid(name, c.uuid);
+    finish_login(c);
+}
+
+void Worker::begin_online_login(JConn& c) {
+    static thread_local std::mt19937_64 rng{std::random_device{}()};
+    uint64_t t = rng();
+    memcpy(c.token, &t, 4);
+    Wr w;
+    w.varint(c.vd->id.lg_encrypt_req);
+    w.str("");
+    w.varint(static_cast<int32_t>(s_.auth.public_key_der().size()));
+    w.raw(s_.auth.public_key_der().data(), s_.auth.public_key_der().size());
+    w.varint(4);
+    w.raw(c.token, 4);
+    w.boolean(true);
+    send(c, w.b);
+    c.awaiting_key = true;
+}
+
+void Worker::on_encryption_response(JConn& c, Rd& r) {
+    int ls = r.varint();
+    if (r.bad || ls <= 0 || ls > 256 || static_cast<size_t>(ls) > r.left()) { c.dead = true; return; }
+    std::vector<uint8_t> es(r.p, r.p + ls);
+    r.skip(static_cast<size_t>(ls));
+    int lt = r.varint();
+    if (r.bad || lt <= 0 || lt > 256 || static_cast<size_t>(lt) > r.left()) { c.dead = true; return; }
+    std::vector<uint8_t> et(r.p, r.p + lt);
+    std::vector<uint8_t> secret, token;
+    if (!s_.auth.rsa_decrypt(es.data(), es.size(), secret) || !s_.auth.rsa_decrypt(et.data(), et.size(), token) || secret.size() != 16 ||
+        token.size() != 4 || memcmp(token.data(), c.token, 4) != 0) {
+        kick(c, "Protocol error");
+        return;
+    }
+    c.awaiting_key = false;
+    c.enc = EVP_CIPHER_CTX_new();
+    c.dec = EVP_CIPHER_CTX_new();
+    if (EVP_EncryptInit_ex(c.enc, EVP_aes_128_cfb8(), nullptr, secret.data(), secret.data()) != 1 ||
+        EVP_DecryptInit_ex(c.dec, EVP_aes_128_cfb8(), nullptr, secret.data(), secret.data()) != 1) {
+        c.dead = true;
+        return;
+    }
+    c.dec_pending = true;  // bytes after this packet are encrypted
+    c.auth_pending = true;
+    AuthRequest rq;
+    rq.conn_id = c.id;
+    rq.worker_id = id_;
+    rq.username = c.name;
+    rq.server_hash = s_.auth.server_hash(secret.data(), secret.size());
+    if (s_.auth.prevent_proxy()) rq.ip = c.addr.substr(0, c.addr.rfind(':'));
+    s_.auth.submit(std::move(rq));
+}
+
+void Worker::on_auth_result(uint64_t conn_id, AuthResult& res) {
+    JConn* c = nullptr;
+    for (auto& kv : conns_) if (kv.second->id == conn_id) { c = kv.second.get(); break; }
+    if (!c || c->dead) return;
+    c->auth_pending = false;
+    if (!res.ok) {
+        warn("Failed to verify username for " + c->name + ": " + res.error);
+        kick(*c, "Failed to verify username!");
+        return;
+    }
+    c->name = res.name;
+    for (int i = 0; i < 16; i++) c->uuid[i] = static_cast<uint8_t>(strtoul(res.uuid_hex.substr(static_cast<size_t>(i) * 2, 2).c_str(), nullptr, 16));
+    c->props = std::move(res.props);
+    finish_login(*c);
+    if (!c->out.empty()) flush(*c);
+}
+
+void Worker::finish_login(JConn& c) {
     if (!c.vd) {
         std::string sup;
         for (auto& d : s_.data) sup += (sup.empty() ? "" : ", ") + d.version;
         kick(c, "Unsupported Minecraft version. Painite supports: " + sup);
         return;
     }
-    if (s_.cfg.online_mode) { kick(c, "online-mode is not implemented yet"); return; }
-    c.name = name;
-    uint8_t h[16];
-    md5("OfflinePlayer:" + name, h);
-    h[6] = (h[6] & 0x0f) | 0x30;
-    h[8] = (h[8] & 0x3f) | 0x80;
-    memcpy(c.uuid, h, 16);
-    if (s_.banned(name)) { kick(c, "You are banned from this server."); return; }
-    if (s_.cfg.white_list && !s_.whitelisted(name)) { kick(c, "You are not white-listed on this server!"); return; }
+    if (s_.banned(c.name)) { kick(c, "You are banned from this server."); return; }
+    if (s_.cfg.white_list && !s_.whitelisted(c.name)) { kick(c, "You are not white-listed on this server!"); return; }
     if (s_.online.load() >= s_.cfg.max_players) { kick(c, "The server is full!"); return; }
-    if (!s_.reserve_name(name)) { kick(c, "A player with that name is already online."); return; }
+    if (!s_.reserve_name(c.name)) { kick(c, "A player with that name is already online."); return; }
     c.reserved = true;
-    info("UUID of player " + name + " is " + uuid_str(c.uuid));
+    info("UUID of player " + c.name + " is " + uuid_str(c.uuid));
 
     if (s_.cfg.profile != "lan" && s_.cfg.compression_threshold >= 0 && !(s_.cfg.profile == "auto" && s_.local_peer(c.addr))) {
         Wr w;
@@ -252,7 +329,13 @@ void Worker::on_login(JConn& c, Rd& r, int pid) {
     w.varint(c.vd->id.lg_finished);
     w.raw(c.uuid, 16);
     w.str(c.name);
-    w.varint(0);  // profile properties
+    w.varint(static_cast<int32_t>(c.props.size()));
+    for (auto& p : c.props) {
+        w.str(p.name);
+        w.str(p.value);
+        w.boolean(!p.signature.empty());
+        if (!p.signature.empty()) w.str(p.signature);
+    }
     static thread_local std::mt19937_64 rng{std::random_device{}()};
     uint64_t sid[2] = {rng(), rng()};
     w.raw(sid, 16);  // session id
@@ -325,8 +408,13 @@ void Worker::start_play(JConn& c) {
     w.varint(vd.dim_type_overworld);
     w.str("minecraft:overworld");
     w.be64(0x5a17c0de5a17c0deull);
-    w.varint(s_.cfg.gamemode);
-    w.varint(0);
+    if (vd.protocol >= 777) {
+        w.varint(s_.cfg.gamemode);
+        w.varint(0);  // previous game mode: 0 = undefined
+    } else {
+        w.u8(static_cast<uint8_t>(s_.cfg.gamemode));
+        w.u8(0xff);   // previous game mode: -1 = undefined (checked against recorded samples by tests/check_layouts.py)
+    }
     w.boolean(false);
     w.boolean(true);   // flat
     w.boolean(false);
@@ -450,11 +538,11 @@ void Worker::send_chunk(JConn& c, int x, int z) {
                 chunk_cache_bytes_ += f.size();
                 it = chunk_cache_.emplace(key, std::move(f)).first;
             } else {
-                c.out.insert(c.out.end(), f.begin(), f.end());
+                append_out(c, f.data(), f.size());
                 return;
             }
         }
-        c.out.insert(c.out.end(), it->second.begin(), it->second.end());
+        append_out(c, it->second.data(), it->second.size());
         return;
     }
     Wr w;

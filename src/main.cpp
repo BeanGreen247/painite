@@ -27,6 +27,7 @@ static void usage() {
          "  --cores LIST         e.g. 0-3 or 0,2,4 (overrides cpu.cores)\n"
          "  --max-workers N      cap on autoscaled workers\n"
          "  --memory-cap MB      total pool memory cap\n"
+         "  --online | --offline  override online-mode (offline accepts cracked clients)\n"
          "  --no-bedrock         disable the built-in Bedrock listener\n"
          "  nogui, --nogui       accepted and ignored (vanilla compatibility)\n"
          "  --version, --help");
@@ -72,6 +73,7 @@ int main(int argc, char** argv) {
     std::string cores_arg, port_arg, bport_arg;
     int max_workers = -1, mem_cap = -1;
     bool no_bedrock = false;
+    int online_flag = -1;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto val = [&]() -> std::string { return i + 1 < argc ? argv[++i] : ""; };
@@ -84,6 +86,8 @@ int main(int argc, char** argv) {
         else if (a == "--max-workers") max_workers = atoi(val().c_str());
         else if (a == "--memory-cap") mem_cap = atoi(val().c_str());
         else if (a == "--no-bedrock") no_bedrock = true;
+        else if (a == "--online") online_flag = 1;
+        else if (a == "--offline") online_flag = 0;
         else if (a == "nogui" || a == "--nogui") {}
         else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 2; }
     }
@@ -110,8 +114,8 @@ int main(int argc, char** argv) {
         closedir(d);
         if (jars) warn("plugins/ contains " + std::to_string(jars) + " jar(s); Painite cannot load Java plugins and ignores them");
     }
-    if (!server.cfg.online_mode) warn("online-mode=false: players are not authenticated with Mojang (online-mode is not implemented yet)");
-    else { error("online-mode=true is not implemented yet; set online-mode=false in server.properties or keep using Paper"); return 1; }
+    if (online_flag >= 0) server.cfg.online_mode = online_flag == 1;
+    if (!server.cfg.online_mode) warn("online-mode=false: offline/cracked clients can join and players are not verified with Mojang");
 
     signal(SIGINT, on_signal);
     signal(SIGTERM, on_signal);

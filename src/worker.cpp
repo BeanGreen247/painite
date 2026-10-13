@@ -128,12 +128,24 @@ void Worker::post_chat(const std::string& text) {
     (void)!write(evfd_, &one, 8);
 }
 
+void Worker::post_auth(uint64_t conn_id, AuthResult&& r) {
+    {
+        std::lock_guard<std::mutex> l(inbox_mu_);
+        auth_inbox_.emplace_back(conn_id, std::move(r));
+    }
+    uint64_t one = 1;
+    (void)!write(evfd_, &one, 8);
+}
+
 void Worker::drain_inbox() {
     std::vector<std::string> msgs;
+    std::vector<std::pair<uint64_t, AuthResult>> auths;
     {
         std::lock_guard<std::mutex> l(inbox_mu_);
         msgs.swap(inbox_);
+        auths.swap(auth_inbox_);
     }
+    for (auto& a : auths) on_auth_result(a.first, a.second);
     for (auto& m : msgs)
         for (auto& kv : conns_)
             if (kv.second->st == St::Play && !kv.second->dead) send_chat(*kv.second, m);
@@ -156,6 +168,7 @@ void Worker::accept_ready() {
         int one = 1;
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
         auto c = std::make_unique<JConn>();
+        c->id = s_.next_conn_id++;
         c->fd = fd;
         c->accepted_ms = now_ms();
         c->acct = kBaseConnCost;
@@ -238,7 +251,7 @@ void Worker::close_conn(JConn& c) {
         s_.online--;
         info(c.name + " lost connection: Disconnected");
         info(c.name + " left the game");
-        s_.broadcast(c.name + " left the game");
+        if (!s_.stopping) s_.broadcast(c.name + " left the game");
     }
     epoll_ctl(ep_, EPOLL_CTL_DEL, c.fd, nullptr);
     close(c.fd);

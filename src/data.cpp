@@ -97,7 +97,7 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
     i.st_status_request = g("status/s/status_request"); i.st_ping_request = g("status/s/ping_request");
     i.lg_disconnect = g("login/c/login_disconnect"); i.lg_finished = g("login/c/login_finished");
     i.lg_compression = g("login/c/login_compression"); i.lg_hello = g("login/s/hello");
-    i.lg_acknowledged = g("login/s/login_acknowledged");
+    i.lg_acknowledged = g("login/s/login_acknowledged"); i.lg_encrypt_req = g("login/c/hello"); i.lg_encrypt_resp = g("login/s/key");
     i.cf_custom_payload = g("configuration/c/custom_payload"); i.cf_disconnect = g("configuration/c/disconnect");
     i.cf_finish = g("configuration/c/finish_configuration"); i.cf_keep_alive = g("configuration/c/keep_alive");
     i.cf_known_packs = g("configuration/c/select_known_packs"); i.cf_registry_data = g("configuration/c/registry_data");

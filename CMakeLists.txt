@@ -12,10 +12,11 @@ option(PAINITE_LTO "Link-time optimization" ON)
 
 find_package(ZLIB REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 add_executable(painite
-  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp)
-target_link_libraries(painite PRIVATE ZLIB::ZLIB Threads::Threads)
+  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp src/auth.cpp src/hash.cpp)
+target_link_libraries(painite PRIVATE ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 target_compile_options(painite PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-plt)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 if(PAINITE_NATIVE)
@@ -28,3 +29,7 @@ if(PAINITE_LTO)
     set_property(TARGET painite PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
   endif()
 endif()
+
+add_executable(painite_unit EXCLUDE_FROM_ALL tests/unit.cpp src/hash.cpp src/config.cpp src/log.cpp)
+target_include_directories(painite_unit PRIVATE src)
+target_link_libraries(painite_unit PRIVATE OpenSSL::Crypto)

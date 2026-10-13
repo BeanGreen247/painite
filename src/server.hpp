@@ -1,6 +1,7 @@
 // Shared server state, worker threads (one epoll loop each) and the autoscaling pool.
 #pragma once
 #include "config.hpp"
+#include "auth.hpp"
 #include "data.hpp"
 #include "util.hpp"
 #include <atomic>
@@ -15,6 +16,8 @@
 #include <unordered_set>
 #include <vector>
 
+typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
+
 namespace pn {
 
 int64_t now_ms();
@@ -22,6 +25,8 @@ int64_t now_ms();
 enum class St { Handshake, Status, Login, Config, Play };
 
 struct JConn {
+    ~JConn();
+    uint64_t id = 0;
     int fd = -1;
     St st = St::Handshake;
     const VanillaData* vd = nullptr;
@@ -41,6 +46,15 @@ struct JConn {
     int64_t accepted_ms = 0;
     size_t acct = 0;         // bytes charged to the memory budget
     bool known_packs_sent = false;
+
+    // online mode
+    bool awaiting_key = false, auth_pending = false;
+    uint8_t token[4] = {};
+    std::vector<AuthProp> props;
+    EVP_CIPHER_CTX* enc = nullptr;
+    EVP_CIPHER_CTX* dec = nullptr;
+    bool dec_pending = false;
+    size_t dec_done = 0;
 
     // play state
     int entity_id = 0;
@@ -67,6 +81,7 @@ public:
     void drain();          // stop accepting; exit once the last connection leaves
     void join();
     void post_chat(const std::string& text);  // thread-safe
+    void post_auth(uint64_t conn_id, AuthResult&& r);  // thread-safe
     int id() const { return id_; }
     std::atomic<int> nconn{0};
     std::atomic<uint64_t> busy_ns{0}, wall_ns{0};
@@ -94,6 +109,12 @@ private:
     void on_config(JConn& c, Rd& r, int pid);
     void on_play(JConn& c, Rd& r, int pid);
     void start_config(JConn& c);
+    void begin_online_login(JConn& c);
+    void on_encryption_response(JConn& c, Rd& r);
+    void on_auth_result(uint64_t conn_id, AuthResult& r);
+    void finish_login(JConn& c);
+    void append_out(JConn& c, const uint8_t* p, size_t n);
+    void decrypt_new(JConn& c);
     void start_play(JConn& c);
     void send(JConn& c, const std::vector<uint8_t>& body);
     void send_raw_frame(JConn& c, const uint8_t* body, size_t n);
@@ -119,6 +140,7 @@ private:
     std::unordered_map<int, std::unique_ptr<JConn>> conns_;
     std::mutex inbox_mu_;
     std::vector<std::string> inbox_;
+    std::vector<std::pair<uint64_t, AuthResult>> auth_inbox_;
     std::unordered_map<int64_t, std::vector<uint8_t>> chunk_cache_;  // framed (compressed) chunk packets
     size_t chunk_cache_bytes_ = 0;
     std::vector<uint8_t> scratch_;
@@ -136,6 +158,8 @@ public:
     int64_t mem_cap = 0;
     std::atomic<int> online{0};
     std::atomic<int> next_entity{1};
+    std::atomic<uint64_t> next_conn_id{1};
+    Auth auth;
     std::vector<int> cores;  // resolved CPU list
 
     bool start(std::string& err);
@@ -154,6 +178,7 @@ public:
     void unregister_player(const std::string& n);
     bool local_peer(const std::string& addr) const;
     int worker_count();
+    void route_auth(const AuthRequest& r, AuthResult&& res);
 
 private:
     friend class Worker;

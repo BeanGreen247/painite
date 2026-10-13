@@ -25,5 +25,9 @@ memory_cap_mb       = 1024  # hard cap for connection buffers + chunk cache acro
 spawn_busy_pct      = 70    # start another worker when the average worker is busier than this
 retire_after_idle_s = 60    # retire a worker with no connections after this long
 
+[auth]
+# session_host    = "sessionserver.mojang.com"   # host or host:port, used when online-mode=true
+# session_ca_file = ""                          # optional CA bundle for a private auth server
+
 [paths]
 # data_dir = "data"         # where vanilla-<version>.bin/.ids from tools/fetch_vanilla_data.py live
