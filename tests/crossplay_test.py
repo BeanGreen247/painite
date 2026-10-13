@@ -105,6 +105,7 @@ def main():
     # Bedrock sees the Java player
     pl_list = B.take(63)
     check(any(b"Alice" in p for p in pl_list), "Bedrock: PlayerList has Alice")
+    check(any(b"Alice" in p and b"painite-" in p and b"geometry.humanoid.custom" in p for p in pl_list), "Bedrock: Alice has a classic default skin (64x64, standard geometry)")
     ap_ = B.take(12)
     check(len(ap_) >= 1 and b"Alice" in ap_[0], "Bedrock: AddPlayer for Alice")
     # Java moves, Bedrock follows

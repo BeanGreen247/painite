@@ -8,6 +8,7 @@
 #include <random>
 #include <sched.h>
 #include <sstream>
+#include <sys/stat.h>
 
 namespace pn {
 
@@ -168,16 +169,11 @@ bool Server::start(std::string& err) {
 
     if (cfg.online_mode) {
         if (!auth.init(cfg.session_host, cfg.session_ca_file, cfg.prevent_proxy, err)) return false;
+        auth.set_xbox_host(cfg.xbox_host);
         auth.start(2, [this](const AuthRequest& r, AuthResult&& res) { route_auth(r, std::move(res)); });
     }
     lists.load_all();
-    {
-        std::ifstream f("server-icon.png", std::ios::binary);
-        if (f) {
-            std::string png((std::istreambuf_iterator<char>(f)), {});
-            if (png.size() > 8 && png.size() < 100000) favicon = "data:image/png;base64," + base64(png);
-        }
-    }
+    reload_icon(true);
     {
         std::lock_guard<std::mutex> l(wm_);
         for (int i = 0; i < cfg.workers_min; i++)
@@ -186,6 +182,31 @@ bool Server::start(std::string& err) {
     game.start();
     mon_ = std::thread([this] { monitor(); });
     return true;
+}
+
+void Server::reload_icon(bool log_missing) {
+    struct stat st;
+    int64_t mt = stat("server-icon.png", &st) == 0 ? static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec : 0;
+    if (mt == icon_mtime_) return;
+    icon_mtime_ = mt;
+    std::shared_ptr<const std::string> uri;
+    if (mt) {
+        std::ifstream f("server-icon.png", std::ios::binary);
+        std::string png((std::istreambuf_iterator<char>(f)), {});
+        // vanilla only shows a 64x64 PNG; anything else would be dropped by the client
+        bool ok = png.size() > 33 && png.size() < 100000 && memcmp(png.data(), "\x89PNG\r\n\x1a\n", 8) == 0;
+        uint32_t w = 0, h = 0;
+        if (ok) {
+            for (int i = 0; i < 4; i++) { w = w << 8 | static_cast<uint8_t>(png[16 + i]); h = h << 8 | static_cast<uint8_t>(png[20 + i]); }
+            ok = w == 64 && h == 64;
+        }
+        if (ok) { uri = std::make_shared<const std::string>("data:image/png;base64," + base64(png)); if (!log_missing) info("server-icon.png reloaded"); }
+        else warn("server-icon.png must be a 64x64 PNG under 100 KB; ignoring it");
+    } else if (log_missing) {
+        // no icon is fine
+    }
+    std::lock_guard<std::mutex> l(fav_mu_);
+    favicon_ = uri;
 }
 
 void Server::monitor() {

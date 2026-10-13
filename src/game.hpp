@@ -27,8 +27,7 @@ struct GIdentity {
     std::string name, xuid;
     uint8_t uuid[16] = {};
     std::vector<AuthProp> props;  // Java skin properties
-    std::string skin_png;         // 64x64 RGBA skin for Bedrock viewers, when known
-    bool slim = false;
+    std::vector<uint8_t> bedrock_skin;   // Bedrock "Skin" structure for the player list (empty: default)
     std::string addr;
 };
 

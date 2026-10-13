@@ -2,6 +2,7 @@
 #include "hash.hpp"
 #include "json.hpp"
 #include "log.hpp"
+#include "skin.hpp"
 #include <arpa/inet.h>
 #include <cstring>
 #include <netdb.h>
@@ -91,13 +92,28 @@ void Auth::stop() {
     th_.clear();
 }
 
+void Auth::post_task(std::function<void()> fn) {
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        tasks_.push_back(std::move(fn));
+    }
+    cv_.notify_one();
+}
+
 void Auth::loop() {
     for (;;) {
         AuthRequest r;
         {
             std::unique_lock<std::mutex> l(mu_);
-            cv_.wait(l, [this] { return stop_ || !q_.empty(); });
+            cv_.wait(l, [this] { return stop_ || !q_.empty() || !tasks_.empty(); });
             if (stop_) return;
+            if (!tasks_.empty()) {
+                auto t = std::move(tasks_.front());
+                tasks_.pop_front();
+                l.unlock();
+                t();
+                continue;
+            }
             r = std::move(q_.front());
             q_.pop_front();
         }
@@ -116,13 +132,12 @@ static std::string url_enc(const std::string& s) {
     return o;
 }
 
-bool Auth::lookup(const AuthRequest& r, AuthResult& out) {
-    std::string path = "/session/minecraft/hasJoined?username=" + url_enc(r.username) + "&serverId=" + url_enc(r.server_hash);
-    if (prevent_proxy_ && !r.ip.empty()) path += "&ip=" + url_enc(r.ip);
-
+bool Auth::https_get(const std::string& host_port, const std::string& path, int& status, std::string& body, std::string& err) const {
+    std::string host = host_port, port = "443";
+    if (size_t c = host.rfind(':'); c != std::string::npos) { port = host.substr(c + 1); host.resize(c); }
     addrinfo hints{}, *ai = nullptr;
     hints.ai_socktype = SOCK_STREAM;
-    if (getaddrinfo(host_.c_str(), port_.c_str(), &hints, &ai) != 0 || !ai) { out.error = "session server lookup failed"; return false; }
+    if (getaddrinfo(host.c_str(), port.c_str(), &hints, &ai) != 0 || !ai) { err = "lookup of " + host + " failed"; return false; }
     int fd = -1;
     for (addrinfo* a = ai; a; a = a->ai_next) {
         fd = socket(a->ai_family, a->ai_socktype, a->ai_protocol);
@@ -135,7 +150,7 @@ bool Auth::lookup(const AuthRequest& r, AuthResult& out) {
         fd = -1;
     }
     freeaddrinfo(ai);
-    if (fd < 0) { out.error = "session server unreachable"; return false; }
+    if (fd < 0) { err = host + " unreachable"; return false; }
 
     SSL_CTX* ctx = SSL_CTX_new(TLS_client_method());
     if (ca_file_.empty()) SSL_CTX_set_default_verify_paths(ctx);
@@ -143,27 +158,39 @@ bool Auth::lookup(const AuthRequest& r, AuthResult& out) {
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
     SSL* ssl = SSL_new(ctx);
     SSL_set_fd(ssl, fd);
-    SSL_set_tlsext_host_name(ssl, host_.c_str());
-    SSL_set1_host(ssl, host_.c_str());
-    std::string body, resp;
-    int status = 0;
+    SSL_set_tlsext_host_name(ssl, host.c_str());
+    SSL_set1_host(ssl, host.c_str());
+    std::string resp;
+    status = 0;
+    bool ok = false;
     if (SSL_connect(ssl) == 1) {
-        std::string req = "GET " + path + " HTTP/1.0\r\nHost: " + host_ + "\r\nUser-Agent: Painite\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
+        std::string req = "GET " + path + " HTTP/1.0\r\nHost: " + host + "\r\nUser-Agent: Painite\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
         SSL_write(ssl, req.data(), static_cast<int>(req.size()));
         char buf[4096];
         int n;
-        while ((n = SSL_read(ssl, buf, sizeof buf)) > 0 && resp.size() < 256 * 1024) resp.append(buf, static_cast<size_t>(n));
+        while ((n = SSL_read(ssl, buf, sizeof buf)) > 0 && resp.size() < 1024 * 1024) resp.append(buf, static_cast<size_t>(n));
         size_t sp = resp.find(' ');
         if (sp != std::string::npos) status = atoi(resp.c_str() + sp + 1);
         size_t hb = resp.find("\r\n\r\n");
-        if (hb != std::string::npos) body = resp.substr(hb + 4);
-    } else out.error = "TLS handshake with session server failed";
+        body = hb != std::string::npos ? resp.substr(hb + 4) : std::string();
+        ok = true;
+    } else err = "TLS handshake with " + host + " failed";
     SSL_free(ssl);
     SSL_CTX_free(ctx);
     close(fd);
     ERR_clear_error();
+    return ok;
+}
+
+bool Auth::lookup(const AuthRequest& r, AuthResult& out) {
+    std::string path = "/session/minecraft/hasJoined?username=" + url_enc(r.username) + "&serverId=" + url_enc(r.server_hash);
+    if (prevent_proxy_ && !r.ip.empty()) path += "&ip=" + url_enc(r.ip);
+    std::string body, err;
+    int status = 0;
+    std::string hp = host_ + ":" + port_;
+    if (!https_get(hp, path, status, body, err)) { out.error = err; return false; }
     if (status == 204) { out.error = "not authenticated"; return false; }
-    if (status != 200) { if (out.error.empty()) out.error = "session server returned " + std::to_string(status); return false; }
+    if (status != 200) { out.error = "session server returned " + std::to_string(status); return false; }
     JP jp{body.data(), body.data() + body.size()};
     JV v = jp.val();
     const JV* id = v.get("id");
@@ -180,6 +207,21 @@ bool Auth::lookup(const AuthRequest& r, AuthResult& out) {
             out.props.push_back(std::move(ap));
         }
     out.ok = true;
+    for (auto& pr : out.props) {
+        if (pr.name != "textures") continue;
+        std::string host, tpath, tb, terr;
+        bool slim = false;
+        int tstatus = 0;
+        if (parse_textures_property(pr.value, host, tpath, slim) && https_get(host, tpath, tstatus, tb, terr) && tstatus == 200) {
+            int w = 0, h = 0;
+            std::vector<uint8_t> rgba;
+            if (decode_png(reinterpret_cast<const uint8_t*>(tb.data()), tb.size(), w, h, rgba)) {
+                upgrade_legacy_skin(w, h, rgba);
+                if (w == 64 && h == 64) { out.skin_rgba = std::move(rgba); out.skin_slim = slim; }
+            }
+        }
+        break;
+    }
     return true;
 }
 

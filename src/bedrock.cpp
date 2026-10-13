@@ -3,6 +3,8 @@
 #include "bchunk.hpp"
 #include "bedrock.hpp"
 #include "game.hpp"
+#include "xbox.hpp"
+#include "skin.hpp"
 #include "hash.hpp"
 #include "json.hpp"
 #include "log.hpp"
@@ -257,6 +259,7 @@ BSession::~BSession() {
 }
 
 Bedrock::Bedrock(Server& s, int fd, BedrockData&& data, bool has_data) : s_(s), d_(std::move(data)), has_data_(has_data) {
+    default_skin_ = bedrock_classic_skin(default_skin_rgba(false), false, "painite-steve");
     server_key_ = EVP_EC_gen("P-384");
     if (server_key_) {
         int n = i2d_PUBKEY(server_key_, nullptr);
@@ -534,8 +537,49 @@ void Bedrock::on_login(BSession& b, const uint8_t* p, size_t n) {
     if (cparts.size() != 3 || !jwt_json(cparts[0], chdr)) { disconnect(b, "Invalid login"); return; }
     std::string client_pub;
     if (const JV* x = chdr.get("x5u")) client_pub = x->s;
+    {
+        JV cdv;
+        if (jwt_json(cparts[1], cdv) && cdv.t == JV::Obj) {
+            std::vector<uint8_t> sk;
+            if (bedrock_skin_from_client(cdv, sk) && sk.size() < 512 * 1024) b.skin = std::move(sk);
+        }
+    }
     if (name.empty()) { JV cp; if (jwt_json(cparts[1], cp)) if (auto* v = cp.get("ThirdPartyName")) name = v->s; }
 
+    bool need_xbox = s_.cfg.online_mode && !s_.cfg.bedrock_unauthenticated;
+    if (need_xbox) {
+        const JV* tok = idv.get("Token");
+        if (!tok || tok->s.empty() || client_pub.empty()) { disconnect(b, "This server requires an Xbox Live login"); return; }
+        b.st = BSession::St::Authing;
+        b.pending_pub = client_pub;
+        uint64_t sid = b.id;
+        std::string token = tok->s;
+        s_.auth.post_task([this, sid, token, client_pub] {
+            XboxResult res = xbox_verify(s_.auth, token, client_pub);
+            s_.post_to_worker(0, [sid, res](Worker& w) { w.bedrock_xbox_result(sid, res); });
+        });
+        return;
+    }
+    continue_login(b, name, uuid_s, xuid, client_pub);
+}
+
+void Bedrock::on_xbox_result(uint64_t id, const XboxResult& res) {
+    BSession* b = by_id(id);
+    if (!b || b->rak->closed || b->st != BSession::St::Authing) return;
+    if (!res.ok) {
+        warn("Xbox login failed for a Bedrock client: " + res.error);
+        disconnect(*b, "Failed to verify your Xbox login: " + res.error);
+        return;
+    }
+    // Floodgate's UUID scheme: 00000000-0000-0000-<xuid as 64 bit hex>
+    char u[40];
+    snprintf(u, sizeof u, "00000000-0000-0000-%04llx-%012llx", static_cast<unsigned long long>((strtoull(res.xuid.c_str(), nullptr, 10) >> 48) & 0xffff),
+             static_cast<unsigned long long>(strtoull(res.xuid.c_str(), nullptr, 10) & 0xffffffffffffull));
+    b->st = BSession::St::LoginWait;
+    continue_login(*b, res.gamertag, u, res.xuid, b->pending_pub);
+}
+
+void Bedrock::continue_login(BSession& b, const std::string& name, const std::string& uuid_s, const std::string& xuid, const std::string& client_pub) {
     std::string clean;
     for (unsigned char ch : name) clean += (isalnum(ch) || ch == '_') ? static_cast<char>(ch) : (ch == ' ' ? '_' : '\0');
     clean.erase(std::remove(clean.begin(), clean.end(), '\0'), clean.end());
@@ -544,10 +588,6 @@ void Bedrock::on_login(BSession& b, const uint8_t* p, size_t n) {
     b.xuid = xuid;
     if (!parse_uuid(uuid_s, b.uuid)) offline_uuid(b.name, b.uuid);
 
-    if (s_.cfg.online_mode && !s_.cfg.bedrock_unauthenticated) {
-        disconnect(b, "Bedrock logins are disabled while online-mode=true (Xbox authentication is not implemented yet)");
-        return;
-    }
     std::string why;
     if (s_.lists.banned(b.name, uuid_string(b.uuid), &why)) { disconnect(b, "You are banned from this server.\nReason: " + (why.empty() ? std::string("Banned by an operator.") : why)); return; }
     if (s_.cfg.white_list && !s_.whitelisted(b.name, uuid_string(b.uuid))) { disconnect(b, "You are not white-listed on this server!"); return; }

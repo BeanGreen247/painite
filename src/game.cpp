@@ -431,7 +431,7 @@ void Game::loop() {
             last_autosave_ = now;
             if (saving_enabled) save_everything(true);
         }
-        if (now - last_lists > 3000) { last_lists = now; s_.lists.reload_if_changed(); }
+        if (now - last_lists > 3000) { last_lists = now; s_.lists.reload_if_changed(); s_.reload_icon(false); }
     }
 }
 

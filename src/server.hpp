@@ -8,6 +8,7 @@
 #include "world.hpp"
 #include "lists.hpp"
 #include "game.hpp"
+#include "xbox.hpp"
 #include <atomic>
 #include <condition_variable>
 #include <functional>
@@ -56,6 +57,8 @@ struct JConn {
     bool awaiting_key = false, auth_pending = false;
     uint8_t token[4] = {};
     std::vector<AuthProp> props;
+    std::vector<uint8_t> skin_rgba;
+    bool skin_slim = false;
     EVP_CIPHER_CTX* enc = nullptr;
     EVP_CIPHER_CTX* dec = nullptr;
     bool dec_pending = false;
@@ -98,6 +101,7 @@ public:
     void on_game_event(uint64_t conn, const GEvent& ev);
     void send_chat_to(uint64_t conn, const std::string& text);
     void kick_conn(uint64_t conn, const std::string& reason);
+    void bedrock_xbox_result(uint64_t id, const XboxResult& res) { if (bedrock_) bedrock_->on_xbox_result(id, res); }
     int id() const { return id_; }
     std::atomic<int> nconn{0};
     std::atomic<uint64_t> busy_ns{0}, wall_ns{0};
@@ -227,7 +231,13 @@ private:
     std::set<std::string> names_lower_;
     std::vector<std::string> names_shown_;
 public:
-    std::string favicon;  // data URI from server-icon.png, empty if absent
+    std::shared_ptr<const std::string> favicon_uri() const { std::lock_guard<std::mutex> l(fav_mu_); return favicon_; }   // data URI of server-icon.png or null
+    void reload_icon(bool log_missing);   // re-reads server-icon.png when it changed (checked from the game loop)
+
+private:
+    mutable std::mutex fav_mu_;
+    std::shared_ptr<const std::string> favicon_;
+    int64_t icon_mtime_ = -1;
 };
 
 }  // namespace pn

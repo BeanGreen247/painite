@@ -4,6 +4,7 @@
 #include "util.hpp"
 #include "hash.hpp"
 #include "jchunk.hpp"
+#include "skin.hpp"
 #include <algorithm>
 #include <cmath>
 #include <openssl/evp.h>
@@ -190,7 +191,7 @@ void Worker::send_server_status(JConn& c) {
                     std::to_string(c.vd ? c.proto : (vd ? vd->protocol : 0)) + "},\"players\":{\"max\":" + std::to_string(s_.cfg.max_players) +
                     ",\"online\":" + std::to_string(s_.online.load()) + "},\"description\":{\"text\":\"" + json_escape(s_.cfg.motd) +
                     "\"},\"enforcesSecureChat\":false";
-    if (!s_.favicon.empty()) j += ",\"favicon\":\"" + s_.favicon + "\"";
+    if (auto fav = s_.favicon_uri()) j += ",\"favicon\":\"" + *fav + "\"";
     j += "}";
     Wr w;
     w.varint(vd ? vd->id.st_status_response : 0);
@@ -301,6 +302,8 @@ void Worker::on_auth_result(uint64_t conn_id, AuthResult& res) {
     c->name = res.name;
     for (int i = 0; i < 16; i++) c->uuid[i] = static_cast<uint8_t>(strtoul(res.uuid_hex.substr(static_cast<size_t>(i) * 2, 2).c_str(), nullptr, 16));
     c->props = std::move(res.props);
+    c->skin_rgba = std::move(res.skin_rgba);
+    c->skin_slim = res.skin_slim;
     finish_login(*c);
     if (!c->out.empty()) flush(*c);
 }
@@ -516,6 +519,11 @@ void Worker::start_play(JConn& c) {
     ident->name = c.name;
     memcpy(ident->uuid, c.uuid, 16);
     ident->props = c.props;
+    {
+        bool alex = (c.uuid[15] ^ c.uuid[7]) & 1;
+        if (c.skin_rgba.size() == 64 * 64 * 4) ident->bedrock_skin = bedrock_classic_skin(c.skin_rgba, c.skin_slim, "painite-java-" + uuid_str(c.uuid));
+        else ident->bedrock_skin = bedrock_classic_skin(default_skin_rgba(alex), alex, alex ? "painite-alex" : "painite-steve");
+    }
     ident->addr = c.addr;
     GPos gp;
     gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw;

@@ -1,5 +1,6 @@
 // Bedrock side of the shared game: spawn positions, entities, movement, block edits and chunks from the world.
 #include "bchunk.hpp"
+#include "skin.hpp"
 #include "bedrock.hpp"
 #include "game.hpp"
 #include "log.hpp"
@@ -112,31 +113,39 @@ std::vector<uint8_t> Bedrock::patched_respawn(const BSession& b, const std::vect
     return o;
 }
 
-// PlayerList entry: the recorded one (own player, default skin) with uuid, unique id and name replaced.
-std::vector<uint8_t> Bedrock::player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string&) const {
+// PlayerList "add" entry: header, name and ids for this player, the given skin (or the default classic one), and the recorded tail.
+std::vector<uint8_t> Bedrock::player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid,
+                                              const std::vector<uint8_t>* skin) const {
     const auto& in = d_.player_list_raw;
     const uint8_t* p = in.data() + 1;
     const uint8_t* e = in.data() + in.size();
-    uint64_t cnt;
-    if (!rd_varuint(p, e, cnt) || e - p < 16) return in;
-    std::vector<uint8_t> out(in.data(), p);
+    uint64_t v;
+    if (!rd_varuint(p, e, v) || e - p < 16) return in;       // count
+    std::vector<uint8_t> out(in.data(), p);                  // action, count
     out.insert(out.end(), uuid, uuid + 16);
     p += 16;
-    uint64_t old;
-    if (!rd_varuint(p, e, old)) return in;
+    if (!rd_varuint(p, e, v)) return in;                      // recorded unique id
     put_varuint(out, zz64(unique_id));
-    uint64_t nl;
-    if (!rd_varuint(p, e, nl) || nl > static_cast<uint64_t>(e - p)) return in;
-    put_s(out, name);
-    p += nl;
-    out.insert(out.end(), p, e);
+    for (int i = 0; i < 3; i++) {                             // name, xuid, platform chat id
+        if (!rd_varuint(p, e, v) || static_cast<uint64_t>(e - p) < v) return in;
+        p += v;
+        put_s(out, i == 0 ? name : i == 1 ? xuid : std::string());
+    }
+    if (e - p < 4) return in;
+    out.insert(out.end(), p, p + 4);                          // build platform
+    p += 4;
+    const uint8_t* skin_end = nullptr;
+    if (!bedrock_skin_extent(p, e, skin_end)) return in;
+    if (skin && !skin->empty()) out.insert(out.end(), skin->begin(), skin->end());
+    else out.insert(out.end(), default_skin_.begin(), default_skin_.end());
+    out.insert(out.end(), skin_end, e);                       // teacher, host, sub client, colour
     return out;
 }
 
-std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const { return player_list_for(b.uuid, b.eid, b.name, b.xuid); }
+std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const { return player_list_for(b.uuid, b.eid, b.name, b.xuid, &b.skin); }
 
 std::vector<uint8_t> Bedrock::player_list_entry(const GIdentity& id, bool add) const {
-    if (add) return player_list_for(id.uuid, id.eid, id.name, id.xuid);
+    if (add) return player_list_for(id.uuid, id.eid, id.name, id.xuid, &id.bedrock_skin);
     std::vector<uint8_t> o;
     o.push_back(1);
     put_varuint(o, 1);

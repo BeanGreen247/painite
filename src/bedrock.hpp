@@ -15,6 +15,7 @@ namespace pn {
 class Server;
 struct GEvent;
 struct GIdentity;
+struct XboxResult;
 
 struct BedrockData {
     int protocol = 0;
@@ -36,11 +37,12 @@ std::vector<uint8_t> replace_string_bytes(const std::vector<uint8_t>& in, const 
 bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, BedrockData& out, std::string& err);
 
 struct BSession {
-    enum class St { Raw, Settings, LoginWait, Handshake, Packs, Stack, Start, Spawning, Playing } st = St::Raw;
+    enum class St { Raw, Settings, LoginWait, Authing, Handshake, Packs, Stack, Start, Spawning, Playing } st = St::Raw;
     RakSession* rak = nullptr;
     bool compress = false;
     int threshold = 256;
-    std::string name, xuid;
+    std::string name, xuid, pending_pub;
+    std::vector<uint8_t> skin;   // Bedrock Skin structure from the client's login data
     uint8_t uuid[16] = {};
     bool reserved = false, counted = false;
     int radius = 0;
@@ -76,6 +78,7 @@ public:
     void chat_to(uint64_t conn, const std::string& text);
     void kick(uint64_t conn, const std::string& reason);
     void shutdown();
+    void on_xbox_result(uint64_t id, const XboxResult& res);
     void block_event(uint64_t conn, int x, int y, int z, uint16_t block);
     size_t sessions() const { return rak_->session_count(); }
     int playing() const { return playing_; }
@@ -84,6 +87,7 @@ private:
     void on_payload(RakSession& r, const uint8_t* p, size_t n);
     void on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n);
     void on_login(BSession& b, const uint8_t* p, size_t n);
+    void continue_login(BSession& b, const std::string& name, const std::string& uuid_s, const std::string& xuid, const std::string& client_pub);
     void after_handshake(BSession& b);
     void on_pack_response(BSession& b, const uint8_t* p, size_t n);
     void on_radius(BSession& b, const uint8_t* p, size_t n);
@@ -118,7 +122,8 @@ private:
     void disconnect(BSession& b, const std::string& msg);
     bool start_encryption(BSession& b, const std::string& client_pub_b64, std::string& jwt);
     std::vector<uint8_t> patched_player_list(const BSession& b) const;
-    std::vector<uint8_t> player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid) const;
+    std::vector<uint8_t> player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid, const std::vector<uint8_t>* skin) const;
+    std::vector<uint8_t> default_skin_;
     Server& s_;
     BedrockData d_;
     std::unique_ptr<Rak> rak_;
