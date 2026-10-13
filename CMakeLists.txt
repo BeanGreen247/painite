@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.16)
+project(painite LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+if(NOT CMAKE_BUILD_TYPE)
+  set(CMAKE_BUILD_TYPE Release)
+endif()
+
+option(PAINITE_NATIVE "Tune for the build machine (-march=native); do not use for distributable binaries" ON)
+option(PAINITE_LTO "Link-time optimization" ON)
+
+find_package(ZLIB REQUIRED)
+find_package(Threads REQUIRED)
+
+add_executable(painite
+  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp)
+target_link_libraries(painite PRIVATE ZLIB::ZLIB Threads::Threads)
+target_compile_options(painite PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-plt)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
+if(PAINITE_NATIVE)
+  target_compile_options(painite PRIVATE -march=native)
+endif()
+if(PAINITE_LTO)
+  include(CheckIPOSupported)
+  check_ipo_supported(RESULT ipo_ok OUTPUT ipo_msg)
+  if(ipo_ok)
+    set_property(TARGET painite PROPERTY INTERPROCEDURAL_OPTIMIZATION ON)
+  endif()
+endif()

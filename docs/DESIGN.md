@@ -23,7 +23,7 @@ join the same world natively. No plugin API compatibility with Paper/Bukkit.
 - One internal world and entity model; each protocol has its own encoder/decoder layer.
 
 ## Bandwidth for high-ping / lossy / proxied links
-- Packet batching and per-connection compression (zstd where the client supports it, else zlib).
+- Packet batching and per-connection compression. Java clients only speak zlib; zstd is not available on the Java protocol, so it is not used.
 - Adaptive view distance and chunk send rate driven by measured RTT and loss.
 - Delta entity updates, position quantization, and skipping off-screen entity updates.
 - Chunk send priority by distance and look direction; client-ACK based pacing.
@@ -35,3 +35,14 @@ with per-world config, similar in behavior to Paper's anti-xray.
 
 ## Build
 `-O3 -march=native`, LTO, then PGO and BOLT builds, each kept only if measured faster.
+
+## Server directory and plugins
+Painite reads the vanilla directory layout (server.properties, whitelist.json, banned-players.json, server-icon.png,
+logs/latest.log in Paper's line format) so panels like CreeperCrest keep working.
+Java plugins (Bukkit/Spigot/Paper) are not supported: they need a JVM and the Bukkit/Paper API plus server internals.
+Planned native replacements: Bedrock crossplay (Geyser/Floodgate), anti-xray (Orebfuscator), multi-version
+protocol support (ViaVersion), built-in profiler (spark).
+
+## Protocol data
+Packet IDs and registry packets change with every Minecraft release, so they are not hardcoded.
+`tools/fetch_vanilla_data.py` records them from Mojang's own server for a given version and Painite loads them at start.

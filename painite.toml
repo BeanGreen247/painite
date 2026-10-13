@@ -1,33 +1,29 @@
-# Painite example config (design draft; keys may change before 0.1)
+# Painite extras. Vanilla settings (port, motd, max-players, view-distance, white-list, ...)
+# stay in server.properties exactly like a normal Minecraft server directory.
 
 [network]
-java_port    = 25565          # TCP
-bedrock_port = 19132          # UDP (RakNet); a number, or "same" to reuse java_port over UDP
-bedrock      = true           # built-in, no Geyser/addon
-proxy_protocol = "none"       # none | haproxy-v2 | velocity | bungee
+bedrock          = true
+bedrock_port     = "same"   # a number, or "same" to reuse server-port over UDP (like Geyser's clone-remote-port)
+bedrock_version  = "26.52"  # shown in the Bedrock server list
+bedrock_protocol = 2193
 
 [bandwidth]
-profile            = "auto"   # auto | lan | wan | lossy
-compression        = "zstd"   # zstd | zlib | none (per-protocol fallback)
-compression_threshold = 256
-adaptive_view      = true     # shrink view/send rate on high RTT or loss
-min_view_distance  = 4
-max_chunks_per_sec = 0        # 0 = adaptive
-chunk_cache_mb     = 256
+profile           = "auto"  # auto: no compression for LAN/loopback peers, zlib for everyone else
+                            # lan: never compress | wan / lossy: always compress
+compression_level = 3       # zlib level; network-compression-threshold in server.properties sets the size cutoff
+chunk_cache_mb    = 64      # cache of compressed chunk packets (counts toward memory_cap_mb)
+backlog_cap_kb    = 256     # pause chunk sending while a client has more than this queued
 
 [cpu]
-cores   = "all"               # "all" or list like [0,1,2,3] or "0-7"
-pin     = true
-io_uring = true
+cores = "all"               # "all", "0-7", "0,2,4" or [0, 2, 4]; CLI --cores overrides
+pin   = true                # pin each worker thread to one of the cores
 
 [workers]
-min        = 1
-max        = 0                # 0 = number of allowed cores
-memory_cap_mb = 4096          # hard cap for the whole worker pool
-spawn_at_tick_ms   = 40       # spawn a worker above this region tick time
-retire_after_idle_s = 60
+min                 = 1
+max                 = 0     # 0 = number of cores
+memory_cap_mb       = 1024  # hard cap for connection buffers + chunk cache across all workers
+spawn_busy_pct      = 70    # start another worker when the average worker is busier than this
+retire_after_idle_s = 60    # retire a worker with no connections after this long
 
-[antixray]
-mode        = 2               # 0 off, 1 hide ores, 2 fake ores
-worlds      = ["world", "world_nether"]
-hidden_blocks = ["diamond_ore", "ancient_debris", "emerald_ore"]
+[paths]
+# data_dir = "data"         # where vanilla-<version>.bin/.ids from tools/fetch_vanilla_data.py live
