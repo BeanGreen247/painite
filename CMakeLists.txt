@@ -51,7 +51,7 @@ target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Thread
 
 # End-to-end test suite in one binary: cmake --build build --target painite_tests && build/painite_tests
 file(GLOB PAINITE_TEST_SOURCES CONFIGURE_DEPENDS tests/cpp/*.cpp)
-list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp)
+list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/refgen.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/vgcheck.cpp)
 add_executable(painite_tests EXCLUDE_FROM_ALL ${PAINITE_TEST_SOURCES})
 target_include_directories(painite_tests PRIVATE tests/cpp)
 target_link_libraries(painite_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
@@ -62,3 +62,16 @@ add_executable(painite_load EXCLUDE_FROM_ALL tests/cpp/load.cpp tests/cpp/jclien
 target_include_directories(painite_load PRIVATE tests/cpp)
 target_link_libraries(painite_load PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
 target_compile_options(painite_load PRIVATE -O2)
+
+# Reference worlds made by Mojang's own server, for comparing world generation: build/painite_refgen --out DIR --seed 12345 --area -128 -128 127 127
+add_executable(painite_refgen EXCLUDE_FROM_ALL tests/cpp/refgen.cpp tests/cpp/server.cpp tests/cpp/jclient.cpp tests/cpp/jbot.cpp)
+target_include_directories(painite_refgen PRIVATE tests/cpp)
+target_link_libraries(painite_refgen PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
+target_compile_options(painite_refgen PRIVATE -O2)
+
+# The port of Mojang's world generation (src/vg) and the tool that checks it value by value against Mojang's own code (tools/oracle).
+file(GLOB PAINITE_VG_SOURCES CONFIGURE_DEPENDS src/vg/*.cpp)
+add_executable(painite_vgcheck EXCLUDE_FROM_ALL tests/cpp/vgcheck.cpp ${PAINITE_VG_SOURCES})
+target_include_directories(painite_vgcheck PRIVATE src)
+target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
+target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
