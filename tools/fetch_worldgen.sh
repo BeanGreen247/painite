@@ -29,7 +29,7 @@ for v in "${versions[@]}"; do
   # per-state block facts (blocks-motion, replaceable, sturdy faces, ...) from Mojang's own classes
   if command -v java >/dev/null 2>&1; then
     tools/oracle_cp.sh "$v"
-    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlocks.java "../../$out/blockflags.txt" >/dev/null 2>&1) || echo "$v: could not dump the block facts" >&2
+    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlocks.java "../../$out/blockflags.txt" "../../$out/blockclasses.txt" >/dev/null 2>&1) || echo "$v: could not dump the block facts" >&2
   fi
   touch "$out/.done"
   rm -rf "$tmp"

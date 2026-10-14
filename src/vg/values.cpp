@@ -16,6 +16,8 @@ std::string type_of(const Json& j) {
 }
 
 // WeightedList: entries {"data": ..., "weight": n}
+}  // namespace
+
 const Json& pick_weighted(const Json& list, Rng& random) {
     int total = 0;
     for (auto& e : list.arr) total += int(e.get_int("weight", 1));
@@ -26,8 +28,6 @@ const Json& pick_weighted(const Json& list, Rng& random) {
     }
     return list.arr.back().at("data");
 }
-
-}  // namespace
 
 int resolve_anchor(const Json& a, const GenRange& r) {
     if (const Json* v = a.find("absolute")) return int(v->int_value());

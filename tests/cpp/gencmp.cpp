@@ -15,7 +15,10 @@ namespace pn { int64_t now_ms() { return 0; } }   // World wants a clock; the co
 using namespace pn;
 
 int main(int argc, char** argv) {
-    bool has_only = false;
+    bool has_only = false, dump_features = false;
+    int layer = INT32_MIN;
+    bool hist = false;
+    std::string vfilter;
     int only_x = 0, only_z = 0;
     std::string overlay, climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
     int64_t seed = 12345;
@@ -31,6 +34,10 @@ int main(int argc, char** argv) {
         else if (a == "--type") type = val();
         else if (a == "--climate") climate = val();
         else if (a == "--overlay") overlay = val();
+        else if (a == "--dump-features") dump_features = true;
+        else if (a == "--hist") hist = true;
+        else if (a == "--vname") vfilter = val();
+        else if (a == "--layer") layer = std::stoi(val());
         else if (a == "--only") { only_x = std::stoi(val()); only_z = std::stoi(val()); has_only = true; }
         else if (a == "-v") verbose++;
         else if (a == "-vv") verbose += 2;
@@ -55,6 +62,14 @@ int main(int argc, char** argv) {
     opt.climate_dump = climate;
     opt.overlay = overlay;
     vg::VanillaGen gen("data", opt, vd.biomes);
+    if (dump_features) {
+        for (size_t st = 0; st < gen.decorator_steps().size(); st++) {
+            printf("step %zu:", st);
+            for (size_t i = 0; i < gen.decorator_steps()[st].size(); i++) printf(" %zu=%s", i, gen.decorator_steps()[st][i].c_str());
+            printf("\n");
+        }
+        return 0;
+    }
     // chunks present in the reference world
     std::string region = src->region_dir;
     std::vector<std::pair<int, int>> chunks;
@@ -82,6 +97,30 @@ int main(int argc, char** argv) {
         mine.x = cx;
         mine.z = cz;
         gen.generate(mine);
+        if (layer != INT32_MIN) {
+            auto ch = [&](uint16_t id) {
+                const std::string& n = B.info(id).name;
+                if (n == "minecraft:air" || n == "minecraft:cave_air") return '.';
+                if (n == "minecraft:stone") return 's'; if (n == "minecraft:granite") return 'g'; if (n == "minecraft:diorite") return 'd'; if (n == "minecraft:andesite") return 'a';
+                if (n == "minecraft:tuff") return 't'; if (n == "minecraft:deepslate") return 'D'; if (n == "minecraft:clay") return 'c'; if (n == "minecraft:gravel") return 'r';
+                if (n == "minecraft:dirt") return 'i'; if (n == "minecraft:sand") return 'S'; if (n == "minecraft:water") return '~'; if (n == "minecraft:grass_block") return 'G';
+                if (n.find("_ore") != std::string::npos) return 'O'; return '?';
+            };
+            printf("layer %d of chunk %d %d (ours | vanilla)\n", layer, cx, cz);
+            for (int z = 0; z < 16; z++) {
+                for (int x = 0; x < 16; x++) putchar(ch(mine.get(x, layer, z)));
+                printf("   ");
+                for (int x = 0; x < 16; x++) putchar(ch(ref->get(x, layer, z)));
+                putchar('\n');
+            }
+        }
+        if (hist) {
+            std::map<std::string, std::pair<long, long>> h;
+            for (int y = kMinY; y < kMinY + kHeight; y++)
+                for (int z = 0; z < 16; z++)
+                    for (int x = 0; x < 16; x++) { h[norm(mine.get(x, y, z))].first++; h[norm(ref->get(x, y, z))].second++; }
+            for (auto& kv : h) printf("  %-50s ours %7ld vanilla %7ld\n", kv.first.c_str(), kv.second.first, kv.second.second);
+        }
         long cd = 0;
         for (int s = 4 * (dim_id != 0); s < (dim_id == 0 ? kSections : 12 + 4 * (dim_id == 2)); s++) {
             for (int y = 0; y < 16; y++)
@@ -90,7 +129,7 @@ int main(int argc, char** argv) {
                         int wy = kMinY + s * 16 + y;
                         uint16_t a = mine.get(x, wy, z), b = ref->get(x, wy, z);
                         total++;
-                        if (a != b && norm(a) != norm(b)) { diff++; cd++; pairs[{norm(a), norm(b)}]++; if (verbose > 1 && shown++ < 40) printf("  %d %d %d: ours %s vanilla %s\n", cx * 16 + x, wy, cz * 16 + z, norm(a).c_str(), norm(b).c_str()); }
+                        if (a != b && norm(a) != norm(b)) { diff++; cd++; pairs[{norm(a), norm(b)}]++; if (verbose > 1 && (vfilter.empty() || norm(b).find(vfilter) != std::string::npos || norm(a).find(vfilter) != std::string::npos) && shown++ < 40) printf("  %d %d %d: ours %s vanilla %s\n", cx * 16 + x, wy, cz * 16 + z, norm(a).c_str(), norm(b).c_str()); }
                     }
             const uint8_t* mb = mine.sec[s] ? mine.sec[s]->biome : mine.air_biomes[s];
             const uint8_t* rb = ref->sec[s] ? ref->sec[s]->biome : ref->air_biomes[s];

@@ -4,6 +4,8 @@
 #include <climits>
 #include <cmath>
 #include <openssl/evp.h>
+#include <cstdio>
+#include <cstdlib>
 #include <set>
 
 namespace pn::vg {
@@ -65,6 +67,7 @@ struct SCtx {
     uint64_t xz_epoch = 1, y_epoch = 1;
     int biome = -1;
     bool have_biome = false;
+    const std::function<int(int, int, int)>* lookup = nullptr;
     uint64_t secondary_epoch = 0, min_surface_epoch = 0;
     double surface_secondary = 0;
     int min_surface_level = 0;
@@ -86,7 +89,6 @@ struct SurfaceSystem::Impl {
     std::vector<uint16_t> clay_bands;
     const NormalNoise *clay_offset, *surface_noise, *surface_secondary_noise, *pillar, *pillar_roof, *badlands_surface, *iceberg_pillar, *iceberg_roof, *iceberg_surface;
     uint16_t white_terracotta, orange_terracotta, terracotta, yellow_terracotta, brown_terracotta, red_terracotta, light_gray_terracotta, packed_ice, snow_block;
-    std::unique_ptr<PerlinSimplexNoise> temperature_noise, frozen_noise, biome_info_noise;
     int eroded_badlands = -1;
     std::unique_ptr<SurfaceRuleTree> tree;
     bool has_frozen_ocean = false;
@@ -107,7 +109,8 @@ struct SurfaceSystem::Impl {
         int n = int(clay_bands.size());
         return clay_bands[size_t(((y + offset + n) % n + n) % n)];
     }
-    int get_biome(int x, int y, int z) const {
+    int get_biome(int x, int y, int z) const { return get_biome(x, y, z, noise_biome); }
+    int get_biome(int x, int y, int z, const std::function<int(int, int, int)>& lookup) const {
         int abs_x = x - 2, abs_y = y - 2, abs_z = z - 2;
         int px = abs_x >> 2, py = abs_y >> 2, pz = abs_z >> 2;
         double fx = double(abs_x & 3) / 4.0, fy = double(abs_y & 3) / 4.0, fz = double(abs_z & 3) / 4.0;
@@ -123,26 +126,9 @@ struct SurfaceSystem::Impl {
         int bx = (min_i & 4) == 0 ? px : px + 1, by = (min_i & 2) == 0 ? py : py + 1, bz = (min_i & 1) == 0 ? pz : pz + 1;
         // ChunkAccess.getNoiseBiome clamps the quart y into the generated range
         int min_q = min_y >> 2, max_q = min_q + (height >> 2) - 1;
-        return noise_biome(bx, std::clamp(by, min_q, max_q), bz);
+        return lookup(bx, std::clamp(by, min_q, max_q), bz);
     }
-    float temperature_at(int biome, int x, int y, int z) const {
-        const SurfaceBiome& b = biomes[size_t(biome)];
-        float t = b.temperature;
-        if (b.frozen) {
-            double large = frozen_noise->get_value(x * 0.05, z * 0.05, false) * 7.0;
-            double edge = biome_info_noise->get_value(x * 0.2, z * 0.2, false);
-            if (large + edge < 0.3) {
-                double small = biome_info_noise->get_value(x * 0.09, z * 0.09, false);
-                if (small < 0.8) t = 0.2f;
-            }
-        }
-        int snow_level = sea_level + 17;
-        if (y > snow_level) {
-            float v = float(temperature_noise->get_value(double(float(x) / 8.0f), double(float(z) / 8.0f), false) * 8.0);
-            return t - (v + float(y) - float(snow_level)) * 0.05f / 40.0f;
-        }
-        return t;
-    }
+    float temperature_at(int biome, int x, int y, int z) const { return biome_temperature(biomes[size_t(biome)], x, y, z, sea_level); }
     bool cold_enough_to_snow(int biome, int x, int y, int z) const { return !(temperature_at(biome, x, y, z) >= 0.15f); }
 };
 
@@ -239,7 +225,7 @@ struct WaterCond : Lazy<true> {
 };
 
 int current_biome(SCtx& c) {
-    if (!c.have_biome) { c.biome = c.sys->get_biome(c.block_x, c.block_y, c.block_z); c.have_biome = true; }
+    if (!c.have_biome) { c.biome = c.lookup ? c.sys->get_biome(c.block_x, c.block_y, c.block_z, *c.lookup) : c.sys->get_biome(c.block_x, c.block_y, c.block_z); c.have_biome = true; }
     return c.biome;
 }
 
@@ -484,13 +470,6 @@ SurfaceSystem::SurfaceSystem(const WorldState& state, const Json& rule, const Su
             n++;
         }
     }
-    {
-        LegacyRandom r1(1234), r2(3456);
-        I.temperature_noise = std::make_unique<PerlinSimplexNoise>(r1, std::vector<int>{0});
-        I.frozen_noise = std::make_unique<PerlinSimplexNoise>(r2, std::vector<int>{-2, -1, 0});
-        LegacyRandom r3(2345);
-        I.biome_info_noise = std::make_unique<PerlinSimplexNoise>(r3, std::vector<int>{0});
-    }
     for (size_t i = 0; i < I.biomes.size(); i++) {
         if (I.biomes[i].name == "minecraft:eroded_badlands") I.eroded_badlands = int(i);
         if (I.biomes[i].name == "minecraft:frozen_ocean" || I.biomes[i].name == "minecraft:deep_frozen_ocean") I.frozen_ocean_biomes.push_back(int(i));
@@ -502,8 +481,9 @@ SurfaceSystem::SurfaceSystem(const WorldState& state, const Json& rule, const Su
 }
 
 int SurfaceSystem::biome_at(int x, int y, int z) const { return p_->get_biome(x, y, z); }
+int SurfaceSystem::biome_with(int x, int y, int z, const std::function<int(int, int, int)>& lookup) const { return p_->get_biome(x, y, z, lookup); }
 
-bool SurfaceSystem::top_material(const ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, int x, int y, int z, bool under_fluid, uint16_t& out) const {
+bool SurfaceSystem::top_material(const ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, int x, int y, int z, bool under_fluid, uint16_t& out, const std::function<int(int, int, int)>* lookup) const {
     const Impl& I = *p_;
     SCtx c;
     c.sys = &I;
@@ -511,6 +491,7 @@ bool SurfaceSystem::top_material(const ChunkBlocks& blocks, int chunk_x, int chu
     c.blocks = &blocks;
     c.chunk_x = chunk_x;
     c.chunk_z = chunk_z;
+    c.lookup = lookup;
     c.caches.assign(size_t(I.tree->slots), SCtx::Cache());
     c.block_x = x;
     c.block_z = z;
@@ -524,7 +505,7 @@ bool SurfaceSystem::top_material(const ChunkBlocks& blocks, int chunk_x, int chu
     return I.tree->root->apply(c, x, y, z, out);
 }
 
-void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill) const {
+void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, const std::function<int(int, int, int)>* lookup) const {
     const Impl& I = *p_;
     const int min_y = I.min_y;
     SCtx c;
@@ -533,6 +514,7 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
     c.blocks = &blocks;
     c.chunk_x = chunk_x;
     c.chunk_z = chunk_z;
+    c.lookup = lookup;
     c.caches.assign(size_t(I.tree->slots), SCtx::Cache());
     auto get = [&](int x, int y, int z) { return blocks.get(x, y, z); };
     auto set = [&](int x, int y, int z, uint16_t st) { blocks.set(x, y, z, st); };
@@ -541,7 +523,7 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
         for (int z = 0; z < 16; z++) {
             int bx = min_bx + x, bz = min_bz + z;
             int starting = blocks.hm[WORLD_SURFACE_WG][z * 16 + x];
-            int surface_biome = I.get_biome(bx, I.legacy ? 0 : starting, bz);
+            int surface_biome = lookup ? I.get_biome(bx, I.legacy ? 0 : starting, bz, *lookup) : I.get_biome(bx, I.legacy ? 0 : starting, bz);
             if (surface_biome == I.eroded_badlands && I.eroded_badlands >= 0) {
                 // erodedBadlandsExtension
                 double pillar_buffer = std::min(std::fabs(I.badlands_surface->get_value(bx, 0.0, bz) * 8.25), I.pillar->get_value(bx * 0.2, 0.0, bz * 0.2) * 15.0);
@@ -570,6 +552,7 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
             int stone_above = 0, water_height = INT_MIN, next_ceiling = INT_MAX;
             for (int y = height; y >= min_y; y--) {
                 uint16_t old = get(bx, y, bz);
+                if (std::getenv("PAINITE_DBG") && bx == 15 && bz == 8 && chunk_x == 0 && chunk_z == 0) fprintf(stderr, "col y=%d id=%d air=%d fluid=%d def=%d\n", y, int(old), int(I.air(old)), int(I.fluid(old)), int(old == I.default_block));
                 if (I.air(old)) { stone_above = 0; water_height = INT_MIN; }
                 else if (I.fluid(old)) { if (water_height == INT_MIN) water_height = y + 1; }
                 else {
@@ -590,7 +573,9 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
                     c.stone_depth_above = stone_above;
                     if (old == I.default_block) {
                         uint16_t st;
-                        if (I.tree->root->apply(c, bx, y, bz, st)) set(bx, y, bz, st);
+                        bool applied = I.tree->root->apply(c, bx, y, bz, st);
+                        if (std::getenv("PAINITE_DBG") && bx == 15 && bz == 8 && chunk_x == 0 && chunk_z == 0) fprintf(stderr, "y=%d above=%d below=%d water=%d depth=%d applied=%d st=%d\n", y, stone_above, stone_below, water_height, c.surface_depth, int(applied), int(st));
+                        if (applied) set(bx, y, bz, st);
                     }
                 }
             }

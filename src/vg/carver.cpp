@@ -1,4 +1,5 @@
 #include "carver.hpp"
+#include "mathutil.hpp"
 #include <climits>
 #include <cmath>
 #include <map>
@@ -8,17 +9,12 @@ namespace pn::vg {
 
 namespace {
 
-constexpr float kPi = 3.14159265358979323846f;   // (float) Math.PI
+constexpr float kPi = kPiF;
 
-struct SinTable {
-    float t[65536];
-    SinTable() { for (int i = 0; i < 65536; i++) t[i] = float(std::sin(double(i) / 10430.378350470453)); }
-};
-const SinTable& sin_table() { static SinTable s; return s; }
 // (a - b) * c with the random calls in Java's order
 inline float rot_noise(Rng& r) { float a = r.next_float(); float b = r.next_float(); float c = r.next_float(); return (a - b) * c; }
-inline float msin(double v) { return sin_table().t[int(int64_t(v * 10430.378350470453) & 65535)]; }
-inline float mcos(double v) { return sin_table().t[int(int64_t(v * 10430.378350470453 + 16384.0) & 65535)]; }
+inline float msin(double v) { return mth_sin(v); }
+inline float mcos(double v) { return mth_cos(v); }
 
 }  // namespace
 
@@ -43,6 +39,7 @@ struct Carvers::Impl {
         int chunk_x, chunk_z;
         ChunkFill& fill;
         std::vector<uint8_t> mask;
+        const std::function<int(int, int, int)>* lookup = nullptr;
         Job(ChunkBlocks& b, int cx, int cz, ChunkFill& f) : blocks(b), chunk_x(cx), chunk_z(cz), fill(f), mask(b.b.size(), 0) {}
     };
     using Skip = std::function<bool(double, double, double, int)>;
@@ -87,7 +84,7 @@ struct Carvers::Impl {
         if (has_grass) {
             if (job.blocks.get(x, y - 1, z) == cb.dirt) {
                 uint16_t top;
-                if (surface->top_material(job.blocks, job.chunk_x, job.chunk_z, job.fill, x, y - 1, z, job.blocks.fluid(st), top)) job.blocks.set(x, y - 1, z, top);
+                if (surface->top_material(job.blocks, job.chunk_x, job.chunk_z, job.fill, x, y - 1, z, job.blocks.fluid(st), top, job.lookup)) job.blocks.set(x, y - 1, z, top);
             }
         }
         return true;
@@ -291,9 +288,10 @@ Carvers::Carvers(const Registry& reg, const WorldState& state, const SurfaceSyst
         for (auto& id : list) I.carver(id, blocks_count, name_of);
 }
 
-void Carvers::carve(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, const std::function<int(int, int)>& source_biome) const {
+void Carvers::carve(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, const std::function<int(int, int)>& source_biome, const std::function<int(int, int, int)>* lookup) const {
     Impl& I = *p_;
     Impl::Job job(blocks, chunk_x, chunk_z, fill);
+    job.lookup = lookup;
     const int64_t seed = I.state.seed();
     LegacyRandom random(0);
     for (int dx = -8; dx <= 8; dx++)

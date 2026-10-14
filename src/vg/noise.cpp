@@ -289,4 +289,8 @@ double PerlinSimplexNoise::get_value(double x, double y, bool use_noise_start) c
     return value;
 }
 
+const PerlinSimplexNoise& biome_temperature_noise() { static const PerlinSimplexNoise n = [] { LegacyRandom r(1234); return PerlinSimplexNoise(r, {0}); }(); return n; }
+const PerlinSimplexNoise& biome_frozen_noise() { static const PerlinSimplexNoise n = [] { LegacyRandom r(3456); return PerlinSimplexNoise(r, {-2, -1, 0}); }(); return n; }
+const PerlinSimplexNoise& biome_info_noise() { static const PerlinSimplexNoise n = [] { LegacyRandom r(2345); return PerlinSimplexNoise(r, {0}); }(); return n; }
+
 }  // namespace pn::vg

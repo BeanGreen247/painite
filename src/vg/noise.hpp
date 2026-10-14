@@ -86,6 +86,11 @@ private:
     double highest_freq_value_factor_ = 0, highest_freq_input_factor_ = 0;
 };
 
+// the three simplex noises Mojang's Biome class keeps as statics
+const PerlinSimplexNoise& biome_temperature_noise();   // TEMPERATURE_NOISE, seed 1234, octaves {0}
+const PerlinSimplexNoise& biome_frozen_noise();        // FROZEN_TEMPERATURE_NOISE, seed 3456, octaves {-2, -1, 0}
+const PerlinSimplexNoise& biome_info_noise();          // BIOME_INFO_NOISE, seed 2345, octaves {0}
+
 extern const int kGradient[16][3];
 inline int mth_floor(double v) { return int(__builtin_floor(v)); }
 inline int64_t mth_lfloor(double v) { return int64_t(__builtin_floor(v)); }

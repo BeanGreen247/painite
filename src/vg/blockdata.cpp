@@ -6,7 +6,7 @@
 
 namespace pn::vg {
 
-BlockData::BlockData(const std::string& flags_path, const Registry& reg) : B_(Blocks::get()), reg_(reg) {
+BlockData::BlockData(const std::string& flags_path, const std::string& classes_path, const Registry& reg) : B_(Blocks::get()), reg_(reg) {
     flags_.assign(B_.count(), 0);
     std::ifstream f(flags_path);
     if (!f) throw std::runtime_error("missing " + flags_path + " (run tools/fetch_worldgen.sh)");
@@ -20,6 +20,25 @@ BlockData::BlockData(const std::string& flags_path, const Registry& reg) : B_(Bl
         if (bi.name != line.substr(0, a) || bi.props != line.substr(a + 1, b - a - 1)) continue;
         flags_[id] = uint32_t(std::stoull(line.substr(b + 1), nullptr, 16));
     }
+    {
+        std::ifstream cf(classes_path);
+        if (!cf) throw std::runtime_error("missing " + classes_path + " (run tools/fetch_worldgen.sh)");
+        while (std::getline(cf, line)) {
+            size_t a = line.find('\t');
+            if (a == std::string::npos) continue;
+            std::vector<std::string> chain;
+            std::stringstream ss(line.substr(a + 1));
+            std::string k;
+            while (std::getline(ss, k, '>')) chain.push_back(k);
+            classes_[line.substr(0, a)] = std::move(chain);
+        }
+        class_of_.assign(B_.count(), nullptr);
+        static const std::vector<std::string> none;
+        for (size_t i = 0; i < B_.count(); i++) {
+            auto it = classes_.find(B_.info(uint16_t(i)).name);
+            class_of_[i] = it == classes_.end() ? &none : &it->second;
+        }
+    }
     chunk_flags_.assign(65536, 0);
     const auto& leaves = tag_table("minecraft:leaves");
     for (size_t i = 0; i < flags_.size() && i < 65536; i++) {
@@ -31,6 +50,11 @@ BlockData::BlockData(const std::string& flags_path, const Registry& reg) : B_(Bl
         if (i < leaves.size() && leaves[i]) c |= 8;
         chunk_flags_[i] = c;
     }
+}
+
+const std::vector<std::string>& BlockData::classes(uint16_t id) const {
+    static const std::vector<std::string> none;
+    return id < class_of_.size() ? *class_of_[id] : none;
 }
 
 const std::vector<uint8_t>& BlockData::tag_table(const std::string& tag) const {

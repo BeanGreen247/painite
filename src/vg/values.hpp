@@ -14,6 +14,8 @@ int resolve_anchor(const Json& anchor, const GenRange& r);                   // 
 int sample_int(const Json& provider, Rng& random);                           // number or {"type": ...}
 float sample_float(const Json& provider, Rng& random);
 int sample_height(const Json& provider, Rng& random, const GenRange& r);
+// WeightedList.getRandomOrThrow over a JSON list of {"data": ..., "weight": n}
+const Json& pick_weighted(const Json& list, Rng& random);
 int int_provider_min(const Json& provider);                                  // minInclusive()
 int int_provider_max(const Json& provider);                                  // maxInclusive()
 

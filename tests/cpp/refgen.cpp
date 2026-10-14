@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     std::string version = "26.3", out, dim = "overworld", type = "default", seed = "12345";
     int x1 = -128, z1 = -128, x2 = 127, z2 = 127;
     bool structures = false;
-    std::string data = "data", stage = "full";
+    std::string data = "data", stage = "full", feature_re;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
         else if (a == "--data") data = val();
         else if (a == "--structures") structures = true;
         else if (a == "--stage") stage = val();
+        else if (a == "--features") { feature_re = val(); stage = "features"; }
         else if (a == "--area") { x1 = std::stoi(val()); z1 = std::stoi(val()); x2 = std::stoi(val()); z2 = std::stoi(val()); }
     }
     if (out.empty()) { fprintf(stderr, "usage: painite_refgen --out DIR [--version 26.3] [--seed N] [--area X1 Z1 X2 Z2] [--dim overworld|the_nether|the_end] [--structures] [--type default|large_biomes|amplified|flat]\n"); return 2; }
@@ -57,6 +58,7 @@ int main(int argc, char** argv) {
         bool keep_carvers = stage == "carvers" || stage == "features";
         bool keep_features = stage == "features";
         std::string filter = std::string(".features = ") + (keep_features ? ".features" : "[]") + " | .carvers = " + (keep_carvers ? ".carvers" : "[]");
+        if (!feature_re.empty()) filter = ".features |= map(map(select(test(\"" + feature_re + "\")))) | .carvers = .carvers";
         for (auto& e : fs::directory_iterator(wg + "/biome")) {
             std::string cmd = "jq -c '" + filter + "' " + e.path().string() + " > " + pack + "/data/minecraft/worldgen/biome/" + e.path().filename().string();
             if (system(cmd.c_str()) != 0) { fprintf(stderr, "jq failed\n"); return 1; }

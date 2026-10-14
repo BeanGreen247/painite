@@ -18,7 +18,7 @@ public:
             std::vector<std::vector<std::string>> carvers_of_biome);
     ~Carvers();
     // source_biome(quartX, quartZ) -> biome value index for the chunk's carver list (sampled at y 0)
-    void carve(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, const std::function<int(int, int)>& source_biome) const;
+    void carve(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFill& fill, const std::function<int(int, int)>& source_biome, const std::function<int(int, int, int)>* lookup = nullptr) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> p_;
