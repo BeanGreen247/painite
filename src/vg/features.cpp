@@ -3,6 +3,10 @@
 #include "mathutil.hpp"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <mutex>
 #include <stdexcept>
 
 namespace pn::vg {
@@ -239,6 +243,17 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
         bool handled;
         bool r = place_feature_type2(env, type, config, random, origin, handled);
         if (handled) return r;
+        r = place_feature_type3(env, type, config, random, origin, handled);
+        if (handled) return r;
+    }
+    if (std::getenv("PAINITE_LENIENT")) {   // development: list the types that are still missing instead of stopping
+        static std::mutex mu;
+        static std::map<std::string, int> missing;
+        static bool registered = false;
+        std::lock_guard<std::mutex> l(mu);
+        if (!registered) { registered = true; atexit([] { for (auto& kv : missing) fprintf(stderr, "not ported: %s (%d placements)\n", kv.first.c_str(), kv.second); }); }
+        missing[type]++;
+        return false;
     }
     throw std::runtime_error("feature type not ported yet: " + type);
 }

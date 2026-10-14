@@ -1,5 +1,7 @@
 #include "feature.hpp"
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace pn::vg {
@@ -103,7 +105,11 @@ bool test_predicate(FeatureEnv& env, const Json& p, const BlockPos& origin) {
     if (t == "replaceable") return bd.replaceable(lv.get(at));
     if (t == "has_sturdy_face") return bd.sturdy(lv.get(at), dir_from_name(p.at("direction").str));
     if (t == "inside_world_bounds") return !lv.outside_build_height(at.y);
-    if (t == "would_survive") return state_can_survive(env, bd.state(p.at("state")), at);
+    if (t == "would_survive") {
+        bool r = state_can_survive(env, bd.state(p.at("state")), at);
+        if (std::getenv("PAINITE_DBG2") && at.x >= 184 && at.x <= 190 && at.z >= -82 && at.z <= -76) fprintf(stderr, "would_survive %d %d %d -> %d below=%s\n", at.x, at.y, at.z, int(r), bd.name(lv.get(at.below())).c_str());
+        return r;
+    }
     if (t == "unobstructed") return true;   // entities do not exist during generation
     if (t == "matching_biomes") {
         int b = lv.biome(at);
@@ -207,6 +213,7 @@ struct PlaceRun {
         const Json& m = modifiers.arr[i];
         const std::string t = short_type(m);
         Level& lv = env.level;
+        if (std::getenv("PAINITE_DBG2") && env.top_feature && pos.x >= 184 && pos.x <= 190 && pos.z >= -82 && pos.z <= -76) fprintf(stderr, "%s modifier %zu %s at %d %d %d\n", env.top_feature->c_str(), i, t.c_str(), pos.x, pos.y, pos.z);
         if (t == "count") {
             int n = sample_int(m.at("count"), random);
             for (int k = 0; k < n; k++) run(i + 1, pos);

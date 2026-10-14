@@ -248,6 +248,7 @@ struct VanillaGen::Impl {
         FeatureEnv env{level, reg, feature_shared, [this](int biome, const std::string& id) { return decorator->biome_has_feature(biome, id); }};
         env.biomes = &biome_infos;
         env.sea_level = ns.sea_level;
+        env.seed = opt.seed;
         decorator->decorate(env, cx, cz, biomes);
         center.decorated = true;
         for (int i = 0; i < 9; i++)

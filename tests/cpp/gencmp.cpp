@@ -17,7 +17,9 @@ using namespace pn;
 int main(int argc, char** argv) {
     bool has_only = false, dump_features = false;
     int layer = INT32_MIN;
-    bool hist = false;
+    bool hist = false, has_col = false;
+    int col_x = 0, col_z = 0, col_lo = 0, col_hi = 0;
+    int smoke = -1;
     std::string histy;
     std::string vfilter;
     int only_x = 0, only_z = 0;
@@ -37,6 +39,8 @@ int main(int argc, char** argv) {
         else if (a == "--overlay") overlay = val();
         else if (a == "--dump-features") dump_features = true;
         else if (a == "--hist") hist = true;
+        else if (a == "--column") { col_x = std::stoi(val()); col_z = std::stoi(val()); has_col = true; col_lo = std::stoi(val()); col_hi = std::stoi(val()); }
+        else if (a == "--smoke") smoke = std::stoi(val());
         else if (a == "--histy") histy = val();
         else if (a == "--vname") vfilter = val();
         else if (a == "--layer") layer = std::stoi(val());
@@ -64,6 +68,19 @@ int main(int argc, char** argv) {
     opt.climate_dump = climate;
     opt.overlay = overlay;
     vg::VanillaGen gen("data", opt, vd.biomes);
+    if (smoke >= 0) {
+        std::map<std::string, int> errors;
+        int ok = 0;
+        for (int cz = -smoke; cz <= smoke; cz++)
+            for (int cx = -smoke; cx <= smoke; cx++) {
+                Chunk c;
+                c.x = cx; c.z = cz;
+                try { gen.generate(c); ok++; } catch (const std::exception& e) { errors[e.what()]++; }
+            }
+        printf("%d chunks generated\n", ok);
+        for (auto& kv : errors) printf("  %5d x %s\n", kv.second, kv.first.c_str());
+        return errors.empty() ? 0 : 1;
+    }
     if (dump_features) {
         for (size_t st = 0; st < gen.decorator_steps().size(); st++) {
             printf("step %zu:", st);
@@ -130,6 +147,10 @@ int main(int argc, char** argv) {
                     for (int x = 0; x < 16; x++) { if (norm(mine.get(x, y, z)).find(histy) != std::string::npos) a++; if (norm(ref->get(x, y, z)).find(histy) != std::string::npos) b++; }
                 if (a || b) printf("  y=%d ours %ld vanilla %ld\n", y, a, b);
             }
+        }
+        if (has_col && (col_x >> 4) == cx && (col_z >> 4) == cz) {
+            printf("column %d %d (ours | vanilla)\n", col_x, col_z);
+            for (int y = col_hi; y >= col_lo; y--) printf("  %4d %-45s %s\n", y, norm(mine.get(col_x & 15, y, col_z & 15)).c_str(), norm(ref->get(col_x & 15, y, col_z & 15)).c_str());
         }
         long cd = 0;
         for (int s = 4 * (dim_id != 0); s < (dim_id == 0 ? kSections : 12 + 4 * (dim_id == 2)); s++) {

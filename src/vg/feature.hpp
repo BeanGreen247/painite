@@ -19,6 +19,7 @@ struct FeatureShared {
     std::map<const Json*, std::unique_ptr<NormalNoise>> noises;
     std::map<const Json*, std::unique_ptr<NormalNoise>> slow_noises;
     const NormalNoise& noise_of(const Json* key, const Json& provider, bool slow = false);
+    std::unique_ptr<NormalNoise> geode_noise;   // NormalNoise.create(WorldgenRandom(LegacyRandomSource(seed)), -4, 1.0)
 };
 
 struct FeatureEnv {
@@ -29,6 +30,7 @@ struct FeatureEnv {
     std::function<bool(int biome, const std::string& placed_feature)> biome_has_feature;
     const std::vector<BiomeInfo>* biomes = nullptr;   // by biome value
     int sea_level = 63;
+    int64_t seed = 0;    // the world seed
     const BlockData& bd() const { return level.bd(); }
     const std::string* top_feature = nullptr;   // the placed feature being placed (for the biome filter)
 };
@@ -48,6 +50,7 @@ bool state_can_survive(FeatureEnv& env, uint16_t state, const BlockPos& pos);   
 bool state_in_set(FeatureEnv& env, uint16_t state, const Json& blocks);                                 // "minecraft:x" | ["minecraft:x"] | "#minecraft:tag"
 int heightmap_from_name(const std::string& name);
 bool place_feature_type2(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled);   // features2.cpp
+bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled);   // features3.cpp
 bool place_tree_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin);   // feat_tree.cpp
 
 }  // namespace pn::vg
