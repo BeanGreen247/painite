@@ -30,6 +30,8 @@ struct GIdentity {
     std::vector<AuthProp> props;  // Java skin properties
     std::vector<uint8_t> bedrock_skin;   // Bedrock "Skin" structure for the player list (empty: default)
     std::string addr;
+    mutable std::atomic<int> ping_ms{-1};   // round trip to the client, updated by its connection worker
+    int64_t joined_ms = 0;
 };
 
 struct GPos {

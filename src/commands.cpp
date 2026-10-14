@@ -145,7 +145,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
     auto missing = [&](const std::string& t) { reply("No player was found: " + t); };
 
     if (cmd == "help" || cmd == "?") {
-        std::string o = "Commands: help, list, tps, me, tell/msg, version";
+        std::string o = "Commands: help, list, players, tps, me, tell/msg, version";
         if (level >= 2) o += ", say, tp, gamemode, time, setblock, fill, kick";
         if (level >= 3) o += ", ban, ban-ip, pardon, pardon-ip, banlist, whitelist, op, deop";
         if (level >= 4) o += ", save-all, save-on, save-off, stop";
@@ -155,6 +155,19 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         std::string o = "There are " + std::to_string(ids.size()) + " of a max of " + std::to_string(s_.cfg.max_players) + " players online:";
         for (size_t i = 0; i < ids.size(); i++) o += (i ? ", " : " ") + ids[i]->name;
         reply(o);
+    } else if (cmd == "players") {
+        auto ids = identities();
+        if (ids.empty()) { reply("Nobody is online"); return; }
+        int64_t now = now_ms();
+        char b[240];
+        reply("name              edition  ping    ticks online  tps   gamemode  position");
+        for (auto& id : ids) {
+            GPos p = position(id->gid);
+            int ping = id->ping_ms.load();
+            snprintf(b, sizeof b, "%-17s %-7s  %4d ms  %12lld  %4.1f  %-8d  %.0f %.0f %.0f", id->name.c_str(), id->bedrock ? "Bedrock" : "Java", ping < 0 ? 0 : ping,
+                     static_cast<long long>((now - id->joined_ms) / 50), tps_, gamemode_of(id->gid), p.x, p.y, p.z);
+            reply(b);
+        }
     } else if (cmd == "version" || cmd == "ver" || cmd == "about") {
         reply("Painite 0.1.0, Minecraft Java + Bedrock server");
     } else if (cmd == "plugins" || cmd == "pl") {

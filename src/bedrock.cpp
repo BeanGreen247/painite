@@ -297,6 +297,7 @@ void Bedrock::tick(int64_t now) {
     }
     rak_->for_each([&](RakSession& r) {
         auto* b = static_cast<BSession*>(r.user);
+        if (b && b->ident) b->ident->ping_ms = static_cast<int>(r.srtt_ms);
         if (b && !r.closed && b->st == BSession::St::Spawning) pump_chunks(*b);
     });
     rak_->tick(now);

@@ -73,6 +73,7 @@ struct JConn {
     int gamemode = 0;
     float chunk_rate = 9;    // client-requested chunks per tick
     uint64_t gid = 0;        // Game registry id
+    std::shared_ptr<GIdentity> ident;   // set once the player is in the game (ping updates)
     int tp_id = 0;
     uint16_t hotbar[9] = {};  // internal block ids of the creative hotbar items (0 = none / not a block)
     int held = 0;

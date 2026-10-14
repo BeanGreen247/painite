@@ -176,6 +176,9 @@ void Bedrock::begin_play(BSession& b) {
     }
     GPos gp;
     gp.x = b.x; gp.y = b.y; gp.z = b.z; gp.yaw = b.yaw; gp.pitch = b.pitch; gp.head = b.yaw;
+    id->joined_ms = now_ms();
+    id->ping_ms = static_cast<int>(b.rak->srtt_ms);
+    b.ident = id;
     b.gid = s_.game.add_player(id, gp, b.gamemode, std::max(2, b.radius));
 }
 

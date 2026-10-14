@@ -539,6 +539,8 @@ void Worker::start_play(JConn& c) {
     ident->addr = c.addr;
     GPos gp;
     gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.skin_parts = c.skin_parts;
+    ident->joined_ms = now_ms();
+    c.ident = ident;
     c.gid = s_.game.add_player(ident, gp, c.gamemode, c.radius);
     send_command_tree(c);
 }
@@ -664,6 +666,7 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     const auto& id = c.vd->id;
     if (pid == id.pls_keep_alive) {
         c.last_ka_ack = now_ms();
+        if (c.ident && static_cast<int64_t>(r.be64()) == c.ka_id) c.ident->ping_ms = static_cast<int>(std::min<int64_t>(c.last_ka_ack - c.ka_id, 99999));
     } else if (pid == id.pls_move_pos) {
         double x = r.f64(), y = r.f64(), z = r.f64();
         uint8_t fl = r.u8();

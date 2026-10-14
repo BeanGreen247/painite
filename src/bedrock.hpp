@@ -49,6 +49,7 @@ struct BSession {
     int cx = 0, cz = 0;
     uint64_t id = 0;         // connection id (valid on this worker)
     uint64_t gid = 0;        // Game registry id once the player spawned
+    std::shared_ptr<GIdentity> ident;
     int eid = 0;             // entity id, both unique and runtime id
     double x = 0.5, y = 0, z = 0.5;   // feet position
     float yaw = 0, pitch = 0;
