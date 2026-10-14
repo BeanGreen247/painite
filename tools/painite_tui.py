@@ -166,7 +166,7 @@ WHY = [
     "* Startup: seconds, not minutes; an idle server uses well under 1% of one core.",
     "",
     "Be honest about the other side: Painite has no plugins, mobs, terrain generation or survival inventory yet.",
-    "Compare it on your own machine: run Paper on the same world and use tests/load_test.py against both (bots, CPU and memory are printed).",
+    "Compare it on your own machine: run Paper on the same world and use build/painite_load against both (bots, CPU and memory are printed).",
     "",
     "Press F2 to go back.",
 ]

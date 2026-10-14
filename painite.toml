@@ -31,6 +31,9 @@ retire_after_idle_s = 60    # retire a worker with no connections after this lon
 # session_host    = "sessionserver.mojang.com"   # host or host:port, used when online-mode=true
 # session_ca_file = ""                          # optional CA bundle for a private auth server
 
+[server]
+files_poll_ms = 3000          # how often ops.json, banned-players.json, whitelist.json and server-icon.png are checked for edits
+
 [world]
 generator   = "auto"   # for chunks not on disk: auto (terrain or flat for a new world as set by level-type, void when region files exist) | terrain | flat | void
 autosave_s  = 300      # write changed chunks and player data this often (seconds)

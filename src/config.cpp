@@ -160,6 +160,7 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = tget("auth.session_host")) c.session_host = *v;
     if (auto v = tget("auth.xbox_host")) c.xbox_host = *v;
     if (auto v = tget("auth.session_ca_file")) c.session_ca_file = *v;
+    if (auto v = tget("server.files_poll_ms")) c.files_poll_ms = std::max(50, atoi(v->c_str()));
     if (auto v = tget("world.generator")) c.generator = lower(*v);
     if (auto v = tget("world.tick_threads")) c.tick_threads = to_int(*v, c.tick_threads);
     if (auto v = tget("world.autosave_s")) c.autosave_s = to_int(*v, c.autosave_s);

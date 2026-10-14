@@ -1,0 +1,232 @@
+// Two Java bots: tab list, entities, movement, commands, block edits and chat; scheduled block updates (falling blocks, plants).
+#include "chunkparse.hpp"
+#include "harness.hpp"
+#include <array>
+#include <cmath>
+#include <map>
+
+namespace pt {
+
+namespace {
+
+ServerOpts game_opts(const Env&) {
+    ServerOpts o;
+    o.properties = "gamemode=creative\nlevel-type=flat\n";
+    o.ops = {"Bobby", "Bobbyb", "Rob"};
+    return o;
+}
+
+// total of the x deltas (in blocks) carried by the movement packets A has queued for entity-of-B
+double movement_total(JBot& a, int protocol) {
+    double tot = 0;
+    for (auto& e : a.log) {
+        if (e.first != "move_entity_pos_rot" && e.first != "move_entity_pos") continue;
+        Rd r(e.second);
+        r.varint();
+        if (protocol >= 777) r.varint();
+        tot += double(int16_t(r.be16())) / 4096.0;
+    }
+    return tot;
+}
+
+void game(Ctx& t, Env& e, const std::string& version, const std::string& an, const std::string& bn, const char* platform) {
+    auto ids = e.ids(version);
+    int proto = e.protocol(version);
+    int port = e.port();
+    JBot A(port, proto, ids, an);
+    A.until([&] { return A.has_pos; }, 5000);
+    JBot B(port, proto, ids, bn);
+    B.until([&] { return B.has_pos; }, 5000);
+    Bytes ub = B.uuid;
+    A.wait_for("player_info_update", 1, 3000);
+    A.wait_for("add_entity", 1, 3000);
+    bool tab = false;
+    for (auto& en : A.log) if (en.first == "player_info_update" && std::search(en.second.begin(), en.second.end(), ub.begin(), ub.end()) != en.second.end()) tab = true;
+    t.check(tab, an + " sees " + bn + " in the tab list");
+    {
+        Bytes spawn;
+        for (auto& en : A.log) if (en.first == "add_entity") { spawn = en.second; break; }
+        t.check(!spawn.empty(), an + " gets add_entity for " + bn);
+        if (!spawn.empty()) {
+            Rd r(spawn);
+            r.varint();
+            Bytes u = r.take(16);
+            t.check(u == ub, "add_entity carries " + bn + "'s uuid");
+            int type = int(r.varint());
+            t.check(type == ids->entity_types.at("player"), "entity type is player (" + std::to_string(type) + ")");
+            double x = r.f64(), y = r.f64(), z = r.f64();
+            (void)y;
+            t.check(std::fabs(x - B.pos[0]) < 0.01 && std::fabs(z - B.pos[2]) < 0.01, "spawned at " + bn + "'s position");
+        }
+    }
+    // movement
+    double bx = B.pos[0], by = B.pos[1], bz = B.pos[2];
+    for (int i = 1; i <= 5; i++) {
+        B.send("move_player_pos_rot", Wr().f64(bx + i * 0.2).f64(by).f64(bz).f32(90.0f).f32(10.0f).u8(1).b);
+        B.pump(55);
+    }
+    A.until([&] { return std::fabs(movement_total(A, proto) - 1.0) < 0.01; }, 3000);
+    double tot = movement_total(A, proto);
+    t.check(std::fabs(tot - 1.0) < 0.01, "summed movement deltas = " + std::to_string(tot) + " blocks (expected 1.0)");
+    A.log.clear();
+    // operator commands: a platform under Bobby, seen by Alicia
+    B.drop("system_chat");
+    B.command(std::string("fill ~ ~-1 ~ ~6 ~-1 ~2 ") + platform);
+    bool filled = B.until([&] { for (auto& en : B.log) if (en.first == "system_chat" && contains(en.second, "filled")) return true; return false; }, 3000);
+    t.check(filled, "/fill answers for an operator");
+    A.until([&] { return A.count("block_update") >= 15; }, 3000);
+    t.check(A.count("block_update") >= 15, an + " gets block updates for the platform (" + std::to_string(A.count("block_update")) + ")");
+    A.drop("block_update");
+    // block placement: stone from the creative inventory onto the platform
+    auto& items = ids->items;
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(64).varint(uint32_t(items.at("stone"))).varint(0).varint(0).b);
+    B.send("set_carried_item", Wr().be16(0).b);
+    double cur_x = bx + 1.0;
+    B.send("move_player_pos", Wr().f64(cur_x).f64(by).f64(bz).u8(1).b);
+    B.pump(150);
+    int tx = int(std::floor(cur_x)) + 2, tz = int(std::floor(bz)), ty = int(std::floor(by)) - 1;
+    B.drop("block_changed_ack");
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(tx, ty, tz)).varint(1).f32(0.5f).f32(1.0f).f32(0.5f).u8(0).u8(0).varint(7).b);
+    B.wait_for("block_changed_ack", 1, 3000);
+    auto ack = B.take("block_changed_ack");
+    t.check(ack.size() == 1 && Rd(ack[0]).varint() == 7, bn + " gets block_changed_ack for sequence 7");
+    uint64_t want = block_pos(tx, ty + 1, tz);
+    auto find_update = [&](uint64_t pos, int* state) {
+        for (auto& en : A.log)
+            if (en.first == "block_update") { Rd r(en.second); if (r.be64() == pos) { *state = int(r.varint()); return true; } }
+        return false;
+    };
+    int st = -1;
+    A.until([&] { return find_update(want, &st); }, 3000);
+    t.check(find_update(want, &st), an + " gets block_update for the placed block");
+    if (st < 0) {
+        std::string seen;
+        int ex, ey, ez;
+        unpack_pos(want, ex, ey, ez);
+        seen = "expected " + std::to_string(ex) + "," + std::to_string(ey) + "," + std::to_string(ez) + "; received:";
+        for (auto& en : A.log) if (en.first == "block_update") { Rd r(en.second); int x, y, z; unpack_pos(r.be64(), x, y, z); seen += " (" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z) + ")=" + std::to_string(r.varint()); }
+        seen += " | B got:";
+        for (auto& en : B.log) if (en.first == "block_update") { Rd r(en.second); int x, y, z; unpack_pos(r.be64(), x, y, z); seen += " (" + std::to_string(x) + "," + std::to_string(y) + "," + std::to_string(z) + ")=" + std::to_string(r.varint()); }
+        t.note(seen);
+    }
+    t.check(st == 1, "placed block state is stone (state " + std::to_string(st) + ")");
+    // break it again
+    A.drop("block_update");
+    B.send("player_action", Wr().varint(0).be64(block_pos(tx, ty + 1, tz)).u8(1).varint(8).b);
+    A.until([&] { st = -1; return find_update(want, &st) && st == 0; }, 3000);
+    t.check(st == 0, an + " gets block_update (air) when " + bn + " breaks the block");
+    // swing
+    A.drop(proto >= 777 ? "swing_animation" : "animate");
+    if (ids->has("play/s/punch")) B.send("punch");
+    else B.send("swing", Wr().varint(0).b);
+    A.wait_for(proto >= 777 ? "swing_animation" : "animate", 1, 3000);
+    t.check(A.count(proto >= 777 ? "swing_animation" : "animate") == 1, an + " sees " + bn + " swing");
+    // commands
+    B.drop("system_chat");
+    B.command("list");
+    t.check(B.until([&] { for (auto& en : B.log) if (en.first == "system_chat" && contains(en.second, "players online")) return true; return false; }, 3000), "/list answers");
+    A.drop("system_chat");
+    A.command("tp 1 100 1");
+    t.check(A.until([&] { for (auto& en : A.log) if (en.first == "system_chat" && contains(en.second, "permission")) return true; return false; }, 3000), "/tp refused for a non-operator");
+    B.command("tp " + bn + " ~ ~10 ~");
+    B.pump(300);
+    // chat reaches both
+    A.drop("system_chat");
+    B.send("chat", Wr().str("hi there").be64(uint64_t(unix_ms())).be64(0).u8(0).varint(0).zeros(3).u8(0).b);
+    t.check(A.until([&] { for (auto& en : A.log) if (en.first == "system_chat" && contains(en.second, "hi there")) return true; return false; }, 3000), "chat reaches " + an);
+    // leave
+    A.drop("remove_entities");
+    B.c.close();
+    A.wait_for("remove_entities", 1, 5000);
+    t.check(A.count("remove_entities") >= 1, an + " gets remove_entities when " + bn + " leaves");
+    A.wait_for("player_info_remove", 1, 2000);
+    bool rem = false;
+    for (auto& en : A.log) if (en.first == "player_info_remove" && std::search(en.second.begin(), en.second.end(), ub.begin(), ub.end()) != en.second.end()) rem = true;
+    t.check(rem, an + " gets player_info_remove");
+}
+
+// ---- scheduled block updates ---------------------------------------------------------------------------
+
+void region(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    auto names = load_block_names(e.data_dir + "/vanilla-26.3.blocks", true);
+    JBot B(e.port(), 777, ids, "Rob");
+    JBot W(e.port(), 777, ids, "Watcher");
+    B.until([&] { return B.has_pos; }, 5000);
+    W.until([&] { return W.has_pos; }, 5000);
+    int x = int(std::floor(B.pos[0])) + 4, z = int(std::floor(B.pos[2])) + 1, y0 = int(std::floor(B.pos[1])) - 1;
+    std::map<std::array<int, 3>, std::string> seen;
+    auto collect = [&]() {
+        for (auto& d : W.take("block_update")) {
+            Rd r(d);
+            int px, py, pz;
+            unpack_pos(r.be64(), px, py, pz);
+            auto it = names.find(int(r.varint()));
+            seen[{px, py, pz}] = it == names.end() ? "?" : it->second.substr(it->second.rfind(':') + 1);
+        }
+    };
+    auto cmd = [&](const std::string& text) { B.command(text); B.pump(100); W.pump(100); };
+    auto wait_block = [&](int py, const std::string& want, int ms) {
+        W.until([&] { collect(); auto it = seen.find({x, py, z}); return it != seen.end() && it->second == want; }, ms);
+        collect();
+        auto it = seen.find({x, py, z});
+        return it != seen.end() ? it->second : std::string("none");
+    };
+    auto fmt = [](int a, int b, int c, int d, int f, int g) { return std::to_string(a) + " " + std::to_string(b) + " " + std::to_string(c) + " " + std::to_string(d) + " " + std::to_string(f) + " " + std::to_string(g); };
+    cmd("fill " + fmt(x - 1, y0, z - 1, x + 1, y0, z + 1) + " stone");   // own floor
+    cmd("fill " + fmt(x, y0 + 1, z, x, y0 + 12, z) + " air");
+    W.settle(150, 1000);
+    collect();
+    seen.clear();
+    auto at = [&](int py) { return std::to_string(x) + " " + std::to_string(py) + " " + std::to_string(z); };
+    // 1. sand dropped in the air lands on the ground
+    cmd("setblock " + at(y0 + 8) + " sand");
+    std::string landed = wait_block(y0 + 1, "sand", 4000);
+    std::string left = wait_block(y0 + 8, "air", 500);
+    t.check(left == "air", "sand leaves its starting block: " + left);
+    t.check(landed == "sand", "sand lands on the ground at y=" + std::to_string(y0 + 1) + ": " + landed);
+    // 2. a flower on the sand pops when the sand goes
+    cmd("setblock " + at(y0 + 2) + " dandelion");
+    seen.clear();
+    cmd("setblock " + at(y0 + 1) + " air");
+    std::string fl = wait_block(y0 + 2, "air", 3000);
+    t.check(fl == "air", "the flower is removed with its ground: " + fl);
+    // 3. tall grass: the top goes when the bottom is removed
+    cmd("setblock " + at(y0 + 1) + " tall_grass[half=lower]");
+    cmd("setblock " + at(y0 + 2) + " tall_grass[half=upper]");
+    W.settle(150, 1500);
+    seen.clear();
+    cmd("setblock " + at(y0 + 1) + " air");
+    std::string tg = wait_block(y0 + 2, "air", 3000);
+    t.check(tg == "air", "the upper half of a tall plant goes with the lower one: " + tg);
+    // 4. gravel stack falls together
+    seen.clear();
+    cmd("setblock " + at(y0 + 5) + " gravel");
+    cmd("setblock " + at(y0 + 6) + " gravel");
+    std::string g1 = wait_block(y0 + 1, "gravel", 5000);
+    std::string g2 = wait_block(y0 + 2, "gravel", 3000);
+    t.check(g1 == "gravel" && g2 == "gravel", "two gravel blocks fall and stack: " + g1 + " " + g2);
+    cmd("fill " + fmt(x, y0 + 1, z, x, y0 + 12, z) + " air");
+}
+
+}  // namespace
+
+void reg_java_game(Registry& reg) {
+    Group a;
+    a.name = "game-26.3";
+    a.opts = game_opts;
+    a.tests.push_back({"two-bots", [](Ctx& t, Env& e) { game(t, e, "26.3", "Alicia", "Bobby", "gold_block"); }});
+    reg.push_back(std::move(a));
+    Group b;
+    b.name = "game-26.2";
+    b.opts = game_opts;
+    b.tests.push_back({"two-bots", [](Ctx& t, Env& e) { game(t, e, "26.2", "Aliciab", "Bobbyb", "iron_block"); }});
+    reg.push_back(std::move(b));
+    Group c;
+    c.name = "region";
+    c.opts = game_opts;
+    c.tests.push_back({"block-updates", region});
+    reg.push_back(std::move(c));
+}
+
+}  // namespace pt

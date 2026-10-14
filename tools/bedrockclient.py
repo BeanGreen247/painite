@@ -1,5 +1,5 @@
 """Small Bedrock Edition test client: RakNet session layer, batch/compression, offline (self-signed) login.
-Used by tools/bedrock_capture.py (record a real Bedrock Dedicated Server) and tests/bedrock_smoke.py.
+Used by tools/bedrock_capture.py (record a real Bedrock Dedicated Server) (the test suite has its own C++ client in tests/cpp/bclient.cpp).
 Standard library plus the `cryptography` package (for the ES384 login JWTs).
 """
 import base64, json, os, random, socket, struct, time, uuid, zlib

@@ -129,23 +129,9 @@ if [ "$PGO" = 1 ]; then
   cmake_cfg generate
   cmake --build "$BUILD" -j"$JOBS" --target painite
 
-  say "PGO step 2/3: training run (Java 26.x joins, Bedrock join if data and python3-cryptography exist)"
-  TRAIN=$(mktemp -d)
-  trap 'rm -rf "$TRAIN"; [ -n "${SRV:-}" ] && kill "$SRV" 2>/dev/null || true' EXIT
-  printf 'server-port=25999\nonline-mode=false\nview-distance=8\n' > "$TRAIN/server.properties"
-  (cd "$TRAIN" && exec "$BUILD/painite" --no-bedrock >"$TRAIN/out.log" 2>&1) & SRV=$!
-  sleep 1
-  for ids in "$ROOT"/data/vanilla-*.ids; do
-    proto=$(awk '$1=="protocol"{print $2}' "$ids")
-    for _ in 1 2 3 4 5 6 7 8; do python3 -I "$ROOT/tests/smoke.py" --port 25999 --protocol "$proto" --ids "$ids" >/dev/null || true; done
-  done
-  kill "$SRV"; wait "$SRV" 2>/dev/null || true; SRV=""
-  if ls "$ROOT"/data/bedrock-*.bin >/dev/null 2>&1 && python3 -c 'import cryptography' 2>/dev/null; then
-    (cd "$TRAIN" && exec "$BUILD/painite" >"$TRAIN/out2.log" 2>&1) & SRV=$!
-    sleep 1
-    for _ in 1 2 3 4; do python3 "$ROOT/tests/bedrock_smoke.py" --port 25999 >/dev/null || true; done
-    kill "$SRV"; wait "$SRV" 2>/dev/null || true; SRV=""
-  fi
+  say "PGO step 2/3: training run (the C++ test suite against the instrumented server: Java and Bedrock joins, chunks, dimensions, commands)"
+  cmake --build "$BUILD" -j"$JOBS" --target painite_tests
+  "$BUILD/painite_tests" --binary "$BUILD/painite" --data "$ROOT/data" >/dev/null 2>&1 || true
   profiles=$(find "$BUILD" -name '*.gcda' | wc -l)
   [ "$profiles" -gt 0 ] || { echo "training produced no profile data" >&2; exit 1; }
 

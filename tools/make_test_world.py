@@ -111,6 +111,12 @@ def main():
         with open(os.path.join(a.out, "vanilla_chunks.bin"), "wb") as f:
             for (x, z), d in chunks.items():
                 f.write(struct.pack("<iiI", x, z, len(d)) + d)
+        # keep Mojang's server around for the tests that need it (a Java runtime too when one had to be downloaded)
+        shutil.copy(jar, os.path.join(a.out, "server.jar"))
+        jre = os.path.join(work, "jre")
+        if os.path.isdir(jre):
+            shutil.rmtree(os.path.join(a.out, "jre"), ignore_errors=True)
+            shutil.copytree(jre, os.path.join(a.out, "jre"), symlinks=True)
         print("world written to", dst)
     finally:
         shutil.rmtree(work, ignore_errors=True)

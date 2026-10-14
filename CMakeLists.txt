@@ -48,3 +48,17 @@ install(FILES painite.toml DESTINATION share/painite)
 add_executable(painite_genstats EXCLUDE_FROM_ALL tests/gen_stats.cpp src/worldgen.cpp src/worldgen_dims.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
 target_include_directories(painite_genstats PRIVATE src)
 target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
+
+# End-to-end test suite in one binary: cmake --build build --target painite_tests && build/painite_tests
+file(GLOB PAINITE_TEST_SOURCES CONFIGURE_DEPENDS tests/cpp/*.cpp)
+list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp)
+add_executable(painite_tests EXCLUDE_FROM_ALL ${PAINITE_TEST_SOURCES})
+target_include_directories(painite_tests PRIVATE tests/cpp)
+target_link_libraries(painite_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
+target_compile_options(painite_tests PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
+
+# Load test: build/painite_load --port P --pid SERVER_PID --bots 40
+add_executable(painite_load EXCLUDE_FROM_ALL tests/cpp/load.cpp tests/cpp/jclient.cpp tests/cpp/jbot.cpp)
+target_include_directories(painite_load PRIVATE tests/cpp)
+target_link_libraries(painite_load PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
+target_compile_options(painite_load PRIVATE -O2)
