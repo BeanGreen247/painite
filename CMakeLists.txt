@@ -44,3 +44,7 @@ target_link_libraries(painite_unit PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 
 install(TARGETS painite RUNTIME DESTINATION bin)
 install(FILES painite.toml DESTINATION share/painite)
+
+add_executable(painite_genstats EXCLUDE_FROM_ALL tests/gen_stats.cpp src/worldgen.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
+target_include_directories(painite_genstats PRIVATE src)
+target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
