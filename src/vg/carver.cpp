@@ -15,6 +15,8 @@ struct SinTable {
     SinTable() { for (int i = 0; i < 65536; i++) t[i] = float(std::sin(double(i) / 10430.378350470453)); }
 };
 const SinTable& sin_table() { static SinTable s; return s; }
+// (a - b) * c with the random calls in Java's order
+inline float rot_noise(Rng& r) { float a = r.next_float(); float b = r.next_float(); float c = r.next_float(); return (a - b) * c; }
 inline float msin(double v) { return sin_table().t[int(int64_t(v * 10430.378350470453) & 65535)]; }
 inline float mcos(double v) { return sin_table().t[int(int64_t(v * 10430.378350470453 + 16384.0) & 65535)]; }
 
@@ -155,11 +157,14 @@ struct Carvers::Impl {
             h_rot += y_rota * 0.1f;
             x_rota *= 0.9f;
             y_rota *= 0.75f;
-            x_rota += (random.next_float() - random.next_float()) * random.next_float() * 2.0f;
-            y_rota += (random.next_float() - random.next_float()) * random.next_float() * 4.0f;
+            x_rota += rot_noise(random) * 2.0f;
+            y_rota += rot_noise(random) * 4.0f;
             if (cur == split && thickness > 1.0f) {
-                create_tunnel(job, car, random.next_long(), x, y, z, hr_mult, vr_mult, random.next_float() * 0.5f + 0.5f, h_rot - kPi / 2.0f, v_rot / 3.0f, cur, dist, 1.0, skip);
-                create_tunnel(job, car, random.next_long(), x, y, z, hr_mult, vr_mult, random.next_float() * 0.5f + 0.5f, h_rot + kPi / 2.0f, v_rot / 3.0f, cur, dist, 1.0, skip);
+                for (int side = -1; side <= 1; side += 2) {
+                    int64_t sub_seed = random.next_long();
+                    float sub_thickness = random.next_float() * 0.5f + 0.5f;
+                    create_tunnel(job, car, sub_seed, x, y, z, hr_mult, vr_mult, sub_thickness, side < 0 ? h_rot - kPi / 2.0f : h_rot + kPi / 2.0f, v_rot / 3.0f, cur, dist, 1.0, skip);
+                }
                 return;
             }
             if (random.next_int(4) != 0) {
@@ -194,10 +199,18 @@ struct Carvers::Impl {
                 float h_rot = random.next_float() * (kPi * 2.0f);
                 float v_rot = (random.next_float() - 0.5f) / 4.0f;
                 float thickness;
-                if (nether) thickness = (random.next_float() * 2.0f + random.next_float()) * 2.0f;
-                else {
-                    thickness = random.next_float() * 2.0f + random.next_float();
-                    if (random.next_int(10) == 0) thickness *= random.next_float() * random.next_float() * 3.0f + 1.0f;
+                {
+                    float a = random.next_float();
+                    float b = random.next_float();
+                    if (nether) thickness = (a * 2.0f + b) * 2.0f;
+                    else {
+                        thickness = a * 2.0f + b;
+                        if (random.next_int(10) == 0) {
+                            float c = random.next_float();
+                            float d = random.next_float();
+                            thickness *= c * d * 3.0f + 1.0f;
+                        }
+                    }
                 }
                 int distance = max_distance - random.next_int(max_distance / 4);
                 create_tunnel(job, car, random.next_long(), x, y, z, h_mult, v_mult, thickness, h_rot, v_rot, 0, distance, nether ? 5.0 : 1.0, skip);
@@ -228,7 +241,7 @@ struct Carvers::Impl {
         float wf = 1.0f;
         int smooth = int(shape.at("width_smoothness").int_value());
         for (int i = 0; i < depth; i++) {
-            if (i == 0 || r.next_int(smooth) == 0) wf = 1.0f + r.next_float() * r.next_float();
+            if (i == 0 || r.next_int(smooth) == 0) { float a = r.next_float(); float b = r.next_float(); wf = 1.0f + a * b; }
             widths[size_t(i)] = wf * wf;
         }
         const float vdef = shape.at("vertical_radius_default_factor").float_value(), vcen = shape.at("vertical_radius_center_factor").float_value();
@@ -252,8 +265,8 @@ struct Carvers::Impl {
             h_rot += y_rota * 0.05f;
             x_rota *= 0.8f;
             y_rota *= 0.5f;
-            x_rota += (r.next_float() - r.next_float()) * r.next_float() * 2.0f;
-            y_rota += (r.next_float() - r.next_float()) * r.next_float() * 4.0f;
+            x_rota += rot_noise(r) * 2.0f;
+            y_rota += rot_noise(r) * 4.0f;
             if (r.next_int(4) != 0) {
                 if (!can_reach(job.chunk_x, job.chunk_z, x, z, cur, distance, thickness)) return;
                 carve_ellipsoid(job, car, x, y, z, hr, vr, skip);

@@ -58,11 +58,13 @@ int sample_int(const Json& p, Rng& random) {
     if (t == "weighted_list") return sample_int(pick_weighted(p.at("distribution"), random), random);
     if (t == "trapezoid") {
         int lo = int(p.at("min").int_value()), hi = int(p.at("max").int_value()), plateau = int(p.at("plateau").int_value());
-        if (plateau == 0 && hi == -lo) return random.next_int(hi + 1) - random.next_int(hi + 1);
+        if (plateau == 0 && hi == -lo) { int a = random.next_int(hi + 1); int b = random.next_int(hi + 1); return a - b; }
         int range = hi - lo;
         if (plateau == range) return rand_inclusive(random, lo, hi);
         int ps = (range - plateau) / 2, pe = range - ps;
-        return lo + rand_inclusive(random, 0, pe) + rand_inclusive(random, 0, ps);
+        int a = rand_inclusive(random, 0, pe);
+        int b = rand_inclusive(random, 0, ps);
+        return lo + a + b;
     }
     throw std::runtime_error("unknown int provider " + t);
 }
@@ -112,7 +114,9 @@ float sample_float(const Json& p, Rng& random) {
         float range = hi - lo;
         float ps = (range - plateau) / 2.0f;
         float pe = range - ps;
-        return lo + random.next_float() * pe + random.next_float() * ps;
+        float a = random.next_float();
+        float b = random.next_float();
+        return lo + a * pe + b * ps;
     }
     if (t == "clamped_normal") {
         float mean = p.at("mean").float_value(), dev = p.at("deviation").float_value(), lo = p.at("min").float_value(), hi = p.at("max").float_value();
@@ -148,7 +152,9 @@ int sample_height(const Json& p, Rng& random, const GenRange& r) {
         int range = hi - lo;
         if (plateau >= range) return rand_inclusive(random, lo, hi);
         int ps = (range - plateau) / 2, pe = range - ps;
-        return lo + rand_inclusive(random, 0, pe) + rand_inclusive(random, 0, ps);
+        int a = rand_inclusive(random, 0, pe);
+        int b = rand_inclusive(random, 0, ps);
+        return lo + a + b;
     }
     if (t == "weighted_list") return sample_height(pick_weighted(p.at("distribution"), random), random, r);
     throw std::runtime_error("unknown height provider " + t);

@@ -15,6 +15,8 @@ namespace pn { int64_t now_ms() { return 0; } }   // World wants a clock; the co
 using namespace pn;
 
 int main(int argc, char** argv) {
+    bool has_only = false;
+    int only_x = 0, only_z = 0;
     std::string overlay, climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
     int64_t seed = 12345;
     int verbose = 0;
@@ -29,6 +31,7 @@ int main(int argc, char** argv) {
         else if (a == "--type") type = val();
         else if (a == "--climate") climate = val();
         else if (a == "--overlay") overlay = val();
+        else if (a == "--only") { only_x = std::stoi(val()); only_z = std::stoi(val()); has_only = true; }
         else if (a == "-v") verbose++;
         else if (a == "-vv") verbose += 2;
     }
@@ -73,6 +76,7 @@ int main(int argc, char** argv) {
     long shown = 0, total = 0, diff = 0, biome_total = 0, biome_diff = 0, bad_chunks = 0;
     std::map<std::pair<std::string, std::string>, long> biome_pairs;
     for (auto [cx, cz] : chunks) {
+        if (has_only && (cx != only_x || cz != only_z)) continue;
         auto ref = src->chunk(cx, cz);
         Chunk mine;
         mine.x = cx;

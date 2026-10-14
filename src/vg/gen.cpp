@@ -1,5 +1,6 @@
 #include "gen.hpp"
 #include "biomes.hpp"
+#include "blockdata.hpp"
 #include "carver.hpp"
 #include "climate.hpp"
 #include "noisegen.hpp"
@@ -24,7 +25,7 @@ struct VanillaGen::Impl {
     NodeP t, h, c, e, d, w;
     std::unique_ptr<Compiler> sampler_comp;
     uint8_t plains = 0;
-    std::vector<uint8_t> flags;
+    std::unique_ptr<BlockData> bd;
     std::unique_ptr<SurfaceSystem> surface;
     std::unique_ptr<Carvers> carvers;
 
@@ -78,11 +79,7 @@ struct VanillaGen::Impl {
 
         // surface rules
         const Blocks& BB = Blocks::get();
-        flags.assign(65536, 0);
-        for (size_t i = 0; i < 65536 && i < BB.count(); i++) {
-            const BlockInfo& bi = BB.info(uint16_t(i));
-            flags[i] = uint8_t((bi.air ? 1 : 0) | (bi.fluid ? 2 : 0));
-        }
+        bd = std::make_unique<BlockData>(data_dir + "/worldgen/" + o.version + "/blockflags.txt", reg);
         std::vector<SurfaceBiome> sb;
         for (auto& name : climate.biomes) {
             SurfaceBiome b;
@@ -93,9 +90,9 @@ struct VanillaGen::Impl {
             sb.push_back(b);
         }
         SurfaceBlocks sbl;
-        sbl.resolve = [&](const Json& j) { return block_of(j); };
+        sbl.resolve = [this](const Json& j) { return bd->state(j); };
         sbl.by_name = [&](const std::string& n) { return BB.default_state(n); };
-        sbl.flags = flags.data();
+        sbl.flags = bd->chunk_flags();
         sbl.water = pal.water;
         surface = std::make_unique<SurfaceSystem>(*state, settings->at("surface_rule"), sbl, pal.default_block, ns.sea_level, std::max(ns.min_y, dim_min_y),
                                                   std::min(ns.min_y + ns.height, dim_min_y + dim_height) - std::max(ns.min_y, dim_min_y), settings->get_bool("legacy_random_source", false), std::move(sb),
@@ -168,7 +165,7 @@ void VanillaGen::generate(Chunk& c) const {
     {
         std::vector<uint16_t> blocks;
         fill.fill(blocks);
-        cb.init(fill.min_y(), fill.height(), std::move(blocks), I.flags.data());
+        cb.init(fill.min_y(), fill.height(), std::move(blocks), I.bd->chunk_flags());
     }
     if (I.opt.stage != "noise") I.surface->build(cb, c.x, c.z, fill);
     if (I.carvers && I.opt.stage != "noise" && I.opt.stage != "surface")

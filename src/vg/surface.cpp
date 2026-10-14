@@ -278,10 +278,10 @@ struct SteepCond : Lazy<false> {
     bool compute(SCtx& c) const override {
         int cx = c.block_x & 15, cz = c.block_z & 15;
         int zn = std::max(cz - 1, 0), zs = std::min(cz + 1, 15);
-        int hn = c.blocks->surface[zn * 16 + cx], hs = c.blocks->surface[zs * 16 + cx];
+        int hn = c.blocks->hm[WORLD_SURFACE_WG][zn * 16 + cx], hs = c.blocks->hm[WORLD_SURFACE_WG][zs * 16 + cx];
         if (hs >= hn + 4) return true;
         int xw = std::max(cx - 1, 0), xe = std::min(cx + 1, 15);
-        int hw = c.blocks->surface[cz * 16 + xw], he = c.blocks->surface[cz * 16 + xe];
+        int hw = c.blocks->hm[WORLD_SURFACE_WG][cz * 16 + xw], he = c.blocks->hm[WORLD_SURFACE_WG][cz * 16 + xe];
         return hw >= he + 4;
     }
 };
@@ -540,7 +540,7 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
     for (int x = 0; x < 16; x++)
         for (int z = 0; z < 16; z++) {
             int bx = min_bx + x, bz = min_bz + z;
-            int starting = blocks.surface[z * 16 + x] + 1;
+            int starting = blocks.hm[WORLD_SURFACE_WG][z * 16 + x];
             int surface_biome = I.get_biome(bx, I.legacy ? 0 : starting, bz);
             if (surface_biome == I.eroded_badlands && I.eroded_badlands >= 0) {
                 // erodedBadlandsExtension
@@ -561,7 +561,7 @@ void SurfaceSystem::build(ChunkBlocks& blocks, int chunk_x, int chunk_z, ChunkFi
                     }
                 }
             }
-            int height = blocks.surface[z * 16 + x] + 1;
+            int height = blocks.hm[WORLD_SURFACE_WG][z * 16 + x];
             c.block_x = bx;
             c.block_z = bz;
             c.xz_epoch++;

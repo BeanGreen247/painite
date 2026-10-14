@@ -30,8 +30,8 @@ public:
     virtual double next_gaussian();
     int32_t next_int(int32_t origin, int32_t bound) { return origin + next_int(bound - origin); }
     int32_t next_int_between_inclusive(int32_t lo, int32_t hi) { return next_int(hi - lo + 1) + lo; }
-    double triangle(double mean, double spread) { return mean + spread * (next_double() - next_double()); }
-    float triangle(float mean, float spread) { return mean + spread * (next_float() - next_float()); }
+    double triangle(double mean, double spread) { double a = next_double(); double b = next_double(); return mean + spread * (a - b); }
+    float triangle(float mean, float spread) { float a = next_float(); float b = next_float(); return mean + spread * (a - b); }
     virtual void consume_count(int n) { for (int i = 0; i < n; i++) next_int(); }
 private:
     double next_next_gaussian_ = 0;
