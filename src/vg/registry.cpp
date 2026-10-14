@@ -36,6 +36,29 @@ const Json& Registry::tag(const std::string& id) const {
     return ref;
 }
 
+const std::set<std::string>& Registry::tag_members(const std::string& kind, const std::string& id) const {
+    std::string name = id;
+    if (!name.empty() && name[0] == '#') name = name.substr(1);
+    name = strip(name);
+    std::string key = kind + "/" + name;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = tag_cache_.find(key);
+        if (it != tag_cache_.end()) return *it->second;
+    }
+    auto out = std::make_unique<std::set<std::string>>();
+    Json j = Json::parse_file(dir_ + "/data/minecraft/tags/" + key + ".json");
+    for (auto& v : j.at("values").arr) {
+        std::string e = v.is_str() ? v.str : v.at("id").str;
+        if (!e.empty() && e[0] == '#') { auto& sub = tag_members(kind, e); out->insert(sub.begin(), sub.end()); }
+        else out->insert(e.rfind("minecraft:", 0) == 0 ? e : "minecraft:" + e);
+    }
+    std::lock_guard<std::mutex> l(mu_);
+    auto& slot = tag_cache_[key];
+    if (!slot) slot = std::move(out);
+    return *slot;
+}
+
 static void walk(const std::string& base, const std::string& rel, std::vector<std::string>& out) {
     std::string dir = rel.empty() ? base : base + "/" + rel;
     DIR* d = opendir(dir.c_str());

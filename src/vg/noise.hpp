@@ -76,6 +76,16 @@ private:
     int p_[512];
 };
 
+// octave sum of simplex noise (biome temperature, frozen biome patches); octaves is the set of octave numbers like [-2, -1, 0]
+class PerlinSimplexNoise {
+public:
+    PerlinSimplexNoise(Rng& random, const std::vector<int>& octave_set);
+    double get_value(double x, double y, bool use_noise_start) const;
+private:
+    std::vector<std::unique_ptr<SimplexNoise>> levels_;
+    double highest_freq_value_factor_ = 0, highest_freq_input_factor_ = 0;
+};
+
 extern const int kGradient[16][3];
 inline int mth_floor(double v) { return int(__builtin_floor(v)); }
 inline int64_t mth_lfloor(double v) { return int64_t(__builtin_floor(v)); }

@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 
 namespace pn::vg {
@@ -16,6 +17,8 @@ public:
     const Json& get(const std::string& kind, const std::string& id) const;
     bool exists(const std::string& kind, const std::string& id) const;
     const Json& tag(const std::string& id) const;   // tags/worldgen/<id>.json, e.g. "biome/has_structure/village_plains"
+    // every block (or fluid) a tag holds, nested tags resolved: "minecraft:base_stone_overworld" or "#minecraft:base_stone_overworld"; kind is "block" or "fluid"
+    const std::set<std::string>& tag_members(const std::string& kind, const std::string& id) const;
     std::vector<std::string> list(const std::string& kind) const;
     const std::string& dir() const { return dir_; }
     static std::string strip(const std::string& id) { return id.rfind("minecraft:", 0) == 0 ? id.substr(10) : id; }
@@ -24,6 +27,7 @@ private:
     std::string dir_;
     mutable std::mutex mu_;
     mutable std::map<std::string, std::unique_ptr<Json>> cache_;
+    mutable std::map<std::string, std::unique_ptr<std::set<std::string>>> tag_cache_;
 };
 
 }  // namespace pn::vg

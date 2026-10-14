@@ -1,3 +1,4 @@
+#include <algorithm>
 #include "noise.hpp"
 #include <cmath>
 #include <stdexcept>
@@ -249,6 +250,43 @@ double SimplexNoise::get_value(double xin, double yin, double zin) const {
     int ii = i & 0xff, jj = j & 0xff, kk = k & 0xff;
     int gi0 = p(ii + p(jj + p(kk))) % 12, gi1 = p(ii + i1 + p(jj + j1 + p(kk + k1))) % 12, gi2 = p(ii + i2 + p(jj + j2 + p(kk + k2))) % 12, gi3 = p(ii + 1 + p(jj + 1 + p(kk + 1))) % 12;
     return 32.0 * (corner(gi0, x0, y0, z0, 0.6) + corner(gi1, x1, y1, z1, 0.6) + corner(gi2, x2, y2, z2, 0.6) + corner(gi3, x3, y3, z3, 0.6));
+}
+
+PerlinSimplexNoise::PerlinSimplexNoise(Rng& random, const std::vector<int>& octave_set) {
+    int lo = *std::min_element(octave_set.begin(), octave_set.end()), hi = *std::max_element(octave_set.begin(), octave_set.end());
+    auto contains = [&](int v) { return std::find(octave_set.begin(), octave_set.end(), v) != octave_set.end(); };
+    int low_freq = -lo, high_freq = hi;
+    int octaves = low_freq + high_freq + 1;
+    levels_.resize(size_t(octaves));
+    auto zero_octave = std::make_unique<SimplexNoise>(random);
+    int zero_index = high_freq;
+    SimplexNoise* zero = zero_octave.get();
+    if (high_freq >= 0 && high_freq < octaves && contains(0)) levels_[size_t(high_freq)] = std::move(zero_octave);
+    for (int i = high_freq + 1; i < octaves; i++) {
+        if (i >= 0 && contains(zero_index - i)) levels_[size_t(i)] = std::make_unique<SimplexNoise>(random);
+        else random.consume_count(262);
+    }
+    if (high_freq > 0) {
+        double v = zero->get_value(zero->xo, zero->yo, zero->zo) * double(9.223372E18f);
+        int64_t seed = v >= 9.223372036854775807E18 ? INT64_MAX : v <= -9.223372036854775808E18 ? INT64_MIN : int64_t(v);
+        LegacyRandom high(seed);
+        for (int i = zero_index - 1; i >= 0; i--) {
+            if (i < octaves && contains(zero_index - i)) levels_[size_t(i)] = std::make_unique<SimplexNoise>(high);
+            else high.consume_count(262);
+        }
+    }
+    highest_freq_input_factor_ = std::pow(2.0, high_freq);
+    highest_freq_value_factor_ = 1.0 / (std::pow(2.0, octaves) - 1.0);
+}
+
+double PerlinSimplexNoise::get_value(double x, double y, bool use_noise_start) const {
+    double value = 0.0, factor = highest_freq_input_factor_, value_factor = highest_freq_value_factor_;
+    for (auto& n : levels_) {
+        if (n) value += n->get_value(x * factor + (use_noise_start ? n->xo : 0.0), y * factor + (use_noise_start ? n->yo : 0.0)) * value_factor;
+        factor /= 2.0;
+        value_factor *= 2.0;
+    }
+    return value;
 }
 
 }  // namespace pn::vg

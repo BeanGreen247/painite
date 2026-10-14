@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
         else if (a == "--type") type = val();
         else if (a == "--climate") climate = val();
         else if (a == "-v") verbose++;
+        else if (a == "-vv") verbose += 2;
     }
     VanillaData vd;
     std::string err;
@@ -67,7 +68,7 @@ int main(int argc, char** argv) {
         return bi.props.empty() ? bi.name : bi.name + "[" + bi.props + "]";
     };
     std::map<std::pair<std::string, std::string>, long> pairs;
-    long total = 0, diff = 0, biome_total = 0, biome_diff = 0, bad_chunks = 0;
+    long shown = 0, total = 0, diff = 0, biome_total = 0, biome_diff = 0, bad_chunks = 0;
     std::map<std::pair<std::string, std::string>, long> biome_pairs;
     for (auto [cx, cz] : chunks) {
         auto ref = src->chunk(cx, cz);
@@ -83,7 +84,7 @@ int main(int argc, char** argv) {
                         int wy = kMinY + s * 16 + y;
                         uint16_t a = mine.get(x, wy, z), b = ref->get(x, wy, z);
                         total++;
-                        if (a != b && norm(a) != norm(b)) { diff++; cd++; pairs[{norm(a), norm(b)}]++; }
+                        if (a != b && norm(a) != norm(b)) { diff++; cd++; pairs[{norm(a), norm(b)}]++; if (verbose > 1 && shown++ < 40) printf("  %d %d %d: ours %s vanilla %s\n", cx * 16 + x, wy, cz * 16 + z, norm(a).c_str(), norm(b).c_str()); }
                     }
             const uint8_t* mb = mine.sec[s] ? mine.sec[s]->biome : mine.air_biomes[s];
             const uint8_t* rb = ref->sec[s] ? ref->sec[s]->biome : ref->air_biomes[s];

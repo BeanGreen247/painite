@@ -2,6 +2,7 @@
 #include "biomes.hpp"
 #include "climate.hpp"
 #include "noisegen.hpp"
+#include "surface.hpp"
 #include <algorithm>
 #include <cstring>
 #include <map>
@@ -22,6 +23,8 @@ struct VanillaGen::Impl {
     NodeP t, h, c, e, d, w;
     std::unique_ptr<Compiler> sampler_comp;
     uint8_t plains = 0;
+    std::vector<uint8_t> flags;
+    std::unique_ptr<SurfaceSystem> surface;
 
     Impl(const std::string& data_dir, const GenOptions& o, const std::vector<std::string>& biome_names) : opt(o), reg(data_dir + "/worldgen/" + o.version) {
         std::string sname = o.dim == 0 ? (o.level_type == "large_biomes" ? "large_biomes" : o.level_type == "amplified" ? "amplified" : "overworld") : o.dim == 1 ? "nether" : "end";
@@ -70,15 +73,41 @@ struct VanillaGen::Impl {
                 biome_index.push_back(idx);
             }
         }
+
+        // surface rules
+        const Blocks& BB = Blocks::get();
+        flags.assign(65536, 0);
+        for (size_t i = 0; i < 65536 && i < BB.count(); i++) {
+            const BlockInfo& bi = BB.info(uint16_t(i));
+            flags[i] = uint8_t((bi.air ? 1 : 0) | (bi.fluid ? 2 : 0));
+        }
+        std::vector<SurfaceBiome> sb;
+        for (auto& name : climate.biomes) {
+            SurfaceBiome b;
+            b.name = "minecraft:" + name;
+            const Json& bj = reg.get("biome", name);
+            b.temperature = bj.at("temperature").float_value();
+            b.frozen = bj.get_string("temperature_modifier") == "frozen";
+            sb.push_back(b);
+        }
+        SurfaceBlocks sbl;
+        sbl.resolve = [&](const Json& j) { return block_of(j); };
+        sbl.by_name = [&](const std::string& n) { return BB.default_state(n); };
+        sbl.flags = flags.data();
+        sbl.water = pal.water;
+        surface = std::make_unique<SurfaceSystem>(*state, settings->at("surface_rule"), sbl, pal.default_block, ns.sea_level, std::max(ns.min_y, dim_min_y),
+                                                  std::min(ns.min_y + ns.height, dim_min_y + dim_height) - std::max(ns.min_y, dim_min_y), settings->get_bool("legacy_random_source", false), std::move(sb),
+                                                  [this](int qx, int qy, int qz) { return biome_value(qx, qy, qz); });
     }
 
-    uint8_t biome_at(int qx, int qy, int qz) const {
-        if (!climate.list) return plains;
+    int biome_value(int qx, int qy, int qz) const {
+        if (!climate.list) return 0;
         Ctx ctx{qx * 4, qy * 4, qz * 4, nullptr};
         TargetPoint tp{quantize_coord(float(t->compute(ctx))), quantize_coord(float(h->compute(ctx))), quantize_coord(float(c->compute(ctx))),
                        quantize_coord(float(e->compute(ctx))), quantize_coord(float(d->compute(ctx))), quantize_coord(float(w->compute(ctx)))};
-        return biome_index[size_t(climate.list->find_value(tp))];
+        return climate.list->find_value(tp);
     }
+    uint8_t biome_at(int qx, int qy, int qz) const { return climate.list ? biome_index[size_t(biome_value(qx, qy, qz))] : plains; }
 };
 
 VanillaGen::VanillaGen(const std::string& data_dir, const GenOptions& opt, const std::vector<std::string>& biome_names) : p_(std::make_unique<Impl>(data_dir, opt, biome_names)) {}
@@ -101,16 +130,21 @@ void VanillaGen::generate(Chunk& c) const {
     }
     // terrain
     ChunkFill fill(*I.state, I.ns, I.pal, c.x, c.z, I.dim_min_y, I.dim_height);
-    std::vector<uint16_t> blocks;
-    fill.fill(blocks);
+    ChunkBlocks cb;
+    {
+        std::vector<uint16_t> blocks;
+        fill.fill(blocks);
+        cb.init(fill.min_y(), fill.height(), std::move(blocks), I.flags.data());
+    }
+    if (I.opt.stage != "noise") I.surface->build(cb, c.x, c.z, fill);
     for (int s = first_section; s < first_section + sections; s++) {
-        int y0 = kMinY + s * 16 - fill.min_y();
-        if (y0 + 16 <= 0 || y0 >= fill.height()) continue;
+        int y0 = kMinY + s * 16 - cb.min_y;
+        if (y0 + 16 <= 0 || y0 >= cb.height) continue;
         bool any = false;
         for (int y = 0; y < 16 && !any; y++) {
             int yy = y0 + y;
-            if (yy < 0 || yy >= fill.height()) continue;
-            const uint16_t* row = &blocks[size_t(yy) * 256];
+            if (yy < 0 || yy >= cb.height) continue;
+            const uint16_t* row = &cb.b[size_t(yy) * 256];
             for (int i = 0; i < 256; i++) if (row[i]) { any = true; break; }
         }
         if (!any) continue;
@@ -118,8 +152,8 @@ void VanillaGen::generate(Chunk& c) const {
         memcpy(sec->biome, c.air_biomes[s], 64);
         for (int y = 0; y < 16; y++) {
             int yy = y0 + y;
-            if (yy < 0 || yy >= fill.height()) continue;
-            memcpy(&sec->b[y * 256], &blocks[size_t(yy) * 256], 256 * sizeof(uint16_t));
+            if (yy < 0 || yy >= cb.height) continue;
+            memcpy(&sec->b[y * 256], &cb.b[size_t(yy) * 256], 256 * sizeof(uint16_t));
         }
         c.sec[s] = std::move(sec);
     }

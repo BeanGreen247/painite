@@ -25,7 +25,7 @@ for v in "${versions[@]}"; do
   [ -n "$inner" ] || inner=$jar
   rm -rf "$out"
   mkdir -p "$out"
-  unzip -q -o "$inner" 'data/minecraft/worldgen/*' 'data/minecraft/tags/worldgen/*' 'data/minecraft/dimension_type/*' -d "$out"
+  unzip -q -o "$inner" 'data/minecraft/worldgen/*' 'data/minecraft/tags/worldgen/*' 'data/minecraft/dimension_type/*' 'data/minecraft/tags/block/*' 'data/minecraft/tags/fluid/*' 'data/minecraft/structure/*' -d "$out"
   touch "$out/.done"
   rm -rf "$tmp"
   echo "$v: $(find "$out" -name '*.json' | wc -l) files in $out"
