@@ -1,5 +1,6 @@
 // Java level_chunk_with_light body from a world chunk.
 #include "jchunk.hpp"
+#include "dimension.hpp"
 #include <algorithm>
 #include <cstring>
 
@@ -69,9 +70,9 @@ static void put_biome_container(Wr& w, const std::vector<int>& vals, int global_
     put_longs(w, longs);
 }
 
-static std::vector<uint64_t> heightmap_longs(const std::vector<int16_t>& h) {
+static std::vector<uint64_t> heightmap_longs(const std::vector<int16_t>& h, int min_y, int height) {
     std::vector<uint64_t> l(37, 0);
-    for (size_t i = 0; i < 256; i++) l[i / 7] |= static_cast<uint64_t>(h[i] - kMinY) << ((i % 7) * 9);
+    for (size_t i = 0; i < 256; i++) l[i / 7] |= static_cast<uint64_t>(std::clamp(h[i] - min_y, 0, height)) << ((i % 7) * 9);
     return l;
 }
 
@@ -86,11 +87,13 @@ static void put_bitset(Wr& w, const std::vector<bool>& bits) {
     }
 }
 
-void encode_java_chunk(Chunk& c, const VanillaData& vd, const std::vector<std::string>& biome_names, Wr& out) {
+void encode_java_chunk(Chunk& c, const VanillaData& vd, const std::vector<std::string>& biome_names, Wr& out, int dim) {
     const Blocks& B = Blocks::get();
+    const DimInfo& di = dim_info(dim);
+    const int smin = (di.min_y - kMinY) >> 4, nsec = di.height >> 4;
     std::lock_guard<std::mutex> l(c.mu);
     Light L;
-    compute_light(c, L);
+    compute_light(c, L, di.sky);
     int global_bits = std::max(4, ceil_log2(B.proto_total(vd.protocol)));
     int biome_bits = std::max(1, ceil_log2(static_cast<int>(vd.biomes.size())));
     std::vector<int> bmap(biome_names.size());
@@ -102,13 +105,13 @@ void encode_java_chunk(Chunk& c, const VanillaData& vd, const std::vector<std::s
     out.be32(static_cast<uint32_t>(c.x));
     out.be32(static_cast<uint32_t>(c.z));
     out.varint(3);
-    const auto hm = heightmap_longs(L.height_mb), ws = heightmap_longs(L.height_ws);
+    const auto hm = heightmap_longs(L.height_mb, di.min_y, di.height), ws = heightmap_longs(L.height_ws, di.min_y, di.height);
     out.varint(5); out.varint(37); put_longs(out, hm);
     out.varint(1); out.varint(37); put_longs(out, ws);
     out.varint(4); out.varint(37); put_longs(out, hm);
     Wr data;
     std::vector<int> vals(4096), bv(64);
-    for (int s = 0; s < kSections; s++) {
+    for (int s = smin; s < smin + nsec; s++) {
         const Section* sec = c.sec[s].get();
         int nonair = 0, fluid = 0;
         if (sec) {
@@ -146,7 +149,7 @@ void encode_java_chunk(Chunk& c, const VanillaData& vd, const std::vector<std::s
                 int type = vd.reg_id("block_entity_type/" + shortid);
                 if (type < 0) continue;
                 int bx = static_cast<int>(be.geti("x")), by = static_cast<int>(be.geti("y")), bz = static_cast<int>(be.geti("z"));
-                if ((bx >> 4) != c.x || (bz >> 4) != c.z || by < kMinY || by >= kMinY + kHeight) continue;
+                if ((bx >> 4) != c.x || (bz >> 4) != c.z || by < di.min_y || by >= di.min_y + di.height) continue;
                 Wr e;
                 e.u8(static_cast<uint8_t>(((bx & 15) << 4) | (bz & 15)));
                 e.be16(static_cast<uint16_t>(static_cast<int16_t>(by)));
@@ -166,24 +169,26 @@ void encode_java_chunk(Chunk& c, const VanillaData& vd, const std::vector<std::s
         for (auto& e : ents) out.raw(e.data(), e.size());
     }
     // light
-    const size_t S = kSections + 2;
+    const size_t S = static_cast<size_t>(nsec) + 2;
+    const uint8_t* lsky = L.sky.data() + static_cast<size_t>(smin) * 2048;
+    const uint8_t* lblk = L.blk.data() + static_cast<size_t>(smin) * 2048;
     std::vector<bool> sky_mask(S), blk_mask(S), esky(S), eblk(S);
     std::vector<size_t> sky_idx, blk_idx;
-    auto classify = [&](const std::vector<uint8_t>& arr, size_t i, std::vector<bool>& mask, std::vector<bool>& empty, std::vector<size_t>& idx) {
-        const uint8_t* p = arr.data() + i * 2048;
+    auto classify = [&](const uint8_t* arr, size_t i, std::vector<bool>& mask, std::vector<bool>& empty, std::vector<size_t>& idx) {
+        const uint8_t* p = arr + i * 2048;
         bool zero = true;
         for (size_t k = 0; k < 2048; k++) if (p[k]) { zero = false; break; }
         if (zero) empty[i] = true; else { mask[i] = true; idx.push_back(i); }
     };
-    for (size_t i = 0; i < S; i++) { classify(L.sky, i, sky_mask, esky, sky_idx); classify(L.blk, i, blk_mask, eblk, blk_idx); }
+    for (size_t i = 0; i < S; i++) { classify(lsky, i, sky_mask, esky, sky_idx); classify(lblk, i, blk_mask, eblk, blk_idx); }
     put_bitset(out, sky_mask);
     put_bitset(out, blk_mask);
     put_bitset(out, esky);
     put_bitset(out, eblk);
     out.varint(static_cast<int32_t>(sky_idx.size()));
-    for (size_t i : sky_idx) { out.varint(2048); out.raw(L.sky.data() + i * 2048, 2048); }
+    for (size_t i : sky_idx) { out.varint(2048); out.raw(lsky + i * 2048, 2048); }
     out.varint(static_cast<int32_t>(blk_idx.size()));
-    for (size_t i : blk_idx) { out.varint(2048); out.raw(L.blk.data() + i * 2048, 2048); }
+    for (size_t i : blk_idx) { out.varint(2048); out.raw(lblk + i * 2048, 2048); }
 }
 
 }  // namespace pn

@@ -173,7 +173,7 @@ std::vector<std::string> Server::perf_report() {
     double cpu_pct = last_ms && now > last_ms ? 100.0 * (static_cast<double>(cpu - last_cpu) / hz) / (static_cast<double>(now - last_ms) / 1000.0) : 0;
     last_cpu = cpu;
     last_ms = now;
-    snprintf(b, sizeof b, "PERF process %.1f %.1f %ld %d %d", cpu_pct, static_cast<double>(rss_kb) / 1024.0, threads, world.loaded(), game.players());
+    snprintf(b, sizeof b, "PERF process %.1f %.1f %ld %d %d", cpu_pct, static_cast<double>(rss_kb) / 1024.0, threads, world.loaded() + (other_dims[0] ? other_dims[0]->loaded() : 0) + (other_dims[1] ? other_dims[1]->loaded() : 0), game.players());
     out.push_back(b);
     std::string names;
     for (auto& id : game.identities()) names += (names.empty() ? "" : ",") + id->name;
@@ -226,6 +226,10 @@ bool Server::start(std::string& err) {
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
         if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
         if (!world.open(cfg.level_name, cfg.generator, cfg.level_type, cfg.level_seed, data.back(), err)) return false;
+        for (int d = 1; d <= 2; d++) {   // the nether and the end share the overworld's folder, seed and biome list
+            other_dims[d - 1] = std::make_unique<World>();
+            if (!other_dims[d - 1]->open_dimension(world, d, err)) return false;
+        }
         if (cfg.bedrock) {
             std::string bb = find_data_file(cfg.data_dir, exe_dir, "blocks-bedrock.bin"), berr;
             if (bb.empty() || !Blocks::get().load_bedrock(bb, berr)) {

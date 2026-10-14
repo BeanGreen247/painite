@@ -138,6 +138,38 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
     i.pls_pong = g("play/s/pong");
     if (!ok) return false;
 
+    // registry index of each dimension type: the order of the entries in the recorded dimension_type registry_data packet
+    v.dim_type[0] = v.dim_type_overworld;
+    for (auto& p : v.config_packets) {
+        int32_t pid = 0;
+        size_t n = read_varint(p.data(), p.size(), pid);
+        if (pid != i.cf_registry_data || n == 0) continue;
+        size_t pos = n;
+        auto rstr = [&](std::string& out) {
+            int32_t l = 0;
+            size_t k = read_varint(p.data() + pos, p.size() - pos, l);
+            if (!k || l < 0 || pos + k + static_cast<size_t>(l) > p.size()) return false;
+            out.assign(reinterpret_cast<const char*>(p.data() + pos + k), static_cast<size_t>(l));
+            pos += k + static_cast<size_t>(l);
+            return true;
+        };
+        std::string reg;
+        if (!rstr(reg) || reg != "minecraft:dimension_type") continue;
+        int32_t count = 0;
+        size_t k = read_varint(p.data() + pos, p.size() - pos, count);
+        if (!k) break;
+        pos += k;
+        for (int e = 0; e < count; e++) {
+            std::string name;
+            if (!rstr(name) || pos >= p.size()) break;
+            bool has_data = p[pos++] != 0;
+            if (has_data) break;   // inline data: not the known-pack form, entries after this cannot be walked
+            if (name == "minecraft:overworld") v.dim_type[0] = e;
+            else if (name == "minecraft:the_nether") v.dim_type[1] = e;
+            else if (name == "minecraft:the_end") v.dim_type[2] = e;
+        }
+        break;
+    }
     // config packets we generate ourselves (brand) are dropped from the replay; remember the known-packs split
     std::vector<std::vector<uint8_t>> kept;
     for (auto& p : v.config_packets) {

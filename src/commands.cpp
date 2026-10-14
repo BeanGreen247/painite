@@ -1,5 +1,8 @@
 // Console and player commands. Permission levels follow vanilla: 0 everyone, 2 gamemaster, 3 admin, 4 owner/console.
 #include "game.hpp"
+#include "dimension.hpp"
+#include "structures.hpp"
+#include "worldgen.hpp"
 #include "hash.hpp"
 #include "log.hpp"
 #include "server.hpp"
@@ -146,7 +149,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
 
     if (cmd == "help" || cmd == "?") {
         std::string o = "Commands: help, list, players, tps, me, tell/msg, version";
-        if (level >= 2) o += ", say, tp, gamemode, time, setblock, fill, kick";
+        if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kick";
         if (level >= 3) o += ", ban, ban-ip, pardon, pardon-ip, banlist, whitelist, op, deop";
         if (level >= 4) o += ", save-all, save-on, save-off, stop";
         reply(o);
@@ -174,7 +177,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         reply("Plugins (0): Painite does not load Java plugins");
     } else if (cmd == "tps" || cmd == "status") {
         char b[200];
-        snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, block updates %lld (%lld changed, %zu queued, %d region threads), ", tps_, mspt_, players(), s_.world.loaded(),
+        snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, block updates %lld (%lld changed, %zu queued, %d region threads), ", tps_, mspt_, players(), s_.world.loaded() + s_.other_dims[0]->loaded() + s_.other_dims[1]->loaded(),
                  static_cast<long long>(ticker_.processed.load()), static_cast<long long>(ticker_.changed.load()), ticker_.pending(), ticker_.threads() + 1);
         reply(std::string(b) + s_.console_status());
     } else if (cmd == "perf") {
@@ -339,10 +342,42 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
             } else { reply("Usage: /tp <x> <y> <z> | /tp <player> [<x> <y> <z> | <player>]"); return; }
         }
         dest.head = dest.yaw;
+        if (exec_dim_ >= 0) dest.dim = exec_dim_;
         teleport(subject->gid, dest);
         char b[160];
         snprintf(b, sizeof b, "Teleported %s to %.2f, %.2f, %.2f", subject->name.c_str(), dest.x, dest.y, dest.z);
         reply(b);
+    } else if (cmd == "locate") {
+        if (!need(2)) return;
+        std::string name = a.size() >= 3 ? a[2] : a.size() == 2 ? a[1] : "";
+        GPos cur = gid ? position(gid) : GPos{};
+        int d = exec_dim_ >= 0 ? exec_dim_ : cur.dim;
+        const StructureGen* sg = s_.dim(d).gen ? s_.dim(d).gen->structures() : nullptr;
+        if (!sg) { reply("This world has no generated structures"); return; }
+        int ox, oz;
+        if (name.empty() || !sg->locate(lower(name), static_cast<int>(std::floor(cur.x)), static_cast<int>(std::floor(cur.z)), ox, oz)) {
+            std::string o = "Could not find that structure nearby. Here: ";
+            for (auto& k : sg->kinds()) o += k + " ";
+            reply(o);
+            return;
+        }
+        double dist = std::sqrt((ox - cur.x) * (ox - cur.x) + (oz - cur.z) * (oz - cur.z));
+        char b[200];
+        snprintf(b, sizeof b, "The nearest %s is at [%d, ~, %d] (%.0f blocks away)", name.c_str(), ox, oz, dist);
+        reply(b);
+    } else if (cmd == "execute") {
+        if (!need(2)) return;
+        size_t i = 1;
+        int saved = exec_dim_;
+        while (i < a.size() && lower(a[i]) != "run") {
+            if (lower(a[i]) == "in" && i + 1 < a.size()) { exec_dim_ = dim_from_name(lower(a[i + 1])); i += 2; }
+            else { reply("Usage: /execute in <overworld|the_nether|the_end> run <command>"); exec_dim_ = saved; return; }
+        }
+        if (i + 1 >= a.size()) { reply("Usage: /execute in <overworld|the_nether|the_end> run <command>"); exec_dim_ = saved; return; }
+        std::string rest;
+        for (size_t k = i + 1; k < a.size(); k++) rest += (rest.empty() ? "" : " ") + a[k];
+        exec(gid, rest, reply);
+        exec_dim_ = saved;
     } else if (cmd == "setblock") {
         if (!need(2)) return;
         if (a.size() < 5) { reply("Usage: /setblock <x> <y> <z> <block>"); return; }
@@ -352,9 +387,11 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         if (!parse_coord(a[1], cur.x, x) || !parse_coord(a[2], cur.y, y) || !parse_coord(a[3], cur.z, z)) { reply("Invalid coordinates"); return; }
         if (!parse_block(a[4], id)) { reply("Unknown block type: " + a[4]); return; }
         int bx = static_cast<int>(std::floor(x)), by = static_cast<int>(std::floor(y)), bz = static_cast<int>(std::floor(z));
-        if (by < kMinY || by >= kMinY + kHeight) { reply("That position is out of the world"); return; }
-        if (!s_.world.set_block(bx, by, bz, id)) { reply("Could not set the block"); return; }
-        block_changed(bx, by, bz, id);
+        int d = exec_dim_ >= 0 ? exec_dim_ : cur.dim;
+        const DimInfo& di = dim_info(d);
+        if (by < di.min_y || by >= di.min_y + di.height) { reply("That position is out of the world"); return; }
+        if (!s_.dim(d).set_block(bx, by, bz, id)) { reply("Could not set the block"); return; }
+        block_changed(d, bx, by, bz, id);
         reply("Changed the block at " + std::to_string(bx) + ", " + std::to_string(by) + ", " + std::to_string(bz));
     } else if (cmd == "fill") {
         if (!need(2)) return;
@@ -365,13 +402,15 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         uint16_t id;
         if (!parse_block(a[7], id)) { reply("Unknown block type: " + a[7]); return; }
         int x1 = static_cast<int>(std::floor(std::min(v[0], v[3]))), x2 = static_cast<int>(std::floor(std::max(v[0], v[3])));
-        int y1 = std::max(kMinY, static_cast<int>(std::floor(std::min(v[1], v[4])))), y2 = std::min(kMinY + kHeight - 1, static_cast<int>(std::floor(std::max(v[1], v[4]))));
+        int d = exec_dim_ >= 0 ? exec_dim_ : cur.dim;
+        const DimInfo& di = dim_info(d);
+        int y1 = std::max(di.min_y, static_cast<int>(std::floor(std::min(v[1], v[4])))), y2 = std::min(di.min_y + di.height - 1, static_cast<int>(std::floor(std::max(v[1], v[4]))));
         int z1 = static_cast<int>(std::floor(std::min(v[2], v[5]))), z2 = static_cast<int>(std::floor(std::max(v[2], v[5])));
         long total = static_cast<long>(x2 - x1 + 1) * (y2 - y1 + 1) * (z2 - z1 + 1);
         if (total > 32768) { reply("Too many blocks in the specified area (maximum 32768, specified " + std::to_string(total) + ")"); return; }
         long n = 0;
         for (int x = x1; x <= x2; x++) for (int y = y1; y <= y2; y++) for (int z = z1; z <= z2; z++)
-            if (s_.world.set_block(x, y, z, id)) { block_changed(x, y, z, id); n++; }
+            if (s_.dim(d).set_block(x, y, z, id)) { block_changed(d, x, y, z, id); n++; }
         reply("Successfully filled " + std::to_string(n) + " block(s)");
     } else if (cmd == "give" || cmd == "weather" || cmd == "difficulty" || cmd == "effect" || cmd == "summon" || cmd == "kill" || cmd == "xp" || cmd == "enchant") {
         reply("/" + cmd + " is not implemented in Painite yet (no inventory, mobs or weather)");

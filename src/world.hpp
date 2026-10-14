@@ -48,6 +48,9 @@ public:
     ~World();
     // dir = world directory; the region directory is found (or created) from the vanilla layouts
     // generator: auto | flat | void | terrain; level_type picks the terrain flavour (normal, large_biomes, amplified, flat, void); seed as in level-seed
+    // another dimension of the same world folder: shares seed and biome list, own chunks, region folder and generator (no lock, no level.dat)
+    bool open_dimension(const World& overworld, int dim_id, std::string& err);
+    int dim = 0;
     bool open(const std::string& dir, const std::string& generator, const std::string& level_type, const std::string& seed, const VanillaData& newest, std::string& err);
     std::shared_ptr<Chunk> chunk(int cx, int cz);            // loads or generates
     std::shared_ptr<Chunk> chunk_if_loaded(int cx, int cz);
@@ -73,7 +76,7 @@ public:
     uint8_t biome_index(const std::string& name) const;
     std::string player_dir() const;
     // last known position from players/data (when there is one), else the world spawn above the surface
-    struct Spawn { double x, y, z; float yaw, pitch; int gamemode; bool saved; };
+    struct Spawn { double x, y, z; float yaw, pitch; int gamemode; bool saved; int dim = 0; };
     Spawn pick_spawn(const std::string& uuid, int default_gamemode);
 
 private:
@@ -94,6 +97,6 @@ struct Light {
     std::vector<uint8_t> sky, blk;                 // (kSections + 2) * 2048 nibbles, section index + 1
     std::vector<int16_t> height_ws, height_mb;     // 256 each: highest y+1 of world surface / motion blocking, kMinY if none
 };
-void compute_light(const Chunk& c, Light& out);
+void compute_light(const Chunk& c, Light& out, bool sky = true);   // sky = false: Nether and End, no skylight
 
 }  // namespace pn

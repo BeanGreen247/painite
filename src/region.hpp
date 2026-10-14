@@ -21,23 +21,23 @@ public:
     ~RegionTicker() { stop(); }
     void start(int threads);
     void stop();
-    void schedule(int x, int y, int z, int delay);        // thread-safe
-    void schedule_around(int x, int y, int z);            // the block and its six neighbours, two ticks from now
+    void schedule(int dim, int x, int y, int z, int delay);   // thread-safe
+    void schedule_around(int dim, int x, int y, int z);       // the block and its six neighbours, two ticks from now
     void run(int64_t tick);                               // game thread, once per tick; returns when the due work is done
     size_t pending();
     int threads() const { return static_cast<int>(pool_.size()); }
     std::atomic<int64_t> processed{0}, changed{0};
 
 private:
-    struct Entry { int x, y, z; int64_t due; };
+    struct Entry { int dim, x, y, z; int64_t due; };
     struct Region {
         std::mutex mu;
         std::vector<Entry> q;
         std::unordered_set<uint64_t> keys;
     };
-    Region& region_for(int x, int z);
+    Region& region_for(int dim, int x, int z);
     void process_region(Region& r, int64_t tick);
-    void process_block(int x, int y, int z);
+    void process_block(int dim, int x, int y, int z);
     void worker();
     Server& s_;
     std::mutex map_mu_;

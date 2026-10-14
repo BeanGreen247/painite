@@ -12,6 +12,7 @@ typedef struct evp_cipher_ctx_st EVP_CIPHER_CTX;
 
 namespace pn {
 
+struct GPos;
 class Server;
 struct GEvent;
 struct GIdentity;
@@ -50,6 +51,7 @@ struct BSession {
     uint64_t id = 0;         // connection id (valid on this worker)
     uint64_t gid = 0;        // Game registry id once the player spawned
     std::shared_ptr<GIdentity> ident;
+    int dim = 0;             // dimension the player is in
     int eid = 0;             // entity id, both unique and runtime id
     double x = 0.5, y = 0, z = 0.5;   // feet position
     float yaw = 0, pitch = 0;
@@ -104,7 +106,8 @@ private:
     std::vector<uint8_t> player_list_entry(const GIdentity& id, bool add) const;
     void send_time_to(BSession& b, int64_t day_time);
     void send_game_mode(BSession& b, int mode);
-    const std::vector<uint8_t>& level_chunk_tail(int x, int z);
+    const std::vector<uint8_t>& level_chunk_tail(int dim, int x, int z);
+    void change_dimension(BSession& b, const GPos& p);
     std::unordered_map<uint64_t, BSession*> by_id_;
     struct CachedTail { uint32_t ver = 0; std::vector<uint8_t> tail; };
     std::unordered_map<int64_t, CachedTail> tail_cache_;

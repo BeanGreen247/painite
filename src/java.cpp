@@ -1,5 +1,7 @@
 // Java Edition protocol: framing, handshake, status, login, configuration replay and a flat-world play loop.
 #include "server.hpp"
+#include "dimension.hpp"
+#include "worldgen.hpp"
 #include "log.hpp"
 #include "util.hpp"
 #include "hash.hpp"
@@ -394,10 +396,32 @@ uint64_t pack_block_pos(int x, int y, int z) {
 
 void Worker::choose_spawn(JConn& c) {
     auto sp = s_.world.pick_spawn(uuid_str(c.uuid), s_.cfg.gamemode);
-    c.x = sp.x; c.y = sp.y; c.z = sp.z; c.yaw = sp.yaw; c.pitch = sp.pitch; c.gamemode = sp.gamemode;
+    c.x = sp.x; c.y = sp.y; c.z = sp.z; c.yaw = sp.yaw; c.pitch = sp.pitch; c.gamemode = sp.gamemode; c.dim = sp.dim;
 }
 
 static int64_t pack_chunk(int x, int z) { return (static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z); }
+
+// The block of the login and respawn packets that describes the dimension the player is in.
+void Worker::write_spawn_info(JConn& c, Wr& w) {
+    const VanillaData& vd = *c.vd;
+    const DimInfo& di = dim_info(c.dim);
+    bool flat = c.dim == 0 && s_.world.gen && (s_.world.gen->kind() == GenKind::Flat || s_.world.gen->kind() == GenKind::Void);
+    w.varint(vd.dim_type[c.dim]);
+    w.str(di.name);
+    w.be64(0x5a17c0de5a17c0deull);
+    if (vd.protocol >= 777) {
+        w.varint(c.gamemode);
+        w.varint(0);  // previous game mode: 0 = undefined
+    } else {
+        w.u8(static_cast<uint8_t>(c.gamemode));
+        w.u8(0xff);   // previous game mode: -1 = undefined (checked against recorded samples by tests/check_layouts.py)
+    }
+    w.boolean(false);
+    w.boolean(flat);
+    w.boolean(false);
+    w.varint(0);
+    w.varint(flat ? -63 : di.sea_level);
+}
 
 void Worker::start_play(JConn& c) {
     c.st = St::Play;
@@ -426,21 +450,7 @@ void Worker::start_play(JConn& c) {
     w.boolean(false);
     w.boolean(true);
     w.boolean(false);
-    w.varint(vd.dim_type_overworld);
-    w.str("minecraft:overworld");
-    w.be64(0x5a17c0de5a17c0deull);
-    if (vd.protocol >= 777) {
-        w.varint(c.gamemode);
-        w.varint(0);  // previous game mode: 0 = undefined
-    } else {
-        w.u8(static_cast<uint8_t>(c.gamemode));
-        w.u8(0xff);   // previous game mode: -1 = undefined (checked against recorded samples by tests/check_layouts.py)
-    }
-    w.boolean(false);
-    w.boolean(true);   // flat
-    w.boolean(false);
-    w.varint(0);
-    w.varint(-63);     // sea level of the flat world
+    write_spawn_info(c, w);
     w.boolean(false);
     w.boolean(false);
     send(c, w.b);
@@ -509,7 +519,7 @@ void Worker::start_play(JConn& c) {
     send(c, pi.b);
 
     char loc[96];
-    snprintf(loc, sizeof loc, "([minecraft:overworld]%.1f, %.1f, %.1f)", c.x, c.y, c.z);
+    snprintf(loc, sizeof loc, "([%s]%.1f, %.1f, %.1f)", dim_info(c.dim).name, c.x, c.y, c.z);
     info(c.name + " joined the game");
     info(c.name + "[/" + c.addr + "] logged in with entity id " + std::to_string(c.entity_id) + " at " + loc);
     s_.broadcast(c.name + " joined the game");
@@ -538,7 +548,7 @@ void Worker::start_play(JConn& c) {
     }
     ident->addr = c.addr;
     GPos gp;
-    gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.skin_parts = c.skin_parts;
+    gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.skin_parts = c.skin_parts; gp.dim = c.dim;
     ident->joined_ms = now_ms();
     c.ident = ident;
     c.gid = s_.game.add_player(ident, gp, c.gamemode, c.radius);
@@ -562,9 +572,9 @@ void Worker::rebuild_pending(JConn& c) {
 
 void Worker::send_chunk(JConn& c, int x, int z) {
     const auto& id = c.vd->id;
-    auto ch = s_.world.chunk(x, z);
+    auto ch = s_.dim(c.dim).chunk(x, z);
     uint32_t ver = ch->version.load();
-    int64_t key = pack_chunk(x, z) ^ (static_cast<int64_t>(c.vd->protocol) << 52) ^ (c.threshold < 0 ? (1ll << 51) : 0);
+    int64_t key = pack_chunk(x, z) ^ (static_cast<int64_t>(c.dim) << 49) ^ (static_cast<int64_t>(c.vd->protocol) << 52) ^ (c.threshold < 0 ? (1ll << 51) : 0);
     auto it = chunk_cache_.find(key);
     if (it != chunk_cache_.end() && it->second.ver != ver) {
         chunk_cache_bytes_ -= it->second.f.size();
@@ -575,7 +585,7 @@ void Worker::send_chunk(JConn& c, int x, int z) {
     if (it == chunk_cache_.end()) {
         Wr w;
         w.varint(id.pl_chunk);
-        { PN_PERF("chunk.encode_java"); encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w); }
+        { PN_PERF("chunk.encode_java"); encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w, c.dim); }
         ver = ch->version.load();
         std::vector<uint8_t> f;
         frame_into(f, w.b.data(), w.b.size(), c.threshold, s_.cfg.compression_level);
@@ -620,6 +630,7 @@ void Worker::pump_chunks(JConn& c) {
 }
 
 void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float pitch, bool has_pos, bool has_rot, bool ground) {
+    if (c.tp_wait && c.gid) return;   // positions from before the client saw the teleport
     if (has_pos) {
         if (!std::isfinite(nx) || !std::isfinite(ny) || !std::isfinite(nz) || std::fabs(nx) > 3e7 || std::fabs(nz) > 3e7 || std::fabs(ny) > 3e7) { kick(c, "Invalid move player packet received"); return; }
     } else { nx = c.x; ny = c.y; nz = c.z; }
@@ -634,7 +645,7 @@ void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float
     c.ground = ground;
     if (c.gid) {
         GPos gp;
-        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking; gp.skin_parts = c.skin_parts;
+        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking; gp.skin_parts = c.skin_parts; gp.dim = c.dim;
         s_.game.update_pos(c.gid, gp);
     }
     int ncx = static_cast<int>(std::floor(nx / 16)), ncz = static_cast<int>(std::floor(nz / 16));
@@ -664,7 +675,9 @@ void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float
 
 void Worker::on_play(JConn& c, Rd& r, int pid) {
     const auto& id = c.vd->id;
-    if (pid == id.pls_keep_alive) {
+    if (pid == id.pls_teleport_confirm) {
+        if (r.varint() == c.tp_wait) c.tp_wait = 0;
+    } else if (pid == id.pls_keep_alive) {
         c.last_ka_ack = now_ms();
         if (c.ident && static_cast<int64_t>(r.be64()) == c.ka_id) c.ident->ping_ms = static_cast<int>(std::min<int64_t>(c.last_ka_ack - c.ka_id, 99999));
     } else if (pid == id.pls_move_pos) {

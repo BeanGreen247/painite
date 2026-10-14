@@ -4,6 +4,7 @@
 //   painite_genstats bench SEED                   chunk generation time and cave share
 #include "blocks.hpp"
 #include "data.hpp"
+#include "structures.hpp"
 #include "world.hpp"
 #include "worldgen.hpp"
 #include <chrono>
@@ -32,7 +33,9 @@ int main(int argc, char** argv) {
     std::string mode = argv[1];
     uint64_t seed = static_cast<uint64_t>(atoll(argv[2]));
     GenKind kind = GenKind::Normal;
+    if (mode == "locate" && argc > 4) kind = !strcmp(argv[4], "nether") ? GenKind::Nether : !strcmp(argv[4], "end") ? GenKind::End : kind;
     if (mode == "stats" && argc > 3) kind = !strcmp(argv[3], "large") ? GenKind::LargeBiomes : !strcmp(argv[3], "amp") ? GenKind::Amplified : GenKind::Normal;
+    if (argc > 8) kind = !strcmp(argv[8], "nether") ? GenKind::Nether : !strcmp(argv[8], "end") ? GenKind::End : kind;
     WorldGen g(kind, seed, v.biomes);
     if (mode == "stats") {
         std::map<int, long> cnt;
@@ -108,6 +111,10 @@ int main(int argc, char** argv) {
             }
         }
         fclose(f);
+    } else if (mode == "locate" && argc >= 4) {
+        const StructureGen* sg = g.structures();
+        int ox = 0, oz = 0;
+        if (sg && sg->locate(argv[3], 0, 0, ox, oz)) printf("%s at %d %d\n", argv[3], ox, oz); else printf("%s not found\n", argv[3]);
     } else if (mode == "bench") {
         long air_cave = 0, solid = 0;
         auto t0 = std::chrono::steady_clock::now();

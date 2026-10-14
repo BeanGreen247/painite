@@ -2,6 +2,7 @@
 #include "bchunk.hpp"
 #include "skin.hpp"
 #include "bedrock.hpp"
+#include "dimension.hpp"
 #include "game.hpp"
 #include "log.hpp"
 #include "perf.hpp"
@@ -83,7 +84,8 @@ std::vector<uint8_t> Bedrock::patched_start_game(const BSession& b, const std::v
     for (int i = 0; i < 3; i++) {          // dimension, generator, world game mode
         const uint8_t* s = p;
         if (!rd_varuint(p, e, v)) return raw;
-        o.insert(o.end(), s, p);
+        if (i == 0) put_zz(o, b.dim);        // the recorded value is the overworld
+        else o.insert(o.end(), s, p);
     }
     if (p >= e) return raw;
     o.push_back(*p++);                     // hardcore
@@ -336,6 +338,9 @@ void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
         case GEvent::Gamemode:
             if (ev.id->gid == b->gid) { b->gamemode = ev.value; send_game_mode(*b, ev.value); }
             return;
+        case GEvent::Dimension:
+            if (ev.id->gid == b->gid) change_dimension(*b, ev.pos);
+            return;
         case GEvent::Message: send_text(*b, ev.text); break;
         case GEvent::Kick: disconnect(*b, ev.text); return;
         default: break;
@@ -373,7 +378,7 @@ void Bedrock::on_auth_input(BSession& b, const uint8_t* p, size_t n) {
     b.x = x; b.y = y - kEye; b.z = z; b.yaw = yaw; b.pitch = pitch; b.sneaking = sneaking;
     if (b.st == BSession::St::Playing && b.gid) {
         GPos gp;
-        gp.x = b.x; gp.y = b.y; gp.z = b.z; gp.yaw = yaw; gp.pitch = pitch; gp.head = yaw; gp.sneaking = sneaking;
+        gp.x = b.x; gp.y = b.y; gp.z = b.z; gp.yaw = yaw; gp.pitch = pitch; gp.head = yaw; gp.sneaking = sneaking; gp.dim = b.dim;
         s_.game.update_pos(b.gid, gp);
     }
     on_move(b, x, z);
@@ -408,14 +413,15 @@ void Bedrock::on_auth_input(BSession& b, const uint8_t* p, size_t n) {
         bool take = action == 13 || (action == 26 && b.gamemode != 1 && b.gamemode != 3 && b.gamemode != 2);
         if (!take) continue;
         int bx = c[0], by = c[1], bz = c[2];
-        if (by < kMinY || by >= kMinY + kHeight) continue;
+        if (by < dim_info(b.dim).min_y || by >= dim_info(b.dim).min_y + dim_info(b.dim).height) continue;
         double dx = bx + 0.5 - b.x, dy = by + 0.5 - (b.y + 1.62), dz = bz + 0.5 - b.z;
-        uint16_t cur = s_.world.get_block(bx, by, bz);
+        World& W = s_.dim(b.dim);
+        uint16_t cur = W.get_block(bx, by, bz);
         const BlockInfo& bi = Blocks::get().info(cur);
-        bool protect = s_.cfg.spawn_protection > 0 && std::max(std::abs(bx - s_.world.spawn_x), std::abs(bz - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
+        bool protect = b.dim == 0 && s_.cfg.spawn_protection > 0 && std::max(std::abs(bx - s_.world.spawn_x), std::abs(bz - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
                        s_.game.op_level(b.gid) == 0;
-        if (dx * dx + dy * dy + dz * dz <= 49.0 && !bi.air && bi.name != "minecraft:bedrock" && !protect && s_.world.set_block(bx, by, bz, 0)) s_.game.block_changed(bx, by, bz, 0);
-        else block_event(b.id, bx, by, bz, s_.world.get_block(bx, by, bz));
+        if (dx * dx + dy * dy + dz * dz <= 49.0 && !bi.air && bi.name != "minecraft:bedrock" && !protect && W.set_block(bx, by, bz, 0)) s_.game.block_changed(b.dim, bx, by, bz, 0);
+        else block_event(b.id, bx, by, bz, W.get_block(bx, by, bz));
     }
 }
 
@@ -429,16 +435,38 @@ void Bedrock::on_command_request(BSession& b, const uint8_t* p, size_t n) {
     s_.game.command(b.gid, cmd);
 }
 
+// ---- dimension change -------------------------------------------------------------------------------------
+
+// ChangeDimension (61) moves the client to the new dimension; the chunks of that dimension follow like at login.
+void Bedrock::change_dimension(BSession& b, const GPos& p) {
+    b.dim = p.dim;
+    b.x = p.x; b.y = p.y; b.z = p.z; b.yaw = p.yaw; b.pitch = p.pitch;
+    b.sent.clear();
+    b.pending.clear();
+    b.cx = static_cast<int>(std::floor(b.x / 16));
+    b.cz = static_cast<int>(std::floor(b.z / 16));
+    std::vector<uint8_t> pl;
+    put_zz(pl, p.dim);
+    put_f32(pl, static_cast<float>(p.x)); put_f32(pl, static_cast<float>(p.y) + kEye); put_f32(pl, static_cast<float>(p.z));
+    pl.push_back(0);   // not a respawn
+    pl.push_back(0);   // no loading screen id
+    send_packets(b, {{61, pl}});
+    send_npu(b);
+    queue_chunks(b);
+    pump_chunks(b);
+    rak_->flush(*b.rak, now_ms());
+}
+
 // ---- chunks from the world ------------------------------------------------------------------------------
 
-const std::vector<uint8_t>& Bedrock::level_chunk_tail(int x, int z) {
-    int64_t key = (static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z);
-    auto ch = s_.world.chunk(x, z);
+const std::vector<uint8_t>& Bedrock::level_chunk_tail(int dim, int x, int z) {
+    int64_t key = ((static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z)) ^ (static_cast<int64_t>(dim) << 58);
+    auto ch = s_.dim(dim).chunk(x, z);
     uint32_t ver = ch->version.load();
     auto& slot = tail_cache_[key];
     if (slot.ver != ver || slot.tail.empty()) {
         tail_cache_bytes_ -= slot.tail.size();
-        encode_bedrock_levelchunk(*ch, slot.tail);
+        encode_bedrock_levelchunk(*ch, slot.tail, dim);
         slot.ver = ver;
         tail_cache_bytes_ += slot.tail.size();
         if (tail_cache_bytes_ > 16u * 1024 * 1024) {

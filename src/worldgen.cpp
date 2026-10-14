@@ -1,5 +1,8 @@
 #include "worldgen.hpp"
 #include "perf.hpp"
+#include "structures.hpp"
+#include "worldgen_biomes.hpp"
+#include "worldgen_util.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -18,30 +21,10 @@ uint64_t seed_from_string(const std::string& s) {
     return static_cast<uint64_t>(static_cast<int64_t>(h));
 }
 
-static uint64_t splitmix(uint64_t& x) {
-    uint64_t z = (x += 0x9e3779b97f4a7c15ull);
-    z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ull;
-    z = (z ^ (z >> 27)) * 0x94d049bb133111ebull;
-    return z ^ (z >> 31);
-}
 
-static uint64_t hash2(uint64_t seed, int64_t a, int64_t b) {
-    uint64_t x = seed ^ (static_cast<uint64_t>(a) * 0x9e3779b97f4a7c15ull) ^ (static_cast<uint64_t>(b) * 0xc2b2ae3d27d4eb4full);
-    return splitmix(x);
-}
-
-static double rnd01(uint64_t& rs) { return static_cast<double>(splitmix(rs) >> 11) / 9007199254740992.0; }
-static int rndi(uint64_t& rs, int n) { return static_cast<int>(rnd01(rs) * n); }
 
 static constexpr int SEA = 62;
 
-// Biomes the generator can place. The order matches kBmNames.
-enum Bm {
-    PLAINS, FOREST, FLOWER_FOREST, BIRCH_FOREST, OLD_BIRCH, DARK_FOREST, TAIGA, SNOWY_TAIGA, OLD_SPRUCE, OLD_PINE, SNOWY_PLAINS, DESERT, SAVANNA, WINDSWEPT_SAVANNA,
-    JUNGLE, SPARSE_JUNGLE, SWAMP, MANGROVE, BADLANDS, ERODED_BADLANDS, WOODED_BADLANDS, WINDSWEPT_HILLS, WINDSWEPT_GRAVELLY, WINDSWEPT_FOREST, MEADOW, CHERRY, GROVE,
-    SNOWY_SLOPES, JAGGED, FROZEN_PEAKS, STONY_PEAKS, BEACH, SNOWY_BEACH, STONY_SHORE, RIVER, FROZEN_RIVER, OCEAN, DEEP_OCEAN, COLD_OCEAN, DEEP_COLD, FROZEN_OCEAN,
-    DEEP_FROZEN, LUKEWARM, DEEP_LUKEWARM, WARM, MUSHROOM, BM_COUNT
-};
 static const char* const kBmNames[BM_COUNT] = {
     "plains", "forest", "flower_forest", "birch_forest", "old_growth_birch_forest", "dark_forest", "taiga", "snowy_taiga", "old_growth_spruce_taiga", "old_growth_pine_taiga",
     "snowy_plains", "desert", "savanna", "windswept_savanna", "jungle", "sparse_jungle", "swamp", "mangrove_swamp", "badlands", "eroded_badlands", "wooded_badlands",
@@ -70,6 +53,12 @@ WorldGen::WorldGen(GenKind kind, uint64_t seed, const std::vector<std::string>& 
         std::string n = std::string("minecraft:") + kBmNames[i];
         bi_[i] = plains();
         for (size_t k = 0; k < biome_names.size(); k++) if (biome_names[k] == n) bi_[i] = static_cast<uint8_t>(k);
+    }
+    static const char* const extra[] = {"nether_wastes", "soul_sand_valley", "crimson_forest", "warped_forest", "basalt_deltas", "the_end", "small_end_islands", "end_midlands", "end_highlands", "end_barrens"};
+    for (int i = 0; i < 10; i++) {
+        std::string n = std::string("minecraft:") + extra[i];
+        bi_[48 + i] = plains();
+        for (size_t k = 0; k < biome_names.size(); k++) if (biome_names[k] == n) bi_[48 + i] = static_cast<uint8_t>(k);
     }
     const Blocks& B = Blocks::get();
     auto d = [&](const char* n) { return B.default_state(n); };
@@ -124,13 +113,15 @@ WorldGen::WorldGen(GenKind kind, uint64_t seed, const std::vector<std::string>& 
         soft_[i] = (bi.air || leaves || ((bi.replaceable || bi.needs_floor) && !bi.fluid)) ? 1 : 0;
     }
     soft_[0] = 1;
+    if (kind == GenKind::Normal || kind == GenKind::LargeBiomes || kind == GenKind::Amplified) structs_ = std::make_unique<StructureGen>(*this, 0);
+    else if (kind == GenKind::Nether) structs_ = std::make_unique<StructureGen>(*this, 1);
+    else if (kind == GenKind::End) structs_ = std::make_unique<StructureGen>(*this, 2);
 }
+
+WorldGen::~WorldGen() = default;
 
 // Gradient noise (improved Perlin), channel selects an independent permutation.
 static double fade(double t) { return t * t * t * (t * (t * 6 - 15) + 10); }
-static double lerp(double a, double b, double t) { return a + (b - a) * t; }
-static double clamp(double v, double lo, double hi) { return v < lo ? lo : v > hi ? hi : v; }
-static double smooth(double e0, double e1, double x) { double t = clamp((x - e0) / (e1 - e0), 0, 1); return t * t * (3 - 2 * t); }
 static double grad2(int h, double x, double z) { switch (h & 7) { case 0: return x + z; case 1: return -x + z; case 2: return x - z; case 3: return -x - z; case 4: return x; case 5: return -x; case 6: return z; default: return -z; } }
 static double grad3(int h, double x, double y, double z) {
     h &= 15;
@@ -251,17 +242,20 @@ int WorldGen::pick_biome(const Column& c, int h) const {
 int WorldGen::surface_height(int x, int z) const {
     if (kind_ == GenKind::Flat) return -61;
     if (kind_ == GenKind::Void) return kMinY - 1;
+    if (kind_ == GenKind::Nether || kind_ == GenKind::End) return 64;
     return column(x, z).height;
 }
 
 int WorldGen::sample(int x, int z, int& biome) const {
+    if (kind_ == GenKind::End) { int bottom; return end_column(x, z, bottom, biome); }
+    if (kind_ == GenKind::Nether) { biome = NETHER_WASTES; return 64; }
     Column c = column(x, z);
     biome = c.bm;
     return c.height;
 }
 
 bool WorldGen::find_spawn(int& sx, int& sz) const {
-    if (kind_ == GenKind::Flat || kind_ == GenKind::Void) { sx = sz = 0; return true; }
+    if (kind_ == GenKind::Flat || kind_ == GenKind::Void || kind_ == GenKind::Nether || kind_ == GenKind::End) { sx = sz = 0; return true; }
     for (int r = 0; r <= 2048; r += 8)
         for (int a = 0; a < std::max(1, r / 4); a++) {
             double ang = a * 6.2831853 / std::max(1, r / 4);
@@ -708,7 +702,10 @@ void WorldGen::generate(Chunk& c) const {
     c.extra.put("Status", Nbt::str("minecraft:full"));
     if (kind_ == GenKind::Void) { memset(c.air_biomes, bi_[PLAINS], sizeof c.air_biomes); return; }
     if (kind_ == GenKind::Flat) { flat(c); return; }
-    terrain(c);
+    if (kind_ == GenKind::Nether) nether(c);
+    else if (kind_ == GenKind::End) end(c);
+    else terrain(c);
+    if (structs_) structs_->paint(c);
 }
 
 }  // namespace pn

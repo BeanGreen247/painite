@@ -8,16 +8,21 @@
 
 namespace pn {
 
-enum class GenKind { Void, Flat, Normal, LargeBiomes, Amplified };
+enum class GenKind { Void, Flat, Normal, LargeBiomes, Amplified, Nether, End };
+
+// Biome slots of the Nether and the End (the overworld ones are numbered in worldgen.cpp).
+enum ExtraBiome { NETHER_WASTES = 48, SOUL_SAND_VALLEY, CRIMSON_FOREST, WARPED_FOREST, BASALT_DELTAS, THE_END, SMALL_END_ISLANDS, END_MIDLANDS, END_HIGHLANDS, END_BARRENS };
 
 class WorldGen {
 public:
     WorldGen(GenKind kind, uint64_t seed, const std::vector<std::string>& biome_names);
+    ~WorldGen();
     void generate(Chunk& c) const;
     int surface_height(int x, int z) const;     // terrain height (highest solid block) without carving
     int sample(int x, int z, int& biome) const;   // terrain height and the generator's biome number (debugging, tests/gen_stats.cpp)
     bool find_spawn(int& x, int& z) const;      // nearest dry land to the origin
     GenKind kind() const { return kind_; }
+    const class StructureGen* structures() const { return structs_.get(); }
     uint64_t seed() const { return seed_; }
 
 private:
@@ -28,6 +33,9 @@ private:
     Column column(int x, int z) const;
     int pick_biome(const Column& c, int h) const;
     void flat(Chunk& c) const;
+    void nether(Chunk& c) const;   // worldgen_dims.cpp
+    int end_column(int wx, int wz, int& bottom, int& bm) const;
+    void end(Chunk& c) const;
     void terrain(Chunk& c) const;
     uint16_t surface_block(int bm, int depth, int y, int wx, int wz, double patch) const;
     struct Placed { int8_t dx, dz; int16_t dy; uint16_t b; };
@@ -47,6 +55,7 @@ private:
     uint8_t bands_[64];
     std::vector<uint8_t> soft_;   // blocks a tree may overwrite: air, plants, snow layers, leaves
     std::vector<std::string> names_;
+    std::unique_ptr<class StructureGen> structs_;
 };
 
 // "123", "-5" or any text (Java's String.hashCode, like vanilla); empty = random

@@ -24,6 +24,7 @@ struct VanillaData {
     std::string version;
     int protocol = 0;
     int dim_type_overworld = 0;
+    int dim_type[3] = {0, 0, 0};    // registry index of overworld, the_nether, the_end in the dimension_type registry sent during configuration
     int biome_plains = 0;
     std::vector<std::vector<uint8_t>> config_packets;  // full packets (id + payload), vanilla order
     std::vector<uint8_t> chunk_template;               // chunk packet payload after the X/Z ints

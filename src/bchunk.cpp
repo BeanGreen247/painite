@@ -61,16 +61,18 @@ static void put_storage(std::vector<uint8_t>& o, const std::vector<int32_t>& val
     (void)zigzag_palette_entries;
 }
 
-void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail) {
+void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim) {
     std::lock_guard<std::mutex> l(c.mu);
+    // Bedrock's Nether is 128 blocks high (8 sub chunks), the End 256 (16); sub chunk numbers count from the dimension's lowest one
+    const int smin = dim == 0 ? 0 : 4, smax = dim == 0 ? kSections : dim == 1 ? 12 : 20;
     int highest = 0;
-    for (int s = 0; s < kSections; s++) {
+    for (int s = smin; s < smax; s++) {
         if (!c.sec[s]) continue;
-        for (int i = 0; i < 4096; i++) if (c.sec[s]->b[i]) { highest = s + 1; break; }
+        for (int i = 0; i < 4096; i++) if (c.sec[s]->b[i]) { highest = s - smin + 1; break; }
     }
     std::vector<uint8_t> biomes;
     std::vector<int32_t> prev;
-    for (int s = 0; s < kSections; s++) {
+    for (int s = smin; s < smax; s++) {
         std::vector<int32_t> vals(4096, 1);
         {
             const uint8_t* cells = c.sec[s] ? c.sec[s]->biome : c.air_biomes[s];
@@ -79,13 +81,13 @@ void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail) {
                 vals[static_cast<size_t>(x * 256 + z * 16 + y)] = b < g_biome_ids.size() ? g_biome_ids[b] : 1;
             }
         }
-        if (s > 0 && vals == prev) biomes.push_back(0xff);
+        if (s > smin && vals == prev) biomes.push_back(0xff);
         else put_storage(biomes, vals, true);
         prev = std::move(vals);
     }
     biomes.push_back(0);   // border blocks
     tail.clear();
-    tail.push_back(0);                 // dimension
+    tail.push_back(static_cast<uint8_t>(dim));   // dimension
     tail.push_back(0);                 // sub chunk count (limited request mode)
     tail.push_back(1);                 // highest sub chunk present
     put_zz(tail, highest);

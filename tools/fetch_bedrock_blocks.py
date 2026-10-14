@@ -134,6 +134,7 @@ def desired_states(jn, props, bnames_states):
     d = {}
     P = props
     if "axis" in P: d["pillar_axis"] = P["axis"]
+    if jn == "minecraft:nether_portal": d["portal_axis"] = P["axis"]
     if jn.endswith("_slab") or "type" in P and P.get("type") in ("top", "bottom", "double"):
         t = P.get("type")
         if t in ("top", "bottom", "double"):

@@ -75,6 +75,9 @@ struct JConn {
     uint64_t gid = 0;        // Game registry id
     std::shared_ptr<GIdentity> ident;   // set once the player is in the game (ping updates)
     int tp_id = 0;
+    int dim = 0;             // dimension the player is in
+    int tp_wait = 0;         // teleport id the client must confirm before its moves count (set on dimension changes)
+    std::string hotbar_name[9];   // item names in the hotbar slots (flint_and_steel and the like have no block)
     uint16_t hotbar[9] = {};  // internal block ids of the creative hotbar items (0 = none / not a block)
     int held = 0;
     bool sneaking = false, ground = true;
@@ -161,6 +164,8 @@ private:
     void send_time(JConn& c, int64_t age, int64_t day);
     void send_command_tree(JConn& c);
     void teleport_player(JConn& c, const GPos& p);
+    void write_spawn_info(JConn& c, Wr& w);
+    void change_dimension(JConn& c, const GPos& p);
     void plan_view(JConn& c, int ncx, int ncz);
 
     // bedrock.cpp
@@ -202,6 +207,8 @@ public:
     std::atomic<uint64_t> next_conn_id{1};
     Auth auth;
     World world;
+    std::unique_ptr<World> other_dims[2];   // the nether and the end
+    World& dim(int d) { return d >= 1 && d <= 2 && other_dims[d - 1] ? *other_dims[d - 1] : world; }
     Lists lists;
     Game game{*this};
     std::vector<int> cores;  // resolved CPU list

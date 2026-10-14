@@ -1,5 +1,6 @@
 #include "world.hpp"
 #include "perf.hpp"
+#include "dimension.hpp"
 #include "worldgen.hpp"
 #include "anvil.hpp"
 #include "log.hpp"
@@ -132,6 +133,31 @@ bool World::open(const std::string& d, const std::string& generator, const std::
         spawn_y = gen->surface_height(sx, sz) + 1;
     }
     info(std::string("World \"") + dir + "\": " + (existing ? "existing region files in " + region_dir : std::string("no chunks yet")) + (", missing chunks: " + gen_name + (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified ? " terrain, seed " + std::to_string(static_cast<long long>(seed)) : std::string())));
+    (void)err;
+    return true;
+}
+
+bool World::open_dimension(const World& ow, int d, std::string& err) {
+    dim = d;
+    dir = ow.dir;
+    biome_names = ow.biome_names;
+    data_version = ow.data_version;
+    seed = ow.seed;
+    bool layout26 = ow.region_dir == ow.dir + "/dimensions/minecraft/overworld/region";
+    if (layout26) {
+        mkdir((dir + "/dimensions").c_str(), 0755);
+        mkdir((dir + "/dimensions/minecraft").c_str(), 0755);
+        std::string base = dir + "/dimensions/minecraft/" + dim_info(d).dir_name;
+        mkdir(base.c_str(), 0755);
+        region_dir = base + "/region";
+    } else {
+        std::string base = dir + (d == 1 ? "/DIM-1" : "/DIM1");
+        mkdir(base.c_str(), 0755);
+        region_dir = base + "/region";
+    }
+    mkdir(region_dir.c_str(), 0755);
+    gen = std::make_unique<WorldGen>(d == 1 ? GenKind::Nether : GenKind::End, seed, biome_names);
+    gen_name = d == 1 ? "nether" : "end";
     (void)err;
     return true;
 }
@@ -424,7 +450,8 @@ World::Spawn World::pick_spawn(const std::string& uuid, int default_gamemode) {
     Nbt pd;
     if (load_player(uuid, pd)) {
         std::string dim = pd.gets("Dimension");
-        const Nbt* pos = (dim.empty() || dim == "minecraft:overworld" || dim == "overworld") ? pd.get("Pos") : nullptr;   // positions in the nether or end mean nothing here
+        const Nbt* pos = pd.get("Pos");
+        s.dim = dim_from_name(dim);
         if (pos && pos->type == Nbt::List && pos->list.size() == 3) {
             double x = pos->list[0].f, y = pos->list[1].f, z = pos->list[2].f;
             if (std::isfinite(x) && std::isfinite(y) && std::isfinite(z) && std::fabs(x) < 3e7 && std::fabs(z) < 3e7) {
@@ -432,6 +459,7 @@ World::Spawn World::pick_spawn(const std::string& uuid, int default_gamemode) {
                 if (const Nbt* rot = pd.get("Rotation")) if (rot->list.size() == 2) { s.yaw = static_cast<float>(rot->list[0].f); s.pitch = static_cast<float>(rot->list[1].f); }
                 s.gamemode = static_cast<int>(pd.geti("playerGameType", default_gamemode));
                 s.saved = true;
+                if (s.dim) return s;
                 return s;
             }
         }
@@ -455,7 +483,7 @@ bool World::save_player(const std::string& uuid, const Nbt& out) {
 
 // ---- lighting -------------------------------------------------------------------------------------------
 
-void compute_light(const Chunk& c, Light& L) {
+static void compute_light_overworld(const Chunk& c, Light& L) {
     PN_PERF("chunk.light");
     const Blocks& B = Blocks::get();
     const int S = kSections + 2;
@@ -556,6 +584,11 @@ void compute_light(const Chunk& c, Light& L) {
             }
     // section index 0 is the one below the world: dark
     std::fill(L.sky.begin(), L.sky.begin() + 2048, 0);
+}
+
+void compute_light(const Chunk& c, Light& L, bool sky) {
+    compute_light_overworld(c, L);
+    if (!sky) std::fill(L.sky.begin(), L.sky.end(), 0);
 }
 
 }  // namespace pn

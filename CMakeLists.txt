@@ -16,7 +16,7 @@ find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 add_executable(painite
-  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp src/rak.cpp src/auth.cpp src/hash.cpp src/nbt.cpp src/anvil.cpp src/blocks.cpp src/world.cpp src/jchunk.cpp src/lists.cpp src/game.cpp src/commands.cpp src/java_game.cpp src/bchunk.cpp src/bedrock_game.cpp src/xbox.cpp src/skin.cpp src/region.cpp src/worldgen.cpp)
+  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp src/rak.cpp src/auth.cpp src/hash.cpp src/nbt.cpp src/anvil.cpp src/blocks.cpp src/world.cpp src/jchunk.cpp src/lists.cpp src/game.cpp src/commands.cpp src/java_game.cpp src/bchunk.cpp src/bedrock_game.cpp src/xbox.cpp src/skin.cpp src/region.cpp src/worldgen.cpp src/worldgen_dims.cpp src/portal.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp)
 target_link_libraries(painite PRIVATE ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 target_compile_options(painite PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-plt)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
@@ -45,6 +45,6 @@ target_link_libraries(painite_unit PRIVATE OpenSSL::Crypto ZLIB::ZLIB)
 install(TARGETS painite RUNTIME DESTINATION bin)
 install(FILES painite.toml DESTINATION share/painite)
 
-add_executable(painite_genstats EXCLUDE_FROM_ALL tests/gen_stats.cpp src/worldgen.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
+add_executable(painite_genstats EXCLUDE_FROM_ALL tests/gen_stats.cpp src/worldgen.cpp src/worldgen_dims.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
 target_include_directories(painite_genstats PRIVATE src)
 target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)

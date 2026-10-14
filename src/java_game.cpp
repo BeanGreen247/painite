@@ -2,6 +2,7 @@
 #include "log.hpp"
 #include "perf.hpp"
 #include "server.hpp"
+#include "dimension.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -32,7 +33,7 @@ static void put_entry(Wr& w, const GIdentity& id, int gamemode) {
 
 struct CmdDef { const char* name; int level; };
 static const CmdDef kCommands[] = {{"help", 0}, {"list", 0}, {"tps", 0}, {"me", 0}, {"tell", 0}, {"msg", 0}, {"w", 0}, {"version", 0}, {"say", 2}, {"tp", 2},
-    {"teleport", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
+    {"teleport", 2}, {"execute", 2}, {"locate", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
     {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}};
 
 // Command tree for the client: every command is a literal with one greedy text argument, so tab completion and highlighting
@@ -105,13 +106,49 @@ void Worker::teleport_player(JConn& c, const GPos& p) {
     c.x = p.x; c.y = p.y; c.z = p.z; c.yaw = p.yaw; c.pitch = p.pitch;
     Wr w;
     w.varint(c.vd->id.pl_position);
-    w.varint(++c.tp_id);
+    c.tp_wait = ++c.tp_id;
+    w.varint(c.tp_id);
     w.f64(p.x); w.f64(p.y); w.f64(p.z);
     w.f64(0); w.f64(0); w.f64(0);
     w.f32(p.yaw); w.f32(p.pitch);
     w.be32(0);
     send(c, w.b);
     on_move(c, p.x, p.y, p.z, p.yaw, p.pitch, true, false, true);
+}
+
+// The player moved to another dimension: respawn packet, new position, chunks of the new dimension.
+void Worker::change_dimension(JConn& c, const GPos& p) {
+    const VanillaData& vd = *c.vd;
+    c.dim = p.dim;
+    c.sent.clear();
+    c.pending.clear();
+    Wr w;
+    w.varint(vd.packet("play/c/respawn"));
+    write_spawn_info(c, w);
+    w.u8(0);   // keep nothing
+    send(c, w.b);
+    Wr ab;
+    ab.varint(vd.id.pl_abilities);
+    ab.u8(c.gamemode == 1 ? 0x0d : c.gamemode == 3 ? 0x0f : 0x00);
+    ab.f32(0.05f);
+    ab.f32(0.1f);
+    send(c, ab.b);
+    teleport_player(c, p);
+    c.cx = static_cast<int>(std::floor(c.x / 16));
+    c.cz = static_cast<int>(std::floor(c.z / 16));
+    Wr ce;
+    ce.varint(vd.id.pl_center);
+    ce.varint(c.cx);
+    ce.varint(c.cz);
+    send(c, ce.b);
+    Wr ge;
+    ge.varint(vd.id.pl_game_event);
+    ge.u8(13);
+    ge.f32(0);
+    send(c, ge.b);
+    send_time(c, s_.game.game_time(), s_.game.day_time());
+    rebuild_pending(c);
+    pump_chunks(c);
 }
 
 void Worker::java_event(JConn& c, const GEvent& ev) {
@@ -195,6 +232,9 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             }
             break;
         }
+        case GEvent::Dimension:
+            if (ev.id->gid == c.gid) change_dimension(c, ev.pos);
+            return;
         case GEvent::Teleport: {
             if (ev.id->gid == c.gid) { if (ev.value == 1) teleport_player(c, ev.pos); return; }
             w.varint(vd.packet("play/c/entity_position_sync"));
@@ -314,9 +354,11 @@ void Worker::on_creative_slot(JConn& c, Rd& r) {
     if (r.bad || slot < 36 || slot > 44) return;
     int idx = slot - 36;
     c.hotbar[idx] = 0;
+    c.hotbar_name[idx].clear();
     if (count <= 0) return;
     int item = r.varint();
     if (r.bad || item < 0 || static_cast<size_t>(item) >= c.vd->items.size()) return;
+    c.hotbar_name[idx] = c.vd->items[static_cast<size_t>(item)];
     c.hotbar[idx] = Blocks::get().default_state(c.vd->items[static_cast<size_t>(item)]);
 }
 
@@ -331,18 +373,19 @@ void Worker::on_dig(JConn& c, Rd& r) {
     int y = static_cast<int>(static_cast<int64_t>(p << 52) >> 52);
     int z = static_cast<int>(static_cast<int64_t>(p << 26) >> 38);
     bool instant = c.gamemode == 1;
+    World& W = s_.dim(c.dim);
     if (status == 0 || status == 2) {
         bool take = (status == 0 && instant) || (status == 2 && c.gamemode != 1 && c.gamemode != 3 && c.gamemode != 2);
         double dx = x + 0.5 - c.x, dy = y + 0.5 - (c.y + 1.62), dz = z + 0.5 - c.z;
         bool near = dx * dx + dy * dy + dz * dz <= 7.0 * 7.0;
-        bool protect = s_.cfg.spawn_protection > 0 && std::max(std::abs(x - s_.world.spawn_x), std::abs(z - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
+        bool protect = c.dim == 0 && s_.cfg.spawn_protection > 0 && std::max(std::abs(x - s_.world.spawn_x), std::abs(z - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
                        s_.game.op_level(c.gid) == 0;
-        uint16_t cur = s_.world.get_block(x, y, z);
+        uint16_t cur = W.get_block(x, y, z);
         const BlockInfo& bi = Blocks::get().info(cur);
-        if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && s_.world.set_block(x, y, z, 0)) {
-            s_.game.block_changed(x, y, z, 0);
+        if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && W.set_block(x, y, z, 0)) {
+            s_.game.block_changed(c.dim, x, y, z, 0);
         } else if (status == 0 || status == 2) {
-            send_block_update(c, x, y, z, s_.world.get_block(x, y, z));
+            send_block_update(c, x, y, z, W.get_block(x, y, z));
         }
     }
     send_block_ack(c, seq);
@@ -367,27 +410,37 @@ void Worker::on_place(JConn& c, Rd& r) {
     int z = static_cast<int>(static_cast<int64_t>(p << 26) >> 38);
     Blocks& B = Blocks::get();
     uint16_t item_block = hand == 0 ? c.hotbar[c.held] : 0;
-    uint16_t target = s_.world.get_block(x, y, z);
+    World& W = s_.dim(c.dim);
+    uint16_t target = W.get_block(x, y, z);
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }
-    bool ok = item_block && c.gamemode != 3 && c.gamemode != 2 && ty >= kMinY && ty < kMinY + kHeight;
+    const DimInfo& di = dim_info(c.dim);
+    if (hand == 0 && c.gamemode != 3 && c.gamemode != 2) {
+        const std::string& held = c.hotbar_name[c.held];
+        if (held == "minecraft:ender_eye" && s_.game.put_ender_eye(c.dim, x, y, z)) { send_block_ack(c, seq); return; }
+        if (held == "minecraft:flint_and_steel" || held == "minecraft:fire_charge") {
+            // lighting a nether portal: fire inside an obsidian frame turns the frame's inside into portal
+            if (ty >= di.min_y && ty < di.min_y + di.height && s_.game.portal_ignite(c.dim, tx, ty, tz)) { send_block_ack(c, seq); return; }
+        }
+    }
+    bool ok = item_block && c.gamemode != 3 && c.gamemode != 2 && ty >= di.min_y && ty < di.min_y + di.height;
     if (ok) {
         double dx = tx + 0.5 - c.x, dz = tz + 0.5 - c.z, dy = ty + 0.5 - (c.y + 1.62);
         ok = dx * dx + dy * dy + dz * dz <= 8.0 * 8.0;
         // not inside the player's own body
         if (ok && std::abs(c.x - (tx + 0.5)) < 0.8 && std::abs(c.z - (tz + 0.5)) < 0.8 && ty >= static_cast<int>(std::floor(c.y)) && ty <= static_cast<int>(std::floor(c.y + 1.8))) ok = false;
-        if (ok && !B.info(s_.world.get_block(tx, ty, tz)).replaceable) ok = false;
-        if (ok && s_.cfg.spawn_protection > 0 && std::max(std::abs(tx - s_.world.spawn_x), std::abs(tz - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
+        if (ok && !B.info(W.get_block(tx, ty, tz)).replaceable) ok = false;
+        if (ok && c.dim == 0 && s_.cfg.spawn_protection > 0 && std::max(std::abs(tx - s_.world.spawn_x), std::abs(tz - s_.world.spawn_z)) <= s_.cfg.spawn_protection &&
             s_.game.op_level(c.gid) == 0)
             ok = false;
     }
     if (ok) {
         uint16_t state = placed_state(item_block, face, c.yaw, cy);
-        if (s_.world.set_block(tx, ty, tz, state)) s_.game.block_changed(tx, ty, tz, state);
-        else send_block_update(c, tx, ty, tz, s_.world.get_block(tx, ty, tz));
+        if (W.set_block(tx, ty, tz, state)) s_.game.block_changed(c.dim, tx, ty, tz, state);
+        else send_block_update(c, tx, ty, tz, W.get_block(tx, ty, tz));
     } else {
         send_block_update(c, x, y, z, target);
-        if (tx != x || ty != y || tz != z) send_block_update(c, tx, ty, tz, s_.world.get_block(tx, ty, tz));
+        if (tx != x || ty != y || tz != z) send_block_update(c, tx, ty, tz, W.get_block(tx, ty, tz));
     }
     send_block_ack(c, seq);
 }

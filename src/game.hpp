@@ -38,11 +38,12 @@ struct GPos {
     double x = 0, y = 0, z = 0;
     float yaw = 0, pitch = 0, head = 0;
     bool ground = true, sneaking = false;
+    int dim = 0;                 // 0 overworld, 1 nether, 2 end
     uint8_t skin_parts = 0x7f;   // displayed skin layers (Java client information)
 };
 
 struct GEvent {
-    enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose } kind = Move;
+    enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -68,11 +69,11 @@ public:
     void remove_player(uint64_t gid);
     void update_pos(uint64_t gid, const GPos& pos);
     void set_view(uint64_t gid, int view_chunks);
-    void block_changed(int x, int y, int z, uint16_t id);   // tell everyone who can see that block
+    void block_changed(int dim, int x, int y, int z, uint16_t id);   // tell everyone who can see that block
     void swing(uint64_t gid);
     void chat(uint64_t gid, const std::string& msg);
     void command(uint64_t gid, const std::string& line);   // gid 0 = console
-    void teleport(uint64_t gid, const GPos& pos);          // server-initiated, e.g. /tp
+    void teleport(uint64_t gid, const GPos& pos);          // server-initiated, e.g. /tp (pos.dim picks the dimension)
     void set_gamemode(uint64_t gid, int mode);
     std::shared_ptr<const GIdentity> identity(uint64_t gid);
     std::vector<std::shared_ptr<const GIdentity>> identities();
@@ -97,6 +98,12 @@ public:
     RegionTicker& ticker() { return ticker_; }
     void save_everything(bool unload);
     void save_player_data(uint64_t gid);
+
+    // portal.cpp
+    bool portal_ignite(int dim, int x, int y, int z);   // light a nether portal whose frame contains this empty block; false when there is no frame
+    void portal_tick();                                  // game thread: players standing in portals
+    void portal_travel(uint64_t gid, const GPos& from, int kind);
+    bool put_ender_eye(int dim, int x, int y, int z);   // an eye of ender into a frame; opens the End portal when the ring is full
 
 private:
     struct PState {
@@ -132,6 +139,12 @@ private:
     std::atomic<int64_t> game_time_{0}, day_time_{0};
     double tps_ = 20, mspt_ = 0;
     int64_t last_autosave_ = 0;
+    bool find_portal(int dim, int x, int z, int radius, int& ox, int& oy, int& oz);
+    void build_portal(int dim, int x, int y, int z);
+    void portal_site(int dim, int x, int z, int& oy, int& ox, int& oz);
+    struct PortalState { int ticks = 0, cooldown = 0; };
+    std::unordered_map<uint64_t, PortalState> portal_state_;
+    int exec_dim_ = -1;   // set while running /execute in <dimension> run ...
     friend struct Commands;
 public:
     // commands.cpp

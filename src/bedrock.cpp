@@ -2,6 +2,7 @@
 // session recorded off a real Bedrock Dedicated Server by tools/bedrock_capture.py; only per-player parts are patched.
 #include "bchunk.hpp"
 #include "bedrock.hpp"
+#include "dimension.hpp"
 #include "game.hpp"
 #include "xbox.hpp"
 #include "skin.hpp"
@@ -298,7 +299,7 @@ void Bedrock::tick(int64_t now) {
     rak_->for_each([&](RakSession& r) {
         auto* b = static_cast<BSession*>(r.user);
         if (b && b->ident) b->ident->ping_ms = static_cast<int>(r.srtt_ms);
-        if (b && !r.closed && b->st == BSession::St::Spawning) pump_chunks(*b);
+        if (b && !r.closed && (b->st == BSession::St::Spawning || (b->st == BSession::St::Playing && !b->pending.empty()))) pump_chunks(*b);
     });
     rak_->tick(now);
 }
@@ -598,7 +599,7 @@ void Bedrock::continue_login(BSession& b, const std::string& name, const std::st
     b.eid = s_.next_entity++;
     {
         auto sp = s_.world.pick_spawn(uuid_string(b.uuid), s_.cfg.gamemode);
-        b.x = sp.x; b.y = sp.y; b.z = sp.z; b.yaw = sp.yaw; b.pitch = sp.pitch; b.gamemode = sp.gamemode;
+        b.x = sp.x; b.y = sp.y; b.z = sp.z; b.yaw = sp.yaw; b.pitch = sp.pitch; b.gamemode = sp.gamemode; b.dim = sp.dim;
         b.cx = static_cast<int>(std::floor(b.x / 16));
         b.cz = static_cast<int>(std::floor(b.z / 16));
     }
@@ -718,7 +719,7 @@ void Bedrock::pump_chunks(BSession& b) {
         std::vector<uint8_t> pl;
         put_varuint(pl, zz_enc(x));
         put_varuint(pl, zz_enc(z));
-        const auto& tail = level_chunk_tail(x, z);
+        const auto& tail = level_chunk_tail(b.dim, x, z);
         pl.insert(pl.end(), tail.begin(), tail.end());
         b.sent.insert(pack(x, z));
         batch.emplace_back(58, std::move(pl));
@@ -759,8 +760,9 @@ void Bedrock::on_subchunk_request(BSession& b, const uint8_t* p, size_t n) {
         int k = c[1] + static_cast<int8_t>(o[1]) + 4;
         int cx = c[0] + static_cast<int8_t>(o[0]), cz = c[2] + static_cast<int8_t>(o[2]);
         pl.insert(pl.end(), o, o + 3);
-        if (dim == 0 && k >= 0 && k < kSections) {
-            auto ch = s_.world.chunk(cx, cz);
+        int kmin = dim == 0 ? 0 : 4, kmax = dim == 0 ? kSections : dim == 1 ? 12 : 20;
+        if (dim < kDimensions && k >= kmin && k < kmax) {
+            auto ch = s_.dim(static_cast<int>(dim)).chunk(cx, cz);
             encode_bedrock_subchunk(*ch, k, entry);
             pl.insert(pl.end(), entry.begin(), entry.end());
         } else pl.insert(pl.end(), {5, 0, 0, 0, 0, 0, 0, 0});   // Y_INDEX_OUT_OF_BOUNDS, no data

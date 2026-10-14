@@ -1,4 +1,5 @@
 #include "region.hpp"
+#include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
 #include <algorithm>
@@ -11,27 +12,27 @@ static uint64_t pos_key(int x, int y, int z) {
     return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) ^ (static_cast<uint64_t>(static_cast<uint32_t>(z)) << 8) ^ static_cast<uint64_t>(static_cast<uint32_t>(y + 64));
 }
 
-RegionTicker::Region& RegionTicker::region_for(int x, int z) {
-    int64_t key = (static_cast<int64_t>(x >> 9) << 32) | static_cast<uint32_t>(z >> 9);
+RegionTicker::Region& RegionTicker::region_for(int dim, int x, int z) {
+    int64_t key = ((static_cast<int64_t>(x >> 9) << 32) | static_cast<uint32_t>(z >> 9)) ^ static_cast<int64_t>(static_cast<uint64_t>(dim) * 0x9e3779b97f4a7c15ull);
     std::lock_guard<std::mutex> l(map_mu_);
     auto& slot = regions_[key];
     if (!slot) slot = std::make_unique<Region>();
     return *slot;
 }
 
-void RegionTicker::schedule(int x, int y, int z, int delay) {
+void RegionTicker::schedule(int dim, int x, int y, int z, int delay) {
     if (y < kMinY || y >= kMinY + kHeight) return;
-    Region& r = region_for(x, z);
+    Region& r = region_for(dim, x, z);
     std::lock_guard<std::mutex> l(r.mu);
     if (!r.keys.insert(pos_key(x, y, z)).second) return;
-    r.q.push_back({x, y, z, now_.load() + delay});
+    r.q.push_back({dim, x, y, z, now_.load() + delay});
 }
 
-void RegionTicker::schedule_around(int x, int y, int z) {
-    schedule(x, y, z, 2);
-    schedule(x + 1, y, z, 2); schedule(x - 1, y, z, 2);
-    schedule(x, y + 1, z, 2); schedule(x, y - 1, z, 2);
-    schedule(x, y, z + 1, 2); schedule(x, y, z - 1, 2);
+void RegionTicker::schedule_around(int dim, int x, int y, int z) {
+    schedule(dim, x, y, z, 2);
+    schedule(dim, x + 1, y, z, 2); schedule(dim, x - 1, y, z, 2);
+    schedule(dim, x, y + 1, z, 2); schedule(dim, x, y - 1, z, 2);
+    schedule(dim, x, y, z + 1, 2); schedule(dim, x, y, z - 1, 2);
 }
 
 size_t RegionTicker::pending() {
@@ -124,25 +125,26 @@ void RegionTicker::process_region(Region& r, int64_t tick) {
         r.q.resize(keep);
     }
     for (auto& e : due) {
-        process_block(e.x, e.y, e.z);
+        process_block(e.dim, e.x, e.y, e.z);
         processed++;
     }
 }
 
 // What a block does when something next to it changed: sand-like blocks fall, plants lose their ground, tall plants lose their other half.
-void RegionTicker::process_block(int x, int y, int z) {
-    World& w = s_.world;
+void RegionTicker::process_block(int dim, int x, int y, int z) {
+    World& w = s_.dim(dim);
+    const int min_y = dim_info(dim).min_y;
     Blocks& B = Blocks::get();
     if (!w.chunk_if_loaded(x >> 4, z >> 4)) return;   // nobody is there; the block settles when the chunk is next used
     uint16_t id = w.get_block(x, y, z);
     if (!id) return;
     const BlockInfo& bi = B.info(id);
     auto set = [&](int bx, int by, int bz, uint16_t v) {
-        if (w.set_block(bx, by, bz, v)) { s_.game.block_changed(bx, by, bz, v); changed++; return true; }
+        if (w.set_block(bx, by, bz, v)) { s_.game.block_changed(dim, bx, by, bz, v); changed++; return true; }
         return false;
     };
     auto free_below = [&](int bx, int by, int bz) {
-        if (by <= kMinY) return false;
+        if (by <= min_y) return false;
         const BlockInfo& b = B.info(w.get_block(bx, by - 1, bz));
         return b.air || b.replaceable || b.fluid;
     };

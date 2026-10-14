@@ -1,6 +1,7 @@
 #include "game.hpp"
 #include "perf.hpp"
 #include "anvil.hpp"
+#include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
 #include <algorithm>
@@ -103,6 +104,7 @@ void Game::update_pos(uint64_t gid, const GPos& pos) {
     std::lock_guard<std::mutex> l(mu_);
     auto it = players_.find(gid);
     if (it == players_.end()) return;
+    if (pos.dim != it->second.pos.dim) return;   // a late move packet from before a dimension change
     it->second.pos = pos;
     it->second.dirty = true;
 }
@@ -126,12 +128,13 @@ void Game::swing(uint64_t gid) {
         }
 }
 
-void Game::block_changed(int x, int y, int z, uint16_t id) {
-    ticker_.schedule_around(x, y, z);
+void Game::block_changed(int dim, int x, int y, int z, uint16_t id) {
+    ticker_.schedule_around(dim, x, y, z);
     std::lock_guard<std::mutex> l(mu_);
     int cx = x >> 4, cz = z >> 4;
     for (auto& kv : players_) {
         PState& p = kv.second;
+        if (p.pos.dim != dim) continue;
         int pcx = static_cast<int>(std::floor(p.pos.x / 16)), pcz = static_cast<int>(std::floor(p.pos.z / 16));
         if (std::abs(pcx - cx) > p.view + 1 || std::abs(pcz - cz) > p.view + 1) continue;
         GEvent e;
@@ -155,16 +158,19 @@ void Game::command(uint64_t gid, const std::string& line) {
 
 void Game::teleport(uint64_t gid, const GPos& pos) {
     std::shared_ptr<GIdentity> id;
+    bool changed_dim = false;
     {
         std::lock_guard<std::mutex> l(mu_);
         auto it = players_.find(gid);
         if (it == players_.end()) return;
         id = it->second.id;
+        changed_dim = it->second.pos.dim != pos.dim;
         it->second.pos = pos;
         it->second.dirty = true;
+        if (changed_dim) it->second.sent = pos;   // others learn of the move by seeing or not seeing the player, not by a delta
     }
     GEvent e;
-    e.kind = GEvent::Teleport;
+    e.kind = changed_dim ? GEvent::Dimension : GEvent::Teleport;
     e.id = id;
     e.pos = pos;
     e.value = 1;   // 1 = the subject itself must be moved (server-initiated)
@@ -270,7 +276,7 @@ void Game::save_player_data(uint64_t gid) {
     m.list = {dbl(0), dbl(0), dbl(0)};
     root.put("Motion", std::move(m));
     root.put("OnGround", Nbt::make(Nbt::Byte, pos.ground));
-    root.put("Dimension", Nbt::str("minecraft:overworld"));
+    root.put("Dimension", Nbt::str(dim_info(pos.dim).name));
     root.put("playerGameType", Nbt::make(Nbt::Int, gm));
     root.put("DataVersion", Nbt::make(Nbt::Int, w.data_version));
     if (!w.save_player(u, root)) warn("could not save player data for " + id->name);
@@ -287,6 +293,7 @@ void Game::save_everything(bool unload) {
     s_.world.game_time = game_time_;
     s_.world.day_time = day_time_;
     s_.world.save(unload, now_ms());
+    for (auto& d : s_.other_dims) d->save(unload, now_ms());
     s_.world.save_level();
 }
 
@@ -303,9 +310,9 @@ void Game::broadcast_time() {
     }
 }
 
-static int64_t region_key(double x, double z) {
+static int64_t region_key(int dim, double x, double z) {
     int rx = static_cast<int>(std::floor(x / 512)), rz = static_cast<int>(std::floor(z / 512));
-    return (static_cast<int64_t>(rx) << 32) | static_cast<uint32_t>(rz);
+    return ((static_cast<int64_t>(rx) << 32) | static_cast<uint32_t>(rz)) ^ (static_cast<int64_t>(dim) << 58);
 }
 
 void Game::tick() {
@@ -313,6 +320,7 @@ void Game::tick() {
     game_time_++;
     { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
     day_time_++;
+    portal_tick();
     if (game_time_ % 20 == 0) broadcast_time();
     std::lock_guard<std::mutex> l(mu_);
     if (players_.empty()) return;
@@ -363,7 +371,7 @@ void Game::tick() {
             m.ev = e;
         }
         moves.push_back(std::move(m));
-        grid[region_key(p.sent.x, p.sent.z)].push_back(&p);
+        grid[region_key(p.pos.dim, p.sent.x, p.sent.z)].push_back(&p);
     }
     std::unordered_set<uint64_t> fresh;   // (viewer, subject) pairs spawned this tick already carry the new position
     // who sees whom: only players in the same or a neighbouring 512 block region are candidates
@@ -375,7 +383,7 @@ void Game::tick() {
         std::unordered_set<uint64_t> near;
         for (int ax = -1; ax <= 1; ax++)
             for (int az = -1; az <= 1; az++) {
-                auto g = grid.find((static_cast<int64_t>(rx + ax) << 32) | static_cast<uint32_t>(rz + az));
+                auto g = grid.find(((static_cast<int64_t>(rx + ax) << 32) | static_cast<uint32_t>(rz + az)) ^ (static_cast<int64_t>(v.pos.dim) << 58));
                 if (g == grid.end()) continue;
                 for (PState* p : g->second) {
                     if (p == &v) continue;
@@ -457,7 +465,11 @@ void Game::loop() {
         }
         if (now - last_unload > 30000) {   // keep memory bounded when players roam: write and drop chunks nobody touched for a minute
             last_unload = now;
-            if (saving_enabled && s_.world.loaded() > std::max(1500, s_.cfg.memory_cap_mb * 5)) s_.world.save(true, now);
+            if (saving_enabled) {
+                int lim = std::max(1500, s_.cfg.memory_cap_mb * 5);
+                if (s_.world.loaded() > lim) s_.world.save(true, now);
+                for (auto& d : s_.other_dims) if (d->loaded() > lim) d->save(true, now);
+            }
         }
         if (s_.cfg.autosave_s > 0 && now - last_autosave_ >= static_cast<int64_t>(s_.cfg.autosave_s) * 1000) {
             last_autosave_ = now;
