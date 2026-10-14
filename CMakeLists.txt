@@ -71,7 +71,9 @@ target_compile_options(painite_refgen PRIVATE -O2)
 
 # The port of Mojang's world generation (src/vg) and the tool that checks it value by value against Mojang's own code (tools/oracle).
 file(GLOB PAINITE_VG_SOURCES CONFIGURE_DEPENDS src/vg/*.cpp)
-add_executable(painite_vgcheck EXCLUDE_FROM_ALL tests/cpp/vgcheck.cpp ${PAINITE_VG_SOURCES})
+set(PAINITE_VG_CORE ${PAINITE_VG_SOURCES})
+list(FILTER PAINITE_VG_CORE EXCLUDE REGEX "src/vg/gen\\.cpp$")
+add_executable(painite_vgcheck EXCLUDE_FROM_ALL tests/cpp/vgcheck.cpp ${PAINITE_VG_CORE})
 target_include_directories(painite_vgcheck PRIVATE src)
 target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
 target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)

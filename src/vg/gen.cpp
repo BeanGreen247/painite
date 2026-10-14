@@ -1,4 +1,5 @@
 #include "gen.hpp"
+#include "biomes.hpp"
 #include "climate.hpp"
 #include "noisegen.hpp"
 #include <algorithm>
@@ -60,8 +61,9 @@ struct VanillaGen::Impl {
         e = sampler_comp->compile(r.at("erosion"));
         d = sampler_comp->compile(r.at("depth"));
         w = sampler_comp->compile(r.at("ridges"));
-        if (o.dim != 2 && !o.climate_dump.empty()) {
-            climate = load_climate_dump(o.climate_dump, o.dim == 1 ? "nether" : "overworld");
+        if (o.dim != 2) {
+            if (!o.climate_dump.empty()) climate = load_climate_dump(o.climate_dump, o.dim == 1 ? "nether" : "overworld");
+            else climate = o.dim == 1 ? nether_climate() : overworld_climate();
             for (auto& name : climate.biomes) {
                 uint8_t idx = plains;
                 for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:" + name) idx = uint8_t(i);

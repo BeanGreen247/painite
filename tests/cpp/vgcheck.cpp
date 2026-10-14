@@ -1,5 +1,6 @@
 // Compares Painite's port of Mojang's world generation with Mojang's own code, value by value (the oracle is tools/oracle/Oracle.java run on the server jar).
 //   painite_vgcheck --version 26.2 --seed 12345 [--settings overworld] [--what noise|df|climate|all] [--count 200] [--range 3000]
+#include "vg/biomes.hpp"
 #include "vg/climate.hpp"
 #include "vg/density.hpp"
 #include <cmath>
@@ -110,6 +111,22 @@ int main(int argc, char** argv) {
             }
         }
         printf("density functions checked, %d mismatches so far\n", bad);
+    }
+    if (what == "lists" || what == "all") {
+        for (const char* preset : {"overworld", "nether"}) {
+            ClimateData dump = load_climate_dump("build/mojang/climate-" + version + ".txt", preset);
+            ClimateData mine = std::string(preset) == "nether" ? nether_climate() : overworld_climate();
+            int diffs = 0;
+            if (dump.list->size() != mine.list->size()) { printf("LIST SIZE %s: dump %zu ours %zu\n", preset, dump.list->size(), mine.list->size()); diffs++; }
+            for (size_t i = 0; i < std::min(dump.list->size(), mine.list->size()) && diffs < 8; i++) {
+                auto a = dump.list->point(i).space(), b = mine.list->point(i).space();
+                bool same = dump.biomes[size_t(dump.list->value(i))] == mine.biomes[size_t(mine.list->value(i))];
+                for (size_t k = 0; k < 7; k++) same = same && a[k].min == b[k].min && a[k].max == b[k].max;
+                if (!same) { diffs++; printf("LIST DIFF %s #%zu: dump %s ours %s\n", preset, i, dump.biomes[size_t(dump.list->value(i))].c_str(), mine.biomes[size_t(mine.list->value(i))].c_str()); }
+            }
+            printf("%s climate list: %zu points, %d differences\n", preset, mine.list->size(), diffs);
+            bad += diffs;
+        }
     }
     if (what == "climate" || what == "all") {
         ClimateData cd = load_climate_dump("build/mojang/climate-" + version + ".txt", settings == "nether" ? "nether" : "overworld");

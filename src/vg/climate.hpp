@@ -35,6 +35,8 @@ public:
     int find_value(const TargetPoint& t) const;
     int find_value_brute_force(const TargetPoint& t) const;
     size_t size() const { return points_.size(); }
+    const ParameterPoint& point(size_t i) const { return points_[i]; }
+    int value(size_t i) const { return values_[i]; }
 private:
     std::vector<ParameterPoint> points_;
     std::vector<int> values_;
