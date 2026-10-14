@@ -6,7 +6,12 @@
 namespace pn::vg {
 
 std::string Registry::path_of(const std::string& kind, const std::string& id) const {
-    return dir_ + "/data/minecraft/worldgen/" + kind + "/" + strip(id) + ".json";
+    std::string rel = "/data/minecraft/worldgen/" + kind + "/" + strip(id) + ".json";
+    if (!overlay_.empty()) {
+        struct stat st;
+        if (stat((overlay_ + rel).c_str(), &st) == 0) return overlay_ + rel;
+    }
+    return dir_ + rel;
 }
 
 bool Registry::exists(const std::string& kind, const std::string& id) const {

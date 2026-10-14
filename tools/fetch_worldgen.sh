@@ -26,6 +26,11 @@ for v in "${versions[@]}"; do
   rm -rf "$out"
   mkdir -p "$out"
   unzip -q -o "$inner" 'data/minecraft/worldgen/*' 'data/minecraft/tags/worldgen/*' 'data/minecraft/dimension_type/*' 'data/minecraft/tags/block/*' 'data/minecraft/tags/fluid/*' 'data/minecraft/structure/*' -d "$out"
+  # per-state block facts (blocks-motion, replaceable, sturdy faces, ...) from Mojang's own classes
+  if command -v java >/dev/null 2>&1; then
+    tools/oracle_cp.sh "$v"
+    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlocks.java "../../$out/blockflags.txt" >/dev/null 2>&1) || echo "$v: could not dump the block facts" >&2
+  fi
   touch "$out/.done"
   rm -rf "$tmp"
   echo "$v: $(find "$out" -name '*.json' | wc -l) files in $out"

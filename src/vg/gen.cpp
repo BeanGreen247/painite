@@ -1,5 +1,6 @@
 #include "gen.hpp"
 #include "biomes.hpp"
+#include "carver.hpp"
 #include "climate.hpp"
 #include "noisegen.hpp"
 #include "surface.hpp"
@@ -25,8 +26,10 @@ struct VanillaGen::Impl {
     uint8_t plains = 0;
     std::vector<uint8_t> flags;
     std::unique_ptr<SurfaceSystem> surface;
+    std::unique_ptr<Carvers> carvers;
 
     Impl(const std::string& data_dir, const GenOptions& o, const std::vector<std::string>& biome_names) : opt(o), reg(data_dir + "/worldgen/" + o.version) {
+        if (!o.overlay.empty()) reg.set_overlay(o.overlay);
         std::string sname = o.dim == 0 ? (o.level_type == "large_biomes" ? "large_biomes" : o.level_type == "amplified" ? "amplified" : "overworld") : o.dim == 1 ? "nether" : "end";
         settings = &reg.get("noise_settings", sname);
         state = std::make_unique<WorldState>(reg, *settings, o.seed);
@@ -64,14 +67,13 @@ struct VanillaGen::Impl {
         e = sampler_comp->compile(r.at("erosion"));
         d = sampler_comp->compile(r.at("depth"));
         w = sampler_comp->compile(r.at("ridges"));
-        if (o.dim != 2) {
-            if (!o.climate_dump.empty()) climate = load_climate_dump(o.climate_dump, o.dim == 1 ? "nether" : "overworld");
-            else climate = o.dim == 1 ? nether_climate() : overworld_climate();
-            for (auto& name : climate.biomes) {
-                uint8_t idx = plains;
-                for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:" + name) idx = uint8_t(i);
-                biome_index.push_back(idx);
-            }
+        if (o.dim == 2) climate.biomes = {"the_end", "end_highlands", "end_midlands", "small_end_islands", "end_barrens"};
+        else if (!o.climate_dump.empty()) climate = load_climate_dump(o.climate_dump, o.dim == 1 ? "nether" : "overworld");
+        else climate = o.dim == 1 ? nether_climate() : overworld_climate();
+        for (auto& name : climate.biomes) {
+            uint8_t idx = plains;
+            for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:" + name) idx = uint8_t(i);
+            biome_index.push_back(idx);
         }
 
         // surface rules
@@ -98,16 +100,48 @@ struct VanillaGen::Impl {
         surface = std::make_unique<SurfaceSystem>(*state, settings->at("surface_rule"), sbl, pal.default_block, ns.sea_level, std::max(ns.min_y, dim_min_y),
                                                   std::min(ns.min_y + ns.height, dim_min_y + dim_height) - std::max(ns.min_y, dim_min_y), settings->get_bool("legacy_random_source", false), std::move(sb),
                                                   [this](int qx, int qy, int qz) { return biome_value(qx, qy, qz); });
+        if (opt.dim != 2) make_carvers();
+    }
+
+    void make_carvers() {
+        const Blocks& BB = Blocks::get();
+        CarveBlocks cbk;
+        cbk.air = 0;
+        cbk.cave_air = BB.default_state("minecraft:cave_air");
+        cbk.lava = pal.lava;
+        cbk.water = pal.water;
+        cbk.grass_block = BB.default_state("minecraft:grass_block");
+        cbk.mycelium = BB.default_state("minecraft:mycelium");
+        cbk.dirt = BB.default_state("minecraft:dirt");
+        std::vector<std::vector<std::string>> per_biome;
+        for (auto& name : climate.biomes) {
+            std::vector<std::string> list;
+            if (const Json* cj = reg.get("biome", name).find("carvers")) {
+                if (cj->is_arr()) for (auto& e : cj->arr) list.push_back(e.str);
+                else if (cj->is_str()) list.push_back(cj->str);
+            }
+            per_biome.push_back(list);
+        }
+        carvers = std::make_unique<Carvers>(reg, *state, surface.get(), cbk, BB.count(), [&BB](uint16_t id) { return BB.info(id).name; },
+                                            GenRange{std::max(ns.min_y, dim_min_y), std::min(ns.min_y + ns.height, dim_min_y + dim_height) - std::max(ns.min_y, dim_min_y)}, std::move(per_biome));
     }
 
     int biome_value(int qx, int qy, int qz) const {
-        if (!climate.list) return 0;
+        if (opt.dim == 2) {   // TheEndBiomeSource
+            int bx = qx * 4, by = qy * 4, bz = qz * 4;
+            int cx = bx >> 4, cz = bz >> 4;
+            if (int64_t(cx) * cx + int64_t(cz) * cz <= 4096) return 0;
+            double h = e->compute(Ctx{((bx >> 4) * 2 + 1) * 8, by, ((bz >> 4) * 2 + 1) * 8, nullptr});
+            if (h > 0.25) return 1;
+            if (h >= -0.0625) return 2;
+            return h < -0.21875 ? 3 : 4;
+        }
         Ctx ctx{qx * 4, qy * 4, qz * 4, nullptr};
         TargetPoint tp{quantize_coord(float(t->compute(ctx))), quantize_coord(float(h->compute(ctx))), quantize_coord(float(c->compute(ctx))),
                        quantize_coord(float(e->compute(ctx))), quantize_coord(float(d->compute(ctx))), quantize_coord(float(w->compute(ctx)))};
         return climate.list->find_value(tp);
     }
-    uint8_t biome_at(int qx, int qy, int qz) const { return climate.list ? biome_index[size_t(biome_value(qx, qy, qz))] : plains; }
+    uint8_t biome_at(int qx, int qy, int qz) const { return biome_index[size_t(biome_value(qx, qy, qz))]; }
 };
 
 VanillaGen::VanillaGen(const std::string& data_dir, const GenOptions& opt, const std::vector<std::string>& biome_names) : p_(std::make_unique<Impl>(data_dir, opt, biome_names)) {}
@@ -137,6 +171,8 @@ void VanillaGen::generate(Chunk& c) const {
         cb.init(fill.min_y(), fill.height(), std::move(blocks), I.flags.data());
     }
     if (I.opt.stage != "noise") I.surface->build(cb, c.x, c.z, fill);
+    if (I.carvers && I.opt.stage != "noise" && I.opt.stage != "surface")
+        I.carvers->carve(cb, c.x, c.z, fill, [&I](int qx, int qz) { return I.biome_value(qx, 0, qz); });
     for (int s = first_section; s < first_section + sections; s++) {
         int y0 = kMinY + s * 16 - cb.min_y;
         if (y0 + 16 <= 0 || y0 >= cb.height) continue;

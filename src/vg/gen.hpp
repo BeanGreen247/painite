@@ -13,6 +13,7 @@ struct GenOptions {
     int64_t seed = 0;
     std::string level_type = "normal";  // normal, large_biomes, amplified
     std::string stage = "full";         // noise, surface, carvers, features, full: what to run (for comparing the port stage by stage)
+    std::string overlay;                // a datapack folder (data/minecraft/...) that overrides the worldgen files, for reference worlds made with datapacks
     std::string climate_dump;           // development: parameter lists written by tools/oracle/DumpClimate.java
 };
 

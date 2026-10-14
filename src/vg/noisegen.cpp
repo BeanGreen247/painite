@@ -297,6 +297,9 @@ ChunkFill::ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const
     aquifer_ = std::make_unique<Aquifer>(*this, chunk_x, chunk_z, min_y_, height_, ns.aquifers);
 }
 
+bool ChunkFill::aquifer_substance(int x, int y, int z, double density, uint16_t& out) { return aquifer_->compute_substance(x, y, z, density, out); }
+bool ChunkFill::aquifer_should_schedule() const { return aquifer_->should_schedule(); }
+
 NodeP ChunkFill::node(const char* name) const {
     std::string n = name;
     if (n == "erosion") return erosion_;

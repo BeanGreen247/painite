@@ -34,6 +34,9 @@ public:
     int height() const { return height_; }
     int preliminary_surface_level(int x, int z);
     int max_preliminary_surface_level(int min_x, int min_z, int max_x, int max_z);
+    // the aquifer of this chunk, for carvers: false = no override
+    bool aquifer_substance(int x, int y, int z, double density, uint16_t& out);
+    bool aquifer_should_schedule() const;
     NodeP node(const char* name) const;   // wrapped router functions: erosion, depth, ...
 private:
     friend class Aquifer;

@@ -15,7 +15,7 @@ namespace pn { int64_t now_ms() { return 0; } }   // World wants a clock; the co
 using namespace pn;
 
 int main(int argc, char** argv) {
-    std::string climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
+    std::string overlay, climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
     int64_t seed = 12345;
     int verbose = 0;
     for (int i = 1; i < argc; i++) {
@@ -28,6 +28,7 @@ int main(int argc, char** argv) {
         else if (a == "--dim") dim = val();
         else if (a == "--type") type = val();
         else if (a == "--climate") climate = val();
+        else if (a == "--overlay") overlay = val();
         else if (a == "-v") verbose++;
         else if (a == "-vv") verbose += 2;
     }
@@ -49,6 +50,7 @@ int main(int argc, char** argv) {
     opt.level_type = type;
     opt.stage = stage;
     opt.climate_dump = climate;
+    opt.overlay = overlay;
     vg::VanillaGen gen("data", opt, vd.biomes);
     // chunks present in the reference world
     std::string region = src->region_dir;

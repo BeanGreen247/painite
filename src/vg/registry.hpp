@@ -21,10 +21,12 @@ public:
     const std::set<std::string>& tag_members(const std::string& kind, const std::string& id) const;
     std::vector<std::string> list(const std::string& kind) const;
     const std::string& dir() const { return dir_; }
+    // a datapack folder (holding data/minecraft/...) whose files shadow the extracted ones, like Mojang's datapack overrides
+    void set_overlay(std::string dir) { overlay_ = std::move(dir); }
     static std::string strip(const std::string& id) { return id.rfind("minecraft:", 0) == 0 ? id.substr(10) : id; }
 private:
     std::string path_of(const std::string& kind, const std::string& id) const;
-    std::string dir_;
+    std::string dir_, overlay_;
     mutable std::mutex mu_;
     mutable std::map<std::string, std::unique_ptr<Json>> cache_;
     mutable std::map<std::string, std::unique_ptr<std::set<std::string>>> tag_cache_;
