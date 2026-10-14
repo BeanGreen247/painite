@@ -53,7 +53,7 @@ public:
     bool next_boolean() override { return next(1) != 0; }
     float next_float() override;
     double next_double() override;
-    int32_t next(int bits);
+    virtual int32_t next(int bits);
     int64_t state() const { return seed_; }
     void set_state(int64_t s) { seed_ = s; }
 private:
@@ -78,6 +78,19 @@ private:
     int64_t next_raw();
     int64_t next_bits(int bits) { return int64_t(uint64_t(next_raw()) >> (64 - bits)); }
     int64_t lo_, hi_;
+};
+
+// Mojang's WorldgenRandom over a Xoroshiro source: it is a LegacyRandomSource (java.util.Random's algorithms) whose next(bits) takes the top bits of the
+// Xoroshiro source's next long. Biome decoration uses it, so its draws differ from those of a plain Xoroshiro.
+class WorldgenRandomXoro : public LegacyRandom {
+public:
+    explicit WorldgenRandomXoro(int64_t seed) : LegacyRandom(0), x_(seed) {}
+    void set_seed(int64_t seed) override { x_.set_seed(seed); }
+    int32_t next(int bits) override { return int32_t(uint64_t(x_.next_long()) >> (64 - bits)); }
+    std::unique_ptr<Rng> fork() override { return x_.fork(); }
+    std::unique_ptr<PosFactory> fork_positional() override { return x_.fork_positional(); }
+private:
+    Xoroshiro x_;
 };
 
 // Mojang's Mth.getSeed and the 128 bit seed helpers

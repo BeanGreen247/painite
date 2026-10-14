@@ -94,8 +94,7 @@ bool Decorator::biome_has_feature(int biome, const std::string& placed_feature) 
 void Decorator::decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::set<int>& biomes_in_region) const {
     const int origin_x = chunk_x * 16, origin_z = chunk_z * 16;
     // WorldgenRandom(XoroshiroRandomSource).setDecorationSeed
-    Xoroshiro random(0);
-    random.set_seed(seed_);
+    WorldgenRandomXoro random(seed_);
     int64_t x_scale = random.next_long() | 1;
     int64_t z_scale = random.next_long() | 1;
     int64_t decoration_seed = int64_t(uint64_t(int64_t(origin_x)) * uint64_t(x_scale) + uint64_t(int64_t(origin_z)) * uint64_t(z_scale)) ^ seed_;

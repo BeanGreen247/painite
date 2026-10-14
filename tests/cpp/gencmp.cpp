@@ -18,6 +18,7 @@ int main(int argc, char** argv) {
     bool has_only = false, dump_features = false;
     int layer = INT32_MIN;
     bool hist = false;
+    std::string histy;
     std::string vfilter;
     int only_x = 0, only_z = 0;
     std::string overlay, climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
@@ -36,6 +37,7 @@ int main(int argc, char** argv) {
         else if (a == "--overlay") overlay = val();
         else if (a == "--dump-features") dump_features = true;
         else if (a == "--hist") hist = true;
+        else if (a == "--histy") histy = val();
         else if (a == "--vname") vfilter = val();
         else if (a == "--layer") layer = std::stoi(val());
         else if (a == "--only") { only_x = std::stoi(val()); only_z = std::stoi(val()); has_only = true; }
@@ -120,6 +122,14 @@ int main(int argc, char** argv) {
                 for (int z = 0; z < 16; z++)
                     for (int x = 0; x < 16; x++) { h[norm(mine.get(x, y, z))].first++; h[norm(ref->get(x, y, z))].second++; }
             for (auto& kv : h) printf("  %-50s ours %7ld vanilla %7ld\n", kv.first.c_str(), kv.second.first, kv.second.second);
+        }
+        if (!histy.empty()) {
+            for (int y = kMinY; y < kMinY + kHeight; y++) {
+                long a = 0, b = 0;
+                for (int z = 0; z < 16; z++)
+                    for (int x = 0; x < 16; x++) { if (norm(mine.get(x, y, z)).find(histy) != std::string::npos) a++; if (norm(ref->get(x, y, z)).find(histy) != std::string::npos) b++; }
+                if (a || b) printf("  y=%d ours %ld vanilla %ld\n", y, a, b);
+            }
         }
         long cd = 0;
         for (int s = 4 * (dim_id != 0); s < (dim_id == 0 ? kSections : 12 + 4 * (dim_id == 2)); s++) {

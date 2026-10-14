@@ -49,7 +49,11 @@ struct ChunkBlocks {
         for (int z = 0; z < 16; z++)
             for (int x = 0; x < 16; x++) recompute(t, x, z, min_y + height - 1);
     }
-    void prime_final() { for (int t = WORLD_SURFACE; t < kHeightmapTypes; t++) prime(HeightmapType(t)); }
+    // ChunkStatus.CARVERS and later keep FINAL_HEIGHTMAPS up to date; the world-generation heightmaps stay as they were after the surface and carver steps
+    void prime_final() {
+        for (int t = WORLD_SURFACE; t < kHeightmapTypes; t++) prime(HeightmapType(t));
+        hm_active &= uint8_t(~((1 << WORLD_SURFACE_WG) | (1 << OCEAN_FLOOR_WG)));
+    }
 
     // sets a block (ignored outside the range) and updates the active heightmaps like Heightmap.update
     void set(int x, int y, int z, uint16_t id, bool mark_fluid = true) {
