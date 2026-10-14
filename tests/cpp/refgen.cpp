@@ -16,7 +16,7 @@ int main(int argc, char** argv) {
     std::string version = "26.3", out, dim = "overworld", type = "default", seed = "12345";
     int x1 = -128, z1 = -128, x2 = 127, z2 = 127;
     bool structures = false;
-    std::string data = "data";
+    std::string data = "data", stage = "full";
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -27,6 +27,7 @@ int main(int argc, char** argv) {
         else if (a == "--type") type = val();
         else if (a == "--data") data = val();
         else if (a == "--structures") structures = true;
+        else if (a == "--stage") stage = val();
         else if (a == "--area") { x1 = std::stoi(val()); z1 = std::stoi(val()); x2 = std::stoi(val()); z2 = std::stoi(val()); }
     }
     if (out.empty()) { fprintf(stderr, "usage: painite_refgen --out DIR [--version 26.3] [--seed N] [--area X1 Z1 X2 Z2] [--dim overworld|the_nether|the_end] [--structures] [--type default|large_biomes|amplified|flat]\n"); return 2; }
@@ -45,6 +46,30 @@ int main(int argc, char** argv) {
           << "max-tick-time=-1\nspawn-protection=0\ngamemode=creative\n";
     }
     { std::ofstream f(run + "/eula.txt"); f << "eula=true\n"; }
+    // stages cut the generator down so each part of the port can be compared on its own:
+    //   noise (terrain shape only), surface (+ surface rules), carvers (+ caves and canyons), features (+ trees, ores, ...), full (+ structures when --structures)
+    if (stage != "full") {
+        std::string pack = run + "/world/datapacks/painite-ref";
+        fs::create_directories(pack + "/data/minecraft/worldgen/biome");
+        fs::create_directories(pack + "/data/minecraft/worldgen/noise_settings");
+        { std::ofstream f(pack + "/pack.mcmeta"); f << "{\"pack\":{\"description\":\"painite reference stage\",\"min_format\":[107,0],\"max_format\":[107,1]}}"; }
+        std::string wg = data + "/worldgen/" + version + "/data/minecraft/worldgen";
+        bool keep_carvers = stage == "carvers" || stage == "features";
+        bool keep_features = stage == "features";
+        std::string filter = std::string(".features = ") + (keep_features ? ".features" : "[]") + " | .carvers = " + (keep_carvers ? ".carvers" : "[]");
+        for (auto& e : fs::directory_iterator(wg + "/biome")) {
+            std::string cmd = "jq -c '" + filter + "' " + e.path().string() + " > " + pack + "/data/minecraft/worldgen/biome/" + e.path().filename().string();
+            if (system(cmd.c_str()) != 0) { fprintf(stderr, "jq failed\n"); return 1; }
+        }
+        if (stage == "noise") {
+            for (auto& e : fs::directory_iterator(wg + "/noise_settings")) {
+                std::string cmd = "jq -c '.surface_rule = {\"type\":\"minecraft:block\",\"result_state\":{\"Name\":\"minecraft:stone\"}}' " + e.path().string() + " > " + pack + "/data/minecraft/worldgen/noise_settings/" + e.path().filename().string();
+                if (system(cmd.c_str()) != 0) { fprintf(stderr, "jq failed\n"); return 1; }
+            }
+        }
+        std::ofstream f(run + "/server.properties", std::ios::app);
+        f << "initial-enabled-packs=vanilla,file/painite-ref\n";
+    }
     {
         Bytes u = offline_uuid("Ref");
         char s[40];
@@ -81,11 +106,30 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "forceloaded %d chunks\n", total);
                 bot.settle(200, 2000);
             }
-        // give the generator time to finish everything that was requested
-        for (int i = 0; i < 600; i++) {
+        // wait until the region files hold every requested chunk and the count stops growing
+        auto saved_chunks = [&]() {
+            int n = 0;
+            std::string rd = run + "/world/" + (dim == "overworld" ? std::string("dimensions/minecraft/overworld") : "dimensions/minecraft/" + dim) + "/region";
+            if (!fs::exists(rd)) rd = run + "/world/region";
+            if (!fs::exists(rd)) return 0;
+            for (auto& e : fs::directory_iterator(rd)) {
+                std::ifstream f(e.path(), std::ios::binary);
+                unsigned char hdr[4096];
+                if (!f.read(reinterpret_cast<char*>(hdr), 4096)) continue;
+                for (int i = 0; i < 1024; i++) if (hdr[i * 4] | hdr[i * 4 + 1] | hdr[i * 4 + 2] | hdr[i * 4 + 3]) n++;
+            }
+            return n;
+        };
+        int want = total, stable = 0, last = -1;
+        for (int i = 0; i < 1200 && stable < 3; i++) {
             bot.pump(500);
-            std::string log = vanilla.log();
-            if (i > 6 && log.find("Can't keep up") == std::string::npos) break;
+            if (i % 4 == 3) {
+                bot.command("save-all flush");
+                bot.pump(1500);
+                int n = saved_chunks();
+                if (n >= want && n == last) stable++; else stable = 0;
+                last = n;
+            }
         }
         bot.command("save-all flush");
         bot.until([&] { for (auto& e : bot.log) if (e.first == "system_chat" && contains(e.second, "Saved")) return true; return false; }, 120000);

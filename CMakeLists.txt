@@ -51,7 +51,7 @@ target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Thread
 
 # End-to-end test suite in one binary: cmake --build build --target painite_tests && build/painite_tests
 file(GLOB PAINITE_TEST_SOURCES CONFIGURE_DEPENDS tests/cpp/*.cpp)
-list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/refgen.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/vgcheck.cpp)
+list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/refgen.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/vgcheck.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/gencmp.cpp)
 add_executable(painite_tests EXCLUDE_FROM_ALL ${PAINITE_TEST_SOURCES})
 target_include_directories(painite_tests PRIVATE tests/cpp)
 target_link_libraries(painite_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
@@ -75,3 +75,9 @@ add_executable(painite_vgcheck EXCLUDE_FROM_ALL tests/cpp/vgcheck.cpp ${PAINITE_
 target_include_directories(painite_vgcheck PRIVATE src)
 target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
 target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
+
+add_executable(painite_gencmp EXCLUDE_FROM_ALL tests/cpp/gencmp.cpp ${PAINITE_VG_SOURCES} src/world.cpp src/worldgen.cpp src/worldgen_dims.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp
+  src/blocks.cpp src/data.cpp src/nbt.cpp src/anvil.cpp src/log.cpp src/hash.cpp)
+target_include_directories(painite_gencmp PRIVATE src)
+target_link_libraries(painite_gencmp PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
+target_compile_options(painite_gencmp PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
