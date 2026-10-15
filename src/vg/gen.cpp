@@ -334,6 +334,7 @@ struct VanillaGen::Impl {
         Level level(*bd, cx, cz, chunks, GenRange{grid[4]->blocks.min_y, grid[4]->blocks.height}, [&](int x, int y, int z) {
             return surface->biome_with(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
         });
+        if (opt.stage == "structures") biomes.clear();   // structures only: no biome feature runs
         FeatureEnv env{level, reg, feature_shared, [this](int biome, const std::string& id) { return decorator->biome_has_feature(biome, id); }};
         env.biomes = &biome_infos;
         env.sea_level = ns.sea_level;
@@ -389,7 +390,7 @@ void VanillaGen::decorate(int cx, int cz) const { p_->decorate_one(cx, cz); }
 
 void VanillaGen::generate(Chunk& c) const {
     Impl& I = *p_;
-    const bool decorate = I.opt.stage == "features" || I.opt.stage == "full";
+    const bool decorate = I.opt.stage == "features" || I.opt.stage == "full" || I.opt.stage == "structures";
     if (decorate)
         for (int dz = -1; dz <= 1; dz++)
             for (int dx = -1; dx <= 1; dx++) I.decorate_one(c.x + dx, c.z + dz);

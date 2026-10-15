@@ -90,6 +90,31 @@ bool PosRuleTest::test(const BlockPos& world, const BlockPos& reference, Rng& ra
 
 namespace {
 
+}  // namespace
+
+uint16_t parse_state_string(const BlockData& bd, const std::string& fs) {
+    std::string name = fs, props;
+    size_t br = fs.find('[');
+    if (br != std::string::npos) {
+        name = fs.substr(0, br);
+        std::string inner = fs.substr(br + 1, fs.size() - br - 2);
+        std::vector<std::string> kv;
+        size_t p = 0;
+        while (p <= inner.size() && !inner.empty()) {
+            size_t c = inner.find(',', p);
+            kv.push_back(inner.substr(p, c == std::string::npos ? std::string::npos : c - p));
+            if (c == std::string::npos) break;
+            p = c + 1;
+        }
+        std::sort(kv.begin(), kv.end());
+        for (auto& e : kv) props += (props.empty() ? "" : ",") + e;
+    }
+    name = with_ns(name);
+    return props.empty() ? bd.default_state(name) : bd.find(name, props);
+}
+
+namespace {
+
 struct RuleProcessor : StructureProcessor {
     std::vector<ProcessorRule> rules;
     bool process_block(const Level& level, const BlockData& bd, const BlockPos&, const BlockPos& reference, const BlockPos&, TemplateBlock& info, const PlaceSettings&) const override {
@@ -165,26 +190,8 @@ struct JigsawReplacementProcessor : StructureProcessor {
         if (!info.nbt) return true;
         std::string fs = info.nbt->gets("final_state");
         if (fs.empty()) fs = "minecraft:air";
-        // "minecraft:block[prop=value,...]"
-        std::string name = fs, props;
-        size_t br = fs.find('[');
-        if (br != std::string::npos) {
-            name = fs.substr(0, br);
-            std::string inner = fs.substr(br + 1, fs.size() - br - 2);
-            std::vector<std::string> kv;
-            size_t p = 0;
-            while (p <= inner.size() && !inner.empty()) {
-                size_t c = inner.find(',', p);
-                kv.push_back(inner.substr(p, c == std::string::npos ? std::string::npos : c - p));
-                if (c == std::string::npos) break;
-                p = c + 1;
-            }
-            std::sort(kv.begin(), kv.end());
-            for (auto& e : kv) props += (props.empty() ? "" : ",") + e;
-        }
-        name = with_ns(name);
-        if (name == "minecraft:structure_void") return false;
-        info.state = props.empty() ? bd.default_state(name) : bd.find(name, props);
+        if (Registry::strip(fs) == "structure_void") return false;
+        info.state = parse_state_string(bd, fs);
         info.nbt = nullptr;
         return true;
     }

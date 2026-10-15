@@ -156,6 +156,9 @@ private:
     std::map<std::string, std::string> be_types_;
 };
 
+// "minecraft:block[prop=value,...]" (as in a jigsaw block's final_state) to a state; unknown blocks give air
+uint16_t parse_state_string(const BlockData& bd, const std::string& s);
+
 // the processors of code-made pieces
 ProcessorP block_ignore_processor(bool air, bool structure_block);
 ProcessorP jigsaw_replacement_processor();

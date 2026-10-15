@@ -148,6 +148,8 @@ struct StructureContext {
     WorldRandom& random;                      // seeded with setLargeFeatureSeed(seed, chunk)
     ChunkPos chunk;
     std::function<bool(int)> valid_biome;     // biome name index -> allowed by the structure's biomes
+    int first_free_height(int x, int z, HeightmapType hm) const { return env.base_height(x, z, hm); }
+    int first_occupied_height(int x, int z, HeightmapType hm) const { return env.base_height(x, z, hm) - 1; }
     int biome_name_at(int qx, int qy, int qz) const { return env.biome_at(qx, qy, qz); }
     int middle_x() const { return chunk.x * 16 + 8; }
     int middle_z() const { return chunk.z * 16 + 8; }
@@ -168,7 +170,21 @@ public:
     int step = 3;                             // GenerationStep.Decoration: SURFACE_STRUCTURES by default
     int terrain_adaptation = 0;
     virtual std::optional<GenerationStub> find_generation_point(const StructureContext& ctx) const = 0;
+    // Structure.afterPlace: runs once per chunk after the pieces of a start were placed in it
+    virtual void after_place(PieceCtx& ctx, const StructureStart& start) const {}
 };
+
+// HeightProvider (constant or uniform over vertical anchors): sample(random, min_y, height)
+std::function<int(Rng&, int, int)> make_height_provider(const Json& j);
+
+// Structure.onTopOfChunkCenter: a start at the middle of the chunk on the terrain (needs a valid biome somewhere in that column)
+std::optional<GenerationStub> on_top_of_chunk_center(const StructureContext& ctx, HeightmapType heightmap, std::function<void(std::vector<std::shared_ptr<StructurePiece>>&)> generator);
+std::optional<GenerationStub> on_top_of_chunk_center_without_biome_check(const StructureContext& ctx, HeightmapType heightmap, std::function<void(std::vector<std::shared_ptr<StructurePiece>>&)> generator);
+// Structure.getLowestY / getMeanFirstOccupiedHeight over a size_x by size_z area from the chunk's minimum corner
+int structure_lowest_y(const StructureContext& ctx, int size_x, int size_z);
+int structure_lowest_y(const StructureContext& ctx, int min_x, int min_z, int size_x, int size_z);
+int structure_mean_first_occupied_height(const StructureContext& ctx, int min_x, int size_x, int min_z, int size_z);
+
 
 struct StructurePlacement {
     enum Type { RANDOM_SPREAD, CONCENTRIC_RINGS } type = RANDOM_SPREAD;

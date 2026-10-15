@@ -30,6 +30,8 @@ struct ChunkBlocks {
     int hm[kHeightmapTypes][256];     // first free y per column and heightmap (Heightmap.getFirstAvailable)
     uint8_t hm_active = 0;            // bit per HeightmapType that is kept up to date
     const uint8_t* flags = nullptr;   // per block id: kFlag*
+    std::vector<pn::Nbt> entities;                // entities spawned by generation (Pos, id, ...), saved with the chunk
+    std::vector<std::array<int, 3>> post_marks;   // positions to shape-update at the end of generation
     std::map<std::array<int, 3>, pn::Nbt> block_entities;   // block entity data placed during generation, keyed by (x, y, z)
 
     bool air(uint16_t id) const { return flags[id] & kFlagAir; }

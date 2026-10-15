@@ -282,7 +282,7 @@ int main(int argc, char** argv) {
     std::vector<std::pair<long, std::pair<std::string, std::string>>> top;
     for (auto& kv : pairs) top.push_back({kv.second, kv.first});
     std::sort(top.rbegin(), top.rend());
-    for (size_t i = 0; i < std::min<size_t>(12, top.size()); i++) printf("  ours %-40s vanilla %-40s %ld\n", top[i].second.first.c_str(), top[i].second.second.c_str(), top[i].first);
+    for (size_t i = 0; i < std::min<size_t>(verbose ? 60 : 12, top.size()); i++) printf("  ours %-40s vanilla %-40s %ld\n", top[i].second.first.c_str(), top[i].second.second.c_str(), top[i].first);
     printf("biome cells: %ld of %ld differ\n", biome_diff, biome_total);
     top.clear();
     for (auto& kv : biome_pairs) top.push_back({kv.second, kv.first});

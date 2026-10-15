@@ -48,14 +48,14 @@ int main(int argc, char** argv) {
     }
     { std::ofstream f(run + "/eula.txt"); f << "eula=true\n"; }
     // stages cut the generator down so each part of the port can be compared on its own:
-    //   noise (terrain shape only), surface (+ surface rules), carvers (+ caves and canyons), features (+ trees, ores, ...), full (+ structures when --structures)
+    //   noise (terrain shape only), surface (+ surface rules), carvers (+ caves and canyons), structures (+ structures only, use with --structures), features (+ trees, ores, ...), full (+ structures when --structures)
     if (stage != "full") {
         std::string pack = run + "/world/datapacks/painite-ref";
         fs::create_directories(pack + "/data/minecraft/worldgen/biome");
         fs::create_directories(pack + "/data/minecraft/worldgen/noise_settings");
         { std::ofstream f(pack + "/pack.mcmeta"); f << "{\"pack\":{\"description\":\"painite reference stage\",\"min_format\":[107,0],\"max_format\":[107,1]}}"; }
         std::string wg = data + "/worldgen/" + version + "/data/minecraft/worldgen";
-        bool keep_carvers = stage == "carvers" || stage == "features";
+        bool keep_carvers = stage == "carvers" || stage == "features" || stage == "structures";
         bool keep_features = stage == "features";
         std::string filter = std::string(".features = ") + (keep_features ? ".features" : "[]") + " | .carvers = " + (keep_carvers ? ".carvers" : "[]");
         if (!feature_re.empty()) filter = ".features |= map(map(select(test(\"" + feature_re + "\")))) | .carvers = .carvers";

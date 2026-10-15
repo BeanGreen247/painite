@@ -1,6 +1,7 @@
 // Structure sets, placement and start creation (ChunkGenerator.createStructures / createReferences, ChunkGeneratorStructureState).
 #include "structure.hpp"
 #include "template.hpp"
+#include "jcompat.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -86,6 +87,56 @@ std::string StructurePiece::describe() const {
     return buf;
 }
 
+// VerticalAnchor.resolveY
+static int resolve_anchor(const Json& a, int min_y, int height) {
+    if (const Json* v = a.find("absolute")) return int(v->int_value());
+    if (const Json* v = a.find("above_bottom")) return min_y + int(v->int_value());
+    if (const Json* v = a.find("below_top")) return (height - 1 + min_y) - int(v->int_value());
+    return 0;
+}
+
+std::function<int(Rng&, int, int)> make_height_provider(const Json& sh) {
+    std::string type = Registry::strip(sh.get_string("type"));
+    if (type == "uniform") {
+        Json lo = sh.at("min_inclusive"), hi = sh.at("max_inclusive");
+        return [lo, hi](Rng& r, int min_y, int height) {
+            int a = resolve_anchor(lo, min_y, height), b = resolve_anchor(hi, min_y, height);
+            if (a > b) return a;
+            return r.next_int(b - a + 1) + a;
+        };
+    }
+    Json anchor = type == "constant" ? sh.at("value") : sh;
+    return [anchor](Rng&, int min_y, int height) { return resolve_anchor(anchor, min_y, height); };
+}
+
+std::optional<GenerationStub> on_top_of_chunk_center_without_biome_check(const StructureContext& ctx, HeightmapType heightmap, std::function<void(std::vector<std::shared_ptr<StructurePiece>>&)> generator) {
+    int x = ctx.middle_x(), z = ctx.middle_z();
+    int y = ctx.first_occupied_height(x, z, heightmap);
+    GenerationStub stub;
+    stub.position = BlockPos(x, y, z);
+    stub.generate = std::move(generator);
+    return stub;
+}
+
+std::optional<GenerationStub> on_top_of_chunk_center(const StructureContext& ctx, HeightmapType heightmap, std::function<void(std::vector<std::shared_ptr<StructurePiece>>&)> generator) {
+    if (!ctx.could_valid_biome_exist_on_top_of_chunk_center()) return std::nullopt;
+    return on_top_of_chunk_center_without_biome_check(ctx, heightmap, std::move(generator));
+}
+
+int structure_lowest_y(const StructureContext& ctx, int min_x, int min_z, int size_x, int size_z) {
+    int a = ctx.first_occupied_height(min_x, min_z, WORLD_SURFACE_WG), b = ctx.first_occupied_height(min_x, min_z + size_z, WORLD_SURFACE_WG);
+    int c = ctx.first_occupied_height(min_x + size_x, min_z, WORLD_SURFACE_WG), d = ctx.first_occupied_height(min_x + size_x, min_z + size_z, WORLD_SURFACE_WG);
+    return std::min(std::min(a, b), std::min(c, d));
+}
+
+int structure_lowest_y(const StructureContext& ctx, int size_x, int size_z) { return structure_lowest_y(ctx, ctx.chunk.x * 16, ctx.chunk.z * 16, size_x, size_z); }
+
+int structure_mean_first_occupied_height(const StructureContext& ctx, int min_x, int size_x, int min_z, int size_z) {
+    int a = ctx.first_occupied_height(min_x, min_z, WORLD_SURFACE_WG), b = ctx.first_occupied_height(min_x, min_z + size_z, WORLD_SURFACE_WG);
+    int c = ctx.first_occupied_height(min_x + size_x, min_z, WORLD_SURFACE_WG), d = ctx.first_occupied_height(min_x + size_x, min_z + size_z, WORLD_SURFACE_WG);
+    return (a + b + c + d) / 4;
+}
+
 bool StructureContext::could_structure_exist_in_column(int x, int z, int min_y, int max_y) const {
     int qx = x >> 2, qz = z >> 2;
     for (int qy = min_y >> 2; qy <= (max_y >> 2); qy++)
@@ -96,6 +147,7 @@ bool StructureContext::could_structure_exist_in_column(int x, int z, int min_y, 
 StructureState::StructureState(const StructureEnv& env, const std::vector<std::string>& climate_biomes) : env_(env) {
     const Registry& reg = *env_.reg;
     templates_ = std::make_unique<TemplateManager>(reg, *env_.bd);
+    jc::set_bd(env_.bd);
     env_.templates = templates_.get();
     // the generator's possible biomes decide which sets exist here
     std::set<int> possible;
@@ -226,6 +278,7 @@ bool StructureState::is_structure_chunk(const StructureSetData& set, int cx, int
 }
 
 bool StructureState::try_generate(const std::string& sid, int cx, int cz, std::vector<std::shared_ptr<const StructureStart>>& out) {
+    jc::set_bd(env_.bd);
     Structure& s = *structures_[sid];
     WorldRandom random;
     random.set_large_feature_seed(env_.seed, cx, cz);
@@ -280,8 +333,9 @@ std::vector<std::shared_ptr<const StructureStart>> StructureState::starts_at(int
 
 void StructureState::place_step(int step, const std::vector<std::shared_ptr<const StructureStart>>& touching, FeatureEnv& fenv, Rng& random, int64_t decoration_seed, int cx, int cz) {
     if (step < 0 || size_t(step) >= all_by_step_.size() || touching.empty()) return;
+    jc::set_bd(env_.bd);
     const BoundingBox chunk_bb(cx * 16, env_.min_y + 1, cz * 16, cx * 16 + 15, env_.min_y + env_.height - 1, cz * 16 + 15);
-    PieceCtx ctx{fenv, fenv.level, env_, *templates_, random, chunk_bb, {cx, cz}};
+    PieceCtx ctx{fenv, fenv.level, env_, *templates_, random, chunk_bb, {cx, cz}};   // chunk_bb is renewed for every start: a piece may widen it
     const auto& ids = all_by_step_[size_t(step)];
     for (size_t index = 0; index < ids.size(); index++) {
         bool any = false;
@@ -290,11 +344,14 @@ void StructureState::place_step(int step, const std::vector<std::shared_ptr<cons
         random.set_seed(decoration_seed + int64_t(index) + int64_t(10000) * int64_t(step));
         for (auto& st : touching) {
             if (st->structure != ids[index] || st->pieces.empty()) continue;
+            ctx.chunk_bb = chunk_bb;
             const BoundingBox center_bb = st->pieces[0]->bb;
             BlockPos center = center_bb.center();
             BlockPos reference(center.x, center_bb.y0, center.z);
             for (auto& piece : st->pieces)
                 if (piece->bb.intersects(chunk_bb)) piece->post_process(ctx, reference);
+            auto sit = structures_.find(st->structure);
+            if (sit != structures_.end()) sit->second->after_place(ctx, *st);
         }
     }
 }

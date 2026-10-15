@@ -3,6 +3,7 @@
 #include "blockdata.hpp"
 #include "chunkdata.hpp"
 #include "values.hpp"
+#include <cmath>
 #include <functional>
 
 namespace pn::vg {
@@ -65,6 +66,10 @@ public:
     bool set(const BlockPos& p, uint16_t id) { return set(p.x, p.y, p.z, id); }
     // BlockEntity data of a block placed during generation (the chunk it is in keeps it)
     void set_block_entity(const BlockPos& p, pn::Nbt nbt) { if (ChunkBlocks* c = chunk_for(p.x, p.z)) c->block_entities[{p.x, p.y, p.z}] = std::move(nbt); }
+    // an entity created while generating (structures: witches, guardians, villagers, ...)
+    void add_entity(double x, double z, pn::Nbt nbt) { if (ChunkBlocks* c = chunk_for(int(std::floor(x)), int(std::floor(z)))) c->entities.push_back(std::move(nbt)); }
+    // positions whose block shape is updated once the chunk is complete (fences, torches, ladders: StructurePiece.placeBlock)
+    void mark_for_post_processing(const BlockPos& p) { if (ChunkBlocks* c = chunk_for(p.x, p.z)) c->post_marks.push_back({p.x, p.y, p.z}); }
     void remove_block_entity(const BlockPos& p) { if (ChunkBlocks* c = chunk_for(p.x, p.z)) c->block_entities.erase({p.x, p.y, p.z}); }
     // writes that skip the heightmaps (sections written to directly)
     void set_raw(int x, int y, int z, uint16_t id) { if (ChunkBlocks* c = chunk_for(x, z)) c->set_raw(x, y, z, id); }

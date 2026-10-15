@@ -460,14 +460,6 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
     return stub;
 }
 
-// VerticalAnchor.resolveY
-int resolve_anchor(const Json& a, int min_y, int height) {
-    if (const Json* v = a.find("absolute")) return int(v->int_value());
-    if (const Json* v = a.find("above_bottom")) return min_y + int(v->int_value());
-    if (const Json* v = a.find("below_top")) return (height - 1 + min_y) - int(v->int_value());
-    return 0;
-}
-
 class JigsawStructure : public Structure {
 public:
     JigsawParams params;
@@ -500,19 +492,7 @@ struct RegisterJigsaw {
                 else { p.padding_bottom = p.padding_top = int(dp->int_value()); }
             }
             p.ignore_waterlogging = j.get_string("liquid_settings") == "ignore_waterlogging";
-            const Json sh = j.at("start_height");
-            std::string type = Registry::strip(sh.get_string("type"));
-            if (type == "uniform") {
-                Json lo = sh.at("min_inclusive"), hi = sh.at("max_inclusive");
-                p.start_height = [lo, hi](Rng& r, int min_y, int height) {
-                    int a = resolve_anchor(lo, min_y, height), b = resolve_anchor(hi, min_y, height);
-                    if (a > b) return a;
-                    return r.next_int(b - a + 1) + a;
-                };
-            } else {
-                Json anchor = type == "constant" ? sh.at("value") : sh;
-                p.start_height = [anchor](Rng&, int min_y, int height) { return resolve_anchor(anchor, min_y, height); };
-            }
+            p.start_height = make_height_provider(j.at("start_height"));
             return s;
         };
     }
