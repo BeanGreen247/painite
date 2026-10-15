@@ -2,6 +2,7 @@
 #include "feature.hpp"
 #include <algorithm>
 #include <cmath>
+#include "mathutil.hpp"
 #include <stdexcept>
 
 namespace pn::vg {
@@ -803,6 +804,139 @@ bool place_speleothem_cluster(FeatureEnv& env, const Json& config, Rng& random, 
     return true;
 }
 
+// ---- large dripstone
+double sp_height(double xz_dist, double radius, double scale, double bluntness) {
+    if (xz_dist < bluntness) xz_dist = bluntness;
+    double r = xz_dist / radius * 0.384;
+    double part1 = 0.75 * std::pow(r, 1.3333333333333333);
+    double part2 = std::pow(r, 0.6666666666666666);
+    double part3 = 0.3333333333333333 * std::log(r);
+    double h = scale * (part1 - part2 - part3);
+    h = std::max(h, 0.0);
+    return h / 0.384 * radius;
+}
+
+struct Wind {
+    bool on = false;
+    int origin_y = 0, max_offset = 0;
+    double wx = 0.0, wz = 0.0;
+    BlockPos offset(const BlockPos& p) const {
+        if (!on) return p;
+        int dy = origin_y - p.y;
+        int dx = std::clamp(mth_floor(wx * double(dy)), -max_offset, max_offset);
+        int dz = std::clamp(mth_floor(wz * double(dy)), -max_offset, max_offset);
+        return p.offset(dx, 0, dz);
+    }
+};
+
+struct LargeStone {
+    BlockPos root;
+    bool up;
+    int radius;
+    double bluntness, scale;
+    int height_at(float r) const { return int(sp_height(double(r), double(radius), scale, bluntness)); }
+    int height() const { return height_at(0.0f); }
+};
+
+bool place_large_dripstone(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    Level& lv = env.level;
+    const BlockData& bd = env.bd();
+    if (!sp_empty_or_water(bd, lv.get(origin))) return false;
+    int search = int(config.get_int("floor_to_ceiling_search_range", 30));
+    const Json& replaceable = config.at("replaceable_blocks");
+    auto edge_ok = [&](uint16_t s) { return bd.name(s) == "minecraft:dripstone_block" || state_in_set(env, s, replaceable) || bd.name(s) == "minecraft:lava"; };
+    int ceiling = 0, floor = 0;
+    bool has_c = false, has_f = false;
+    BlockPos m = origin;
+    for (int i = 1; i < search && sp_empty_or_water(bd, lv.get(m)); i++) m = m.above();
+    if (edge_ok(lv.get(m))) { has_c = true; ceiling = m.y; }
+    m = origin;
+    for (int i = 1; i < search && sp_empty_or_water(bd, lv.get(m)); i++) m = m.below();
+    if (edge_ok(lv.get(m))) { has_f = true; floor = m.y; }
+    if (!(has_c && has_f)) return false;
+    int col_height = ceiling - floor - 1;
+    if (col_height < 4) return false;
+    const Json& col_radius = config.at("column_radius");
+    float ratio = config.at("max_column_radius_to_cave_height_ratio").float_value();
+    int max_by_height = int(double(col_height) * double(ratio));
+    int rmin = int_provider_min(col_radius), rmax = int_provider_max(col_radius);
+    int max_radius = std::min(std::max(max_by_height, rmin), rmax);
+    int radius = random.next_int(max_radius - rmin + 1) + rmin;
+    auto make = [&](BlockPos root, bool up, const char* blunt_key) {
+        double bl = double(sample_float(config.at(blunt_key), random));
+        double sc = double(sample_float(config.at("height_scale"), random));
+        return LargeStone{root, up, radius, bl, sc};
+    };
+    LargeStone stalactite = make(BlockPos(origin.x, ceiling - 1, origin.z), false, "stalactite_bluntness");
+    LargeStone stalagmite = make(BlockPos(origin.x, floor + 1, origin.z), true, "stalagmite_bluntness");
+    int min_wind_radius = int(config.at("min_radius_for_wind").int_value());
+    float min_wind_blunt = config.at("min_bluntness_for_wind").float_value();
+    auto suitable = [&](const LargeStone& s) { return s.radius >= min_wind_radius && s.bluntness >= double(min_wind_blunt); };
+    Wind wind;
+    if (suitable(stalactite) && suitable(stalagmite)) {
+        wind.on = true;
+        wind.origin_y = origin.y;
+        wind.max_offset = 16 - radius;
+        float speed = sample_float(config.at("wind_speed"), random);
+        float lo = 0.0f, hi = kPiF;
+        float dir = random.next_float() * (hi - lo) + lo;
+        wind.wx = double(mth_cos(double(dir)) * speed);
+        wind.wz = double(mth_sin(double(dir)) * speed);
+    }
+    auto empty_water_lava = [&](const BlockPos& p) { uint16_t s = lv.get(p); return bd.air(s) || bd.name(s) == "minecraft:water" || bd.name(s) == "minecraft:lava"; };
+    auto circle_embedded = [&](const BlockPos& center, int xz_radius) {
+        if (empty_water_lava(center)) return false;
+        float inc = 6.0f / float(xz_radius);
+        for (float angle = 0.0f; angle < kPiF * 2.0f; angle += inc) {
+            int dx = int(mth_cos(double(angle)) * float(xz_radius));
+            int dz = int(mth_sin(double(angle)) * float(xz_radius));
+            if (empty_water_lava(center.offset(dx, 0, dz))) return false;
+        }
+        return true;
+    };
+    auto move_back = [&](LargeStone& st) {
+        while (st.radius > 1) {
+            BlockPos new_root = st.root;
+            int tries = std::min(10, st.height());
+            for (int i = 0; i < tries; i++) {
+                if (bd.name(lv.get(new_root)) == "minecraft:lava") return false;
+                if (circle_embedded(wind.offset(new_root), st.radius)) { st.root = new_root; return true; }
+                new_root = st.up ? new_root.below() : new_root.above();
+            }
+            st.radius /= 2;
+        }
+        return false;
+    };
+    auto place_blocks = [&](LargeStone& st) {
+        const uint16_t drip = bd.default_state("minecraft:dripstone_block");
+        for (int dx = -st.radius; dx <= st.radius; dx++)
+            for (int dz = -st.radius; dz <= st.radius; dz++) {
+                float cur = float(std::sqrt(double(dx * dx + dz * dz)));
+                if (cur > float(st.radius)) continue;
+                int h = st.height_at(cur);
+                if (h <= 0) continue;
+                if (double(random.next_float()) < 0.2) {
+                    float f = random.next_float() * (1.0f - 0.8f) + 0.8f;
+                    h = int(float(h) * f);
+                }
+                BlockPos pos = st.root.offset(dx, 0, dz);
+                bool out_of_stone = false;
+                int max_y = st.up ? lv.height(WORLD_SURFACE_WG, pos.x, pos.z) : INT32_MAX;
+                for (int i = 0; i < h && pos.y < max_y; i++) {
+                    BlockPos wp = wind.offset(pos);
+                    if (empty_water_lava(wp)) { out_of_stone = true; lv.set(wp, drip); }
+                    else if (out_of_stone && bd.in_tag(lv.get(wp), "minecraft:base_stone_overworld")) break;
+                    pos = st.up ? pos.above() : pos.below();
+                }
+            }
+    };
+    bool a = move_back(stalactite);
+    bool b = move_back(stalagmite);
+    if (a) place_blocks(stalactite);
+    if (b) place_blocks(stalagmite);
+    return true;
+}
+
 }  // namespace
 
 bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled) {
@@ -818,6 +952,7 @@ bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& c
     if (type == "multiface_growth") return place_multiface(env, config, random, origin);
     if (type == "speleothem") return place_speleothem(env, config, random, origin);
     if (type == "speleothem_cluster") return place_speleothem_cluster(env, config, random, origin);
+    if (type == "large_dripstone") return place_large_dripstone(env, config, random, origin);
     if (type == "geode") return place_geode(env, config, random, origin);
     if (type == "monster_room") return place_monster_room(env, config, random, origin);
     handled = false;
