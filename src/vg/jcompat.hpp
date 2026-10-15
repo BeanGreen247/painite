@@ -23,6 +23,8 @@ struct Direction {
     int getStepY() const { return kDirY[v]; }
     int getStepZ() const { return kDirZ[v]; }
     int get2DDataValue() const;             // south 0, west 1, north 2, east 3
+    int get3DDataValue() const { return v; }   // down 0, up 1, north 2, south 3, west 4, east 5
+    static Direction from3DDataValue(int i) { return Direction(i); }
     static Direction from2DDataValue(int i);
     const char* getName() const;
     char axis() const { return v < 2 ? 'y' : v < 4 ? 'z' : 'x'; }

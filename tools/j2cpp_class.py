@@ -121,8 +121,8 @@ def map_params(params, cls):
             out.append("const BoundingBox& " + ("bb" if n == "boundingBox" else n))
         elif t == "StructurePieceType":
             out.append("const char* " + n)
-        elif t == "StartPiece":
-            out.append("StartPiece* " + n)
+        elif t in ("StartPiece", "RoomDefinition"):
+            out.append(t + "* " + n)
         elif t in ("int", "float", "double", "short", "byte"):
             out.append(t + " " + n)
         else:
@@ -150,7 +150,7 @@ def extra_rules(t):
     t = re.sub(r"\bStructurePiece\.makeBoundingBox\(", "makeBoundingBox(", t)
     t = re.sub(r"\bStructurePiece\b", "StructurePiece", t)
     t = re.sub(r"\bnew (\w+)\(", r"new \1(", t)
-    t = re.sub(r"\b([A-Z]\w+)\.([a-z]\w*)\(", r"\1::\2(", t)
+    t = re.sub(r"(?<!::)\b([A-Z]\w+)\.([a-z]\w*)\(", r"\1::\2(", t)
     t = t.replace("pos.set(", "pos = BlockPos(") if False else t
     return t
 
@@ -193,7 +193,9 @@ def translate_class(src, outer, spec, ids, indent="    "):
                 out.append(indent + "// static %s %s;" % (typ, fname))
                 continue
             typ2 = typ
-            if typ == "Direction":
+            if typ == "RoomDefinition":
+                typ2 = "RoomDefinition*"
+            elif typ == "Direction":
                 typ2 = "Direction"
             elif typ == "boolean":
                 typ2 = "bool"
