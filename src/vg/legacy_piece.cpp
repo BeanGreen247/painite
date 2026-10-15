@@ -221,6 +221,20 @@ void LegacyPiece::setLootTable(JLevel& level, const BlockPos& pos, const std::st
     it->second.put("LootTableSeed", pn::Nbt::make(pn::Nbt::Long, seed));
 }
 
+void LegacyPiece::setSpawnerEntity(JLevel& level, const BlockPos& pos, const std::string& entityId) {
+    pn::Nbt be = pn::Nbt::compound();
+    be.put("id", pn::Nbt::str("minecraft:mob_spawner"));
+    be.put("x", pn::Nbt::make(pn::Nbt::Int, pos.x));
+    be.put("y", pn::Nbt::make(pn::Nbt::Int, pos.y));
+    be.put("z", pn::Nbt::make(pn::Nbt::Int, pos.z));
+    pn::Nbt entity = pn::Nbt::compound();
+    entity.put("id", pn::Nbt::str(entityId));
+    pn::Nbt sd = pn::Nbt::compound();
+    sd.put("entity", entity);
+    be.put("SpawnData", sd);
+    level.L.set_block_entity(pos, std::move(be));
+}
+
 BS LegacyPiece::reorient(JLevel& level, const BlockPos& pos, BS state) {
     std::optional<Direction> solid;
     bool multiple = false;

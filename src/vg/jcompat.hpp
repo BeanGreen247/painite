@@ -88,6 +88,8 @@ struct JRandom {
     float nextFloat() { return rp->next_float(); }
     double nextDouble() { return rp->next_double(); }
     int64_t nextLong() { return rp->next_long(); }
+    // RandomSource.createThreadLocalInstance(seed): the plain 48 bit generator
+    static JRandom createThreadLocalInstance(int64_t seed) { return JRandom(std::make_unique<LegacyRandom>(seed)); }
 };
 
 // RandomSource.createThreadLocalInstance(seed).forkPositional().at(pos)

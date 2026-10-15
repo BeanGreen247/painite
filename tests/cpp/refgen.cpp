@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <regex>
 #include <iostream>
 #include <unistd.h>
 
@@ -15,6 +16,8 @@ namespace fs = std::filesystem;
 int main(int argc, char** argv) {
     std::string version = "26.3", out, dim = "overworld", type = "default", seed = "12345";
     int x1 = -128, z1 = -128, x2 = 127, z2 = 127;
+    std::vector<std::array<int, 4>> areas;       // more than one --area: every one is loaded in the same session
+    std::vector<std::string> locates;            // --locate NAME: print where the nearest such structure is (no world is kept)
     bool structures = false;
     std::string data = "data", stage = "full", feature_re;
     for (int i = 1; i < argc; i++) {
@@ -29,7 +32,8 @@ int main(int argc, char** argv) {
         else if (a == "--structures") structures = true;
         else if (a == "--stage") stage = val();
         else if (a == "--features") { feature_re = val(); stage = "features"; }
-        else if (a == "--area") { x1 = std::stoi(val()); z1 = std::stoi(val()); x2 = std::stoi(val()); z2 = std::stoi(val()); }
+        else if (a == "--area") { x1 = std::stoi(val()); z1 = std::stoi(val()); x2 = std::stoi(val()); z2 = std::stoi(val()); areas.push_back({x1, z1, x2, z2}); }
+        else if (a == "--locate") locates.push_back(val());
     }
     if (out.empty()) { fprintf(stderr, "usage: painite_refgen --out DIR [--version 26.3] [--seed N] [--area X1 Z1 X2 Z2] [--dim overworld|the_nether|the_end] [--structures] [--type default|large_biomes|amplified|flat]\n"); return 2; }
     out = fs::absolute(out).string();
@@ -92,10 +96,27 @@ int main(int argc, char** argv) {
     {
         JBot bot(port, proto, ids, "Ref");
         bot.pump(1500);
+        if (!locates.empty()) {
+            for (auto& id : locates) {
+                bot.drop("system_chat");
+                bot.command("locate structure " + (id.find(':') == std::string::npos ? "minecraft:" + id : id));
+                bot.until([&] { return bot.count("system_chat") >= 1; }, 120000);
+                std::string text;
+                for (auto& p : bot.take("system_chat")) text.append(p.begin(), p.end());
+                std::smatch m;
+                if (std::regex_search(text, m, std::regex("/tp @s (-?[0-9]+) ~ (-?[0-9]+)"))) printf("LOCATE %s %s %s\n", id.c_str(), m[1].str().c_str(), m[2].str().c_str());
+                else { std::string clean; for (unsigned char ch : text) clean += (ch >= 32 && ch < 127) ? char(ch) : '.'; printf("LOCATE %s none (%s)\n", id.c_str(), clean.c_str()); }
+                fflush(stdout);
+            }
+            vanilla.terminate(60000);
+            return 0;
+        }
         int total = 0;
         std::string prefix = dim == "overworld" ? "" : "execute in minecraft:" + dim + " run ";
-        // 16x16 chunk batches
-        int bx1 = (x1 >> 4), bz1 = (z1 >> 4), bx2 = (x2 >> 4), bz2 = (z2 >> 4);
+        // 16x16 chunk batches, for every --area
+        if (areas.empty()) areas.push_back({x1, z1, x2, z2});
+        for (auto& ar : areas) {
+        int bx1 = (ar[0] >> 4), bz1 = (ar[1] >> 4), bx2 = (ar[2] >> 4), bz2 = (ar[3] >> 4);
         for (int cz = bz1; cz <= bz2; cz += 16)
             for (int cx = bx1; cx <= bx2; cx += 16) {
                 int ex = std::min(cx + 15, bx2), ez = std::min(cz + 15, bz2);
@@ -108,6 +129,7 @@ int main(int argc, char** argv) {
                 fprintf(stderr, "forceloaded %d chunks\n", total);
                 bot.settle(200, 2000);
             }
+        }
         // wait until the region files hold every requested chunk and the count stops growing
         auto saved_chunks = [&]() {
             int n = 0;

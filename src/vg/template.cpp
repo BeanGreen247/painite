@@ -235,6 +235,136 @@ ProcessorP block_ignore_processor(bool air, bool structure_block) {
 ProcessorP jigsaw_replacement_processor() { return std::make_shared<JigsawReplacementProcessor>(); }
 ProcessorP gravity_processor(HeightmapType type, int offset) { auto p = std::make_shared<GravityProcessor>(); p->type = type; p->offset = offset; return p; }
 
+
+// ---------------------------------------------------------------- processors made in code
+
+namespace {
+
+struct BlockAgeProcessor : StructureProcessor {
+    float mossiness = 0;
+    static uint16_t with_properties_of(const BlockData& bd, const char* block, uint16_t state) {
+        uint16_t out = bd.default_state(block);
+        const std::string& props = bd.blocks().info(state).props;
+        size_t p = 0;
+        while (p < props.size()) {
+            size_t c = props.find(',', p);
+            std::string kv = props.substr(p, c == std::string::npos ? std::string::npos : c - p);
+            size_t eq = kv.find('=');
+            if (eq != std::string::npos && bd.has_prop(out, kv.substr(0, eq))) out = bd.with(out, kv.substr(0, eq), kv.substr(eq + 1));
+            if (c == std::string::npos) break;
+            p = c + 1;
+        }
+        return out;
+    }
+    static uint16_t random_facing_stairs(const BlockData& bd, Rng& random, const char* block) {
+        static const char* dirs[4] = {"north", "east", "south", "west"};
+        uint16_t s = bd.default_state(block);
+        s = bd.with(s, "facing", dirs[random.next_int(4)]);
+        s = bd.with(s, "half", random.next_int(2) == 0 ? "top" : "bottom");   // Half.values(): top, bottom
+        return s;
+    }
+    uint16_t random_block(Rng& random, const uint16_t* non_mossy, int nn, const uint16_t* mossy, int nm) const {
+        if (random.next_float() < mossiness) return mossy[random.next_int(nm)];
+        return non_mossy[random.next_int(nn)];
+    }
+    bool process_block(const Level&, const BlockData& bd, const BlockPos&, const BlockPos&, const BlockPos&, TemplateBlock& info, const PlaceSettings& s) const override {
+        std::unique_ptr<Rng> own;
+        Rng* random = s.random;
+        if (!random) { own = std::make_unique<LegacyRandom>(pos_seed(info.pos.x, info.pos.y, info.pos.z)); random = own.get(); }
+        const std::string& n = bd.name(info.state);
+        int64_t none = -1;
+        int64_t replacement = none;
+        if (n == "minecraft:stone_bricks" || n == "minecraft:stone" || n == "minecraft:chiseled_stone_bricks") {
+            if (!(random->next_float() >= 0.5f)) {
+                uint16_t non_mossy[2] = {bd.default_state("minecraft:cracked_stone_bricks"), random_facing_stairs(bd, *random, "minecraft:stone_brick_stairs")};
+                uint16_t mossy[2] = {bd.default_state("minecraft:mossy_stone_bricks"), random_facing_stairs(bd, *random, "minecraft:mossy_stone_brick_stairs")};
+                replacement = random_block(*random, non_mossy, 2, mossy, 2);
+            }
+        } else if (bd.in_tag(info.state, "#minecraft:stairs")) {
+            if (!(random->next_float() >= 0.5f)) {
+                uint16_t non_mossy[2] = {bd.default_state("minecraft:stone_slab"), bd.default_state("minecraft:stone_brick_slab")};
+                uint16_t mossy[2] = {with_properties_of(bd, "minecraft:mossy_stone_brick_stairs", info.state), bd.default_state("minecraft:mossy_stone_brick_slab")};
+                replacement = random_block(*random, non_mossy, 2, mossy, 2);
+            }
+        } else if (bd.in_tag(info.state, "#minecraft:slabs")) {
+            if (random->next_float() < mossiness) replacement = with_properties_of(bd, "minecraft:mossy_stone_brick_slab", info.state);
+        } else if (bd.in_tag(info.state, "#minecraft:walls")) {
+            if (random->next_float() < mossiness) replacement = with_properties_of(bd, "minecraft:mossy_stone_brick_wall", info.state);
+        } else if (n == "minecraft:obsidian") {
+            if (random->next_float() < 0.15f) replacement = bd.default_state("minecraft:crying_obsidian");
+        }
+        if (replacement != none) info.state = uint16_t(replacement);
+        return true;
+    }
+};
+
+struct LavaSubmergedProcessor : StructureProcessor {
+    bool process_block(const Level& level, const BlockData& bd, const BlockPos&, const BlockPos&, const BlockPos&, TemplateBlock& info, const PlaceSettings&) const override {
+        bool was_lava = bd.name(level.get(info.pos)) == "minecraft:lava";
+        if (was_lava && !(bd.flags(info.state) & BF_FULL_COLLISION)) info.state = bd.default_state("minecraft:lava");
+        return true;
+    }
+};
+
+struct BlackstoneReplaceProcessor : StructureProcessor {
+    bool process_block(const Level&, const BlockData& bd, const BlockPos&, const BlockPos&, const BlockPos&, TemplateBlock& info, const PlaceSettings&) const override {
+        static const std::pair<const char*, const char*> kMap[] = {
+            {"cobblestone", "blackstone"}, {"mossy_cobblestone", "blackstone"}, {"stone", "polished_blackstone"}, {"stone_bricks", "polished_blackstone_bricks"},
+            {"mossy_stone_bricks", "polished_blackstone_bricks"}, {"cobblestone_stairs", "blackstone_stairs"}, {"mossy_cobblestone_stairs", "blackstone_stairs"},
+            {"stone_stairs", "polished_blackstone_stairs"}, {"stone_brick_stairs", "polished_blackstone_brick_stairs"}, {"mossy_stone_brick_stairs", "polished_blackstone_brick_stairs"},
+            {"cobblestone_slab", "blackstone_slab"}, {"mossy_cobblestone_slab", "blackstone_slab"}, {"smooth_stone_slab", "polished_blackstone_slab"}, {"stone_slab", "polished_blackstone_slab"},
+            {"stone_brick_slab", "polished_blackstone_brick_slab"}, {"mossy_stone_brick_slab", "polished_blackstone_brick_slab"}, {"stone_brick_wall", "polished_blackstone_brick_wall"},
+            {"mossy_stone_brick_wall", "polished_blackstone_brick_wall"}, {"cobblestone_wall", "blackstone_wall"}, {"mossy_cobblestone_wall", "blackstone_wall"},
+            {"chiseled_stone_bricks", "chiseled_polished_blackstone"}, {"cracked_stone_bricks", "cracked_polished_blackstone_bricks"}, {"iron_bars", "iron_chain"}};
+        const std::string& n = bd.name(info.state);
+        for (auto& kv : kMap) {
+            if (n != std::string("minecraft:") + kv.first) continue;
+            uint16_t ns = bd.default_state(std::string("minecraft:") + kv.second);
+            for (const char* key : {"facing", "half", "type"})
+                if (bd.has_prop(info.state, key) && bd.has_prop(ns, key) && (std::string(key) != "type" || n.find("slab") != std::string::npos)) ns = bd.with(ns, key, bd.prop(info.state, key));
+            info.state = ns;
+            break;
+        }
+        return true;
+    }
+};
+
+}  // namespace
+
+ProcessorP protected_blocks_processor(const std::string& tag) { auto p = std::make_shared<ProtectedBlocksProcessor>(); p->tag = tag; return p; }
+ProcessorP block_age_processor(float mossiness) { auto p = std::make_shared<BlockAgeProcessor>(); p->mossiness = mossiness; return p; }
+ProcessorP block_rot_processor(float integrity) { auto p = std::make_shared<BlockRotProcessor>(); p->integrity = integrity; return p; }
+ProcessorP archy_rule_processor(const BlockData& bd, const std::string& candidate, const std::string& replacement, const std::string& loot_table) {
+    auto rule = std::make_shared<RuleProcessor>();
+    ProcessorRule r;
+    r.input.kind = RuleTest::BLOCK_MATCH;
+    r.input.block = candidate;
+    r.output = bd.default_state(replacement);
+    r.modifier = ProcessorRule::APPEND_LOOT;
+    r.modifier_data = pn::Nbt::compound();
+    r.modifier_data.put("loot_table", pn::Nbt::str(loot_table));
+    rule->rules.push_back(std::move(r));
+    auto capped = std::make_shared<CappedProcessor>();
+    capped->delegate = rule;
+    capped->limit = 5;
+    return capped;
+}
+ProcessorP lava_submerged_processor() { return std::make_shared<LavaSubmergedProcessor>(); }
+ProcessorP blackstone_replace_processor() { return std::make_shared<BlackstoneReplaceProcessor>(); }
+
+ProcessorP block_replace_rules_processor(const BlockData& bd, const std::vector<SimpleRule>& rules) {
+    auto p = std::make_shared<RuleProcessor>();
+    for (auto& sr : rules) {
+        ProcessorRule r;
+        r.input.kind = sr.probability < 0 ? RuleTest::BLOCK_MATCH : RuleTest::RANDOM_BLOCK_MATCH;
+        r.input.block = sr.source;
+        r.input.probability = sr.probability;
+        r.output = bd.default_state(sr.target);
+        p->rules.push_back(std::move(r));
+    }
+    return p;
+}
+
 // ---------------------------------------------------------------- template manager
 
 TemplateManager::TemplateManager(const Registry& reg, const BlockData& bd) : reg_(reg), bd_(bd) {

@@ -163,5 +163,15 @@ uint16_t parse_state_string(const BlockData& bd, const std::string& s);
 ProcessorP block_ignore_processor(bool air, bool structure_block);
 ProcessorP jigsaw_replacement_processor();
 ProcessorP gravity_processor(HeightmapType type, int offset);
+ProcessorP protected_blocks_processor(const std::string& tag);
+ProcessorP block_age_processor(float mossiness);
+ProcessorP block_rot_processor(float integrity);
+// OceanRuinPieces.archyRuleProcessor: at most five blocks of `candidate` become `replacement` with a loot table
+ProcessorP archy_rule_processor(const BlockData& bd, const std::string& candidate, const std::string& replacement, const std::string& loot_table);
+ProcessorP lava_submerged_processor();
+ProcessorP blackstone_replace_processor();
+// a RuleProcessor of simple replacements: source block -> target block, with a probability (negative: always, BlockMatchTest)
+struct SimpleRule { std::string source; float probability; std::string target; };
+ProcessorP block_replace_rules_processor(const BlockData& bd, const std::vector<SimpleRule>& rules);
 
 }  // namespace pn::vg

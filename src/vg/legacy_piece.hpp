@@ -40,6 +40,16 @@ struct PieceAccessor {
     }
 };
 
+// BoundingBox.orientBox: a box of width x height x depth in front of a foot position, turned to face `direction`
+inline BoundingBox orientBox(int footX, int footY, int footZ, int offX, int offY, int offZ, int width, int height, int depth, const Direction& direction) {
+    switch (direction.v) {
+        case pn::vg::NORTH: return BoundingBox(footX + offX, footY + offY, footZ - depth + 1 + offZ, footX + width - 1 + offX, footY + height - 1 + offY, footZ + offZ);
+        case pn::vg::WEST: return BoundingBox(footX - depth + 1 + offZ, footY + offY, footZ + offX, footX + offZ, footY + height - 1 + offY, footZ + width - 1 + offX);
+        case pn::vg::EAST: return BoundingBox(footX + offZ, footY + offY, footZ + offX, footX + depth - 1 + offZ, footY + height - 1 + offY, footZ + width - 1 + offX);
+        default: return BoundingBox(footX + offX, footY + offY, footZ + offZ, footX + width - 1 + offX, footY + height - 1 + offY, footZ + depth - 1 + offZ);
+    }
+}
+
 // BlockSelector
 struct BlockSelector {
     BS next_;
@@ -89,6 +99,8 @@ protected:
     static BS reorient(JLevel& level, const BlockPos& pos, BS state);
     // a block entity of the block at `pos` that holds a loot table
     void setLootTable(JLevel& level, const BlockPos& pos, const std::string& lootTable, int64_t seed);
+    // a spawner block entity for the given entity type
+    void setSpawnerEntity(JLevel& level, const BlockPos& pos, const std::string& entityId);
     // random block of the level at hand (WorldGenLevel.getRandom)
     JRandom levelRandom(JLevel& level) { return JRandom(level.ctx.random); }
 

@@ -84,6 +84,7 @@ struct StructureEnv {
     std::function<int(int, int, HeightmapType)> base_height;
     // NoiseBasedChunkGenerator.getBaseColumn: blocks of the column, bottom to top, as (state is solid?) flags per y from min_y
     std::function<void(int, int, std::vector<uint16_t>&)> base_column;
+    const std::vector<BiomeInfo>* biome_infos = nullptr;                // per biome value: temperature and precipitation
     const Registry* reg = nullptr;
     const BlockData* bd = nullptr;
     TemplateManager* templates = nullptr;   // owned by the StructureState

@@ -166,6 +166,7 @@ struct VanillaGen::Impl {
         env.biome_names = &structure_biome_names;
         env.base_height = [this](int x, int z, HeightmapType t) { return base_height(x, z, t); };
         env.base_column = [this](int x, int z, std::vector<uint16_t>& out) { base_column(x, z, out); };
+        env.biome_infos = &biome_infos;
         env.reg = &reg;
         env.bd = bd.get();
         structures = std::make_unique<StructureState>(env, climate.biomes);

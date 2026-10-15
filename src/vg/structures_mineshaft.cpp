@@ -338,19 +338,7 @@ public:
                 if (!chunkBB.inside(pos) || !isInterior(level, 1, 0, newZ, chunkBB)) continue;
                 hasPlacedSpider = true;
                 level.setBlock(pos, blk("minecraft:spawner"), 2);
-                {   // SpawnerBlockEntity.setEntityId(CAVE_SPIDER)
-                    pn::Nbt be = pn::Nbt::compound();
-                    be.put("id", pn::Nbt::str("minecraft:mob_spawner"));
-                    be.put("x", pn::Nbt::make(pn::Nbt::Int, pos.x));
-                    be.put("y", pn::Nbt::make(pn::Nbt::Int, pos.y));
-                    be.put("z", pn::Nbt::make(pn::Nbt::Int, pos.z));
-                    pn::Nbt entity = pn::Nbt::compound();
-                    entity.put("id", pn::Nbt::str("minecraft:cave_spider"));
-                    pn::Nbt sd = pn::Nbt::compound();
-                    sd.put("entity", entity);
-                    be.put("SpawnData", sd);
-                    level.L.set_block_entity(pos, std::move(be));
-                }
+                setSpawnerEntity(level, pos, "minecraft:cave_spider");
             }
             for (int x = 0; x <= 2; ++x) {
                 for (z = 0; z <= length; ++z) {
