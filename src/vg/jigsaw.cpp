@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <map>
+#include "jcompat.hpp"
 
 namespace pn::vg {
 
@@ -235,7 +236,61 @@ private:
     int highest_ = INT32_MIN;
 };
 
+inline jc::JRandom jc_positional(int64_t seed, const BlockPos& pos) { return jc::positionalRandom(seed, pos); }
+
+// PoolAliasBinding: direct, random or random_group
+struct AliasBinding {
+    enum Type { DIRECT, RANDOM, RANDOM_GROUP } type = DIRECT;
+    std::string alias, target;
+    std::vector<std::pair<std::string, int>> targets;                          // random
+    std::vector<std::pair<std::vector<AliasBinding>, int>> groups;             // random_group
+};
+
+AliasBinding parse_alias(const Json& j) {
+    AliasBinding b;
+    std::string t = Registry::strip(j.get_string("type"));
+    auto id = [](const std::string& s) { return s.rfind("minecraft:", 0) == 0 ? s : "minecraft:" + s; };
+    if (t == "direct") { b.type = AliasBinding::DIRECT; b.alias = id(j.get_string("alias")); b.target = id(j.get_string("target")); }
+    else if (t == "random") {
+        b.type = AliasBinding::RANDOM;
+        b.alias = id(j.get_string("alias"));
+        for (auto& e : j.at("targets").arr) b.targets.emplace_back(id(e.get_string("data")), int(e.get_int("weight", 1)));
+    } else {
+        b.type = AliasBinding::RANDOM_GROUP;
+        for (auto& g : j.at("groups").arr) {
+            std::vector<AliasBinding> list;
+            for (auto& e : g.at("data").arr) list.push_back(parse_alias(e));
+            b.groups.emplace_back(std::move(list), int(g.get_int("weight", 1)));
+        }
+    }
+    return b;
+}
+
+void resolve_alias(const AliasBinding& b, Rng& random, std::map<std::string, std::string>& out) {
+    switch (b.type) {
+        case AliasBinding::DIRECT: out[b.alias] = b.target; break;
+        case AliasBinding::RANDOM: {
+            int total = 0;
+            for (auto& t : b.targets) total += t.second;
+            int sel = random.next_int(total);
+            for (auto& t : b.targets) { if (sel < t.second) { out[b.alias] = t.first; break; } sel -= t.second; }
+            break;
+        }
+        case AliasBinding::RANDOM_GROUP: {
+            int total = 0;
+            for (auto& g : b.groups) total += g.second;
+            int sel = random.next_int(total);
+            for (auto& g : b.groups) {
+                if (sel < g.second) { for (auto& e : g.first) resolve_alias(e, random, out); break; }
+                sel -= g.second;
+            }
+            break;
+        }
+    }
+}
+
 struct JigsawParams {
+    std::vector<AliasBinding> aliases;
     std::string start_pool, start_jigsaw;
     int max_depth = 6;
     bool expansion_hack = false;
@@ -270,7 +325,8 @@ std::vector<PoolElementP> shuffled_templates(const Pool& pool, Rng& random) {
 
 class Placer {
 public:
-    Placer(const StructureContext& ctx, TemplateManager& tm, Pool* /*unused*/, const JigsawParams& p, std::vector<std::shared_ptr<PoolPiece>>& pieces) : ctx_(ctx), tm_(tm), p_(p), pieces_(pieces) {}
+    Placer(const StructureContext& ctx, TemplateManager& tm, const std::map<std::string, std::string>& aliases, const JigsawParams& p, std::vector<std::shared_ptr<PoolPiece>>& pieces) : ctx_(ctx), tm_(tm), aliases_(aliases), p_(p), pieces_(pieces) {}
+    std::string lookup(const std::string& id) const { auto it = aliases_.find(id); return it == aliases_.end() ? id : it->second; }
     PriorityQueue placing;
 
     void try_placing_children(const std::shared_ptr<PoolPiece>& source_piece, ShapeP context_free, int depth) {
@@ -291,7 +347,7 @@ public:
             BlockPos target_pos(source_pos.x + kDirX[sf], source_pos.y + kDirY[sf], source_pos.z + kDirZ[sf]);
             int source_local_y = source_pos.y - source_box_y;
             int source_base_height = INT32_MIN;
-            Pool* target_pool = tm_.pool(source_jigsaw.pool);
+            Pool* target_pool = tm_.pool(lookup(source_jigsaw.pool));
             if (!target_pool || (target_pool->templates.empty() && Registry::strip(source_jigsaw.pool) != "empty")) continue;
             Pool* fallback = tm_.pool(target_pool->fallback);
             if (!fallback || (fallback->templates.empty() && Registry::strip(target_pool->fallback) != "empty")) continue;
@@ -324,7 +380,7 @@ public:
                             orientation(bd, tj.info.state, tf, tt);
                             BlockPos front(tj.info.pos.x + kDirX[tf], tj.info.pos.y + kDirY[tf], tj.info.pos.z + kDirZ[tf]);
                             if (!hack_box.inside(front)) continue;
-                            Pool* cp = tm_.pool(tj.pool);
+                            Pool* cp = tm_.pool(lookup(tj.pool));
                             Pool* cfb = cp ? tm_.pool(cp->fallback) : nullptr;
                             int cs = cp ? pool_max_size(tm_, *cp) : 0;
                             int cfs = cfb ? pool_max_size(tm_, *cfb) : 0;
@@ -393,6 +449,7 @@ public:
 private:
     const StructureContext& ctx_;
     TemplateManager& tm_;
+    const std::map<std::string, std::string>& aliases_;
     const JigsawParams& p_;
     std::vector<std::shared_ptr<PoolPiece>>& pieces_;
 };
@@ -403,7 +460,13 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
     // Rotation.getRandom: Util.getRandom(Rotation.values(), random)
     static const Rotation kRots[4] = {Rotation::NONE, Rotation::CLOCKWISE_90, Rotation::CLOCKWISE_180, Rotation::COUNTERCLOCKWISE_90};
     Rotation center_rotation = kRots[random.next_int(4)];
-    Pool* center_pool = tm.pool(p.start_pool);
+    std::map<std::string, std::string> aliases;
+    if (!p.aliases.empty()) {
+        jc::JRandom alias_random = jc_positional(ctx.env.seed, position);
+        for (auto& b : p.aliases) resolve_alias(b, alias_random.r(), aliases);
+    }
+    auto lookup = [&aliases](const std::string& id) { auto it = aliases.find(id); return it == aliases.end() ? id : it->second; };
+    Pool* center_pool = tm.pool(lookup(p.start_pool));
     if (!center_pool || center_pool->templates.empty()) return std::nullopt;
     PoolElementP center_element = center_pool->templates[size_t(random.next_int(int(center_pool->templates.size())))];
     if (center_element->type == PoolElement::EMPTY) return std::nullopt;
@@ -439,7 +502,7 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
     int center_y = bottom_y + local_anchor.y;
     GenerationStub stub;
     stub.position = BlockPos(center_x, center_y, center_z);
-    stub.generate = [&ctx, &p, center_piece, center_x, center_y, center_z, box](std::vector<std::shared_ptr<StructurePiece>>& out) {
+    stub.generate = [&ctx, &p, aliases, center_piece, center_x, center_y, center_z, box](std::vector<std::shared_ptr<StructurePiece>>& out) {
         TemplateManager& tm2 = *ctx.env.templates;
         std::vector<std::shared_ptr<PoolPiece>> pieces;
         pieces.push_back(center_piece);
@@ -448,7 +511,7 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
             double max_y = std::min(double(center_y + p.max_vertical + 1), double(ctx.env.min_y + ctx.env.height - p.padding_top));
             DBox aabb{double(center_x - p.max_horizontal), min_y, double(center_z - p.max_horizontal), double(center_x + p.max_horizontal + 1), max_y, double(center_z + p.max_horizontal + 1)};
             auto free_space = std::make_shared<Shape>(shape_minus(Shape{aabb}, aabb_of(box)));
-            Placer placer(ctx, tm2, nullptr, p, pieces);
+            Placer placer(ctx, tm2, aliases, p, pieces);
             placer.try_placing_children(center_piece, free_space, 0);
             while (placer.placing.has_next()) {
                 PieceState st = placer.placing.next();
@@ -492,6 +555,7 @@ struct RegisterJigsaw {
                 else { p.padding_bottom = p.padding_top = int(dp->int_value()); }
             }
             p.ignore_waterlogging = j.get_string("liquid_settings") == "ignore_waterlogging";
+            if (const Json* al = j.find("pool_aliases")) for (auto& e : al->arr) p.aliases.push_back(parse_alias(e));
             p.start_height = make_height_provider(j.at("start_height"));
             return s;
         };

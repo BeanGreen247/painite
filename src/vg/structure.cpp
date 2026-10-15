@@ -131,6 +131,15 @@ int structure_lowest_y(const StructureContext& ctx, int min_x, int min_z, int si
 
 int structure_lowest_y(const StructureContext& ctx, int size_x, int size_z) { return structure_lowest_y(ctx, ctx.chunk.x * 16, ctx.chunk.z * 16, size_x, size_z); }
 
+BlockPos structure_lowest_y_in_5by5_box_offset_7(const StructureContext& ctx, Rotation rotation) {
+    int offset_x = 5, offset_z = 5;
+    if (rotation == Rotation::CLOCKWISE_90) offset_x = -5;
+    else if (rotation == Rotation::CLOCKWISE_180) { offset_x = -5; offset_z = -5; }
+    else if (rotation == Rotation::COUNTERCLOCKWISE_90) offset_z = -5;
+    int block_x = ctx.chunk.x * 16 + 7, block_z = ctx.chunk.z * 16 + 7;
+    return BlockPos(block_x, structure_lowest_y(ctx, block_x, block_z, offset_x, offset_z), block_z);
+}
+
 int structure_mean_first_occupied_height(const StructureContext& ctx, int min_x, int size_x, int min_z, int size_z) {
     int a = ctx.first_occupied_height(min_x, min_z, WORLD_SURFACE_WG), b = ctx.first_occupied_height(min_x, min_z + size_z, WORLD_SURFACE_WG);
     int c = ctx.first_occupied_height(min_x + size_x, min_z, WORLD_SURFACE_WG), d = ctx.first_occupied_height(min_x + size_x, min_z + size_z, WORLD_SURFACE_WG);

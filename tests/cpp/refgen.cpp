@@ -117,9 +117,9 @@ int main(int argc, char** argv) {
         if (areas.empty()) areas.push_back({x1, z1, x2, z2});
         for (auto& ar : areas) {
         int bx1 = (ar[0] >> 4), bz1 = (ar[1] >> 4), bx2 = (ar[2] >> 4), bz2 = (ar[3] >> 4);
-        for (int cz = bz1; cz <= bz2; cz += 16)
-            for (int cx = bx1; cx <= bx2; cx += 16) {
-                int ex = std::min(cx + 15, bx2), ez = std::min(cz + 15, bz2);
+        for (int cz = bz1; cz <= bz2; cz += 7)
+            for (int cx = bx1; cx <= bx2; cx += 7) {
+                int ex = std::min(cx + 6, bx2), ez = std::min(cz + 6, bz2);
                 char b[160];
                 snprintf(b, sizeof b, "%sforceload add %d %d %d %d", prefix.c_str(), cx * 16, cz * 16, ex * 16 + 15, ez * 16 + 15);
                 bot.drop("system_chat");

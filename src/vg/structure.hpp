@@ -184,6 +184,8 @@ std::optional<GenerationStub> on_top_of_chunk_center_without_biome_check(const S
 // Structure.getLowestY / getMeanFirstOccupiedHeight over a size_x by size_z area from the chunk's minimum corner
 int structure_lowest_y(const StructureContext& ctx, int size_x, int size_z);
 int structure_lowest_y(const StructureContext& ctx, int min_x, int min_z, int size_x, int size_z);
+// Structure.getLowestYIn5by5BoxOffset7Blocks (end cities, mansions): the start position of a structure facing `rotation`
+BlockPos structure_lowest_y_in_5by5_box_offset_7(const StructureContext& ctx, Rotation rotation);
 int structure_mean_first_occupied_height(const StructureContext& ctx, int min_x, int size_x, int min_z, int size_z);
 
 
