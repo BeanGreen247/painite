@@ -340,6 +340,56 @@ std::vector<std::shared_ptr<const StructureStart>> StructureState::starts_at(int
     return cache_.emplace(ChunkPos{cx, cz}, std::move(out)).first->second;
 }
 
+
+namespace {
+
+// The order Mojang visits the starts of one structure in a chunk: its references are a fastutil LongOpenHashSet of start chunk positions
+// (default capacity 16, load factor .75, linear probing), iterated from the last slot down, a zero key first.
+std::vector<std::shared_ptr<const StructureStart>> reference_order(const std::vector<std::shared_ptr<const StructureStart>>& touching, const std::string& id) {
+    std::vector<std::shared_ptr<const StructureStart>> mine;
+    for (auto& st : touching) if (st->structure == id) mine.push_back(st);
+    if (mine.size() < 2) return mine;
+    auto key_of = [](const StructureStart& st) { return (uint64_t(uint32_t(st.pos.x))) | (uint64_t(uint32_t(st.pos.z)) << 32); };
+    auto mix = [](uint64_t x) { uint64_t h = x * 0x9E3779B97F4A7C15ULL; h ^= h >> 32; return uint32_t(h ^ (h >> 16)); };
+    size_t n = 32;
+    std::vector<uint64_t> slots(n, 0);
+    std::vector<std::shared_ptr<const StructureStart>> where(n);
+    bool has_zero = false;
+    std::shared_ptr<const StructureStart> zero_start;
+    size_t size = 0;
+    auto place = [&](std::vector<uint64_t>& sl, std::vector<std::shared_ptr<const StructureStart>>& wh, uint64_t k, const std::shared_ptr<const StructureStart>& st) {
+        size_t mask = sl.size() - 1, pos = mix(k) & mask;
+        while (sl[pos] != 0) pos = (pos + 1) & mask;
+        sl[pos] = k;
+        wh[pos] = st;
+    };
+    for (auto& st : mine) {
+        uint64_t k = key_of(*st);
+        if (k == 0) { if (!has_zero) { has_zero = true; zero_start = st; ++size; } continue; }
+        size_t mask = n - 1, pos = mix(k) & mask;
+        bool dup = false;
+        while (slots[pos] != 0) { if (slots[pos] == k) { dup = true; break; } pos = (pos + 1) & mask; }
+        if (dup) continue;
+        slots[pos] = k;
+        where[pos] = st;
+        if (size++ >= n * 3 / 4) {   // maxFill reached: rehash into twice the table, visiting the old one from the end
+            size_t nn = n * 2;
+            std::vector<uint64_t> ns(nn, 0);
+            std::vector<std::shared_ptr<const StructureStart>> nw(nn);
+            for (size_t i = n; i-- > 0;) if (slots[i] != 0) place(ns, nw, slots[i], where[i]);
+            slots.swap(ns);
+            where.swap(nw);
+            n = nn;
+        }
+    }
+    std::vector<std::shared_ptr<const StructureStart>> out;
+    if (has_zero) out.push_back(zero_start);
+    for (size_t i = n; i-- > 0;) if (slots[i] != 0) out.push_back(where[i]);
+    return out;
+}
+
+}  // namespace
+
 void StructureState::place_step(int step, const std::vector<std::shared_ptr<const StructureStart>>& touching, FeatureEnv& fenv, Rng& random, int64_t decoration_seed, int cx, int cz) {
     if (step < 0 || size_t(step) >= all_by_step_.size() || touching.empty()) return;
     jc::set_bd(env_.bd);
@@ -351,8 +401,8 @@ void StructureState::place_step(int step, const std::vector<std::shared_ptr<cons
         for (auto& st : touching) if (st->structure == ids[index]) { any = true; break; }
         if (!any) continue;
         random.set_seed(decoration_seed + int64_t(index) + int64_t(10000) * int64_t(step));
-        for (auto& st : touching) {
-            if (st->structure != ids[index] || st->pieces.empty()) continue;
+        for (auto& st : reference_order(touching, ids[index])) {
+            if (st->pieces.empty()) continue;
             ctx.chunk_bb = chunk_bb;
             const BoundingBox center_bb = st->pieces[0]->bb;
             BlockPos center = center_bb.center();
