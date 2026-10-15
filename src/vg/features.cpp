@@ -246,6 +246,8 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
         if (handled) return r;
         r = place_feature_type3(env, type, config, random, origin, handled);
         if (handled) return r;
+        r = place_feature_type4(env, type, config, random, origin, handled);
+        if (handled) return r;
     }
     if (std::getenv("PAINITE_LENIENT")) {   // development: list the types that are still missing instead of stopping
         static std::mutex mu;

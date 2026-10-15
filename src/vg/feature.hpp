@@ -52,6 +52,7 @@ int heightmap_from_name(const std::string& name);
 bool place_feature_type2(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled);   // features2.cpp
 bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled);   // features3.cpp
 bool place_fallen_tree_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin);
+bool place_feature_type4(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled);   // features4.cpp
 bool place_tree_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin);   // feat_tree.cpp
 
 }  // namespace pn::vg
