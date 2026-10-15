@@ -409,6 +409,15 @@ std::vector<std::pair<std::string, std::vector<std::string>>> VanillaGen::struct
 
 int VanillaGen::debug_base_height(int x, int z, int heightmap) const { return p_->base_height(x, z, HeightmapType(heightmap)); }
 
+void VanillaGen::place_structures_of(int cx, int cz) const {
+    if (!p_->structures) return;
+    for (auto& st : p_->structures->starts_at(cx, cz)) {
+        BoundingBox b = st->bounds();
+        for (int z = b.z0 >> 4; z <= b.z1 >> 4; z++)
+            for (int x = b.x0 >> 4; x <= b.x1 >> 4; x++) p_->decorate_one(x, z);
+    }
+}
+
 int VanillaGen::min_y() const { return p_->dim_min_y; }
 int VanillaGen::height() const { return p_->dim_height; }
 

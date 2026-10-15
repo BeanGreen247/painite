@@ -89,8 +89,8 @@ int main(int argc, char** argv) {
     if (starts_mode) {   // structure starts of the reference world against ours, over the --structures chunk range
         int checked = 0, bad = 0, total_pieces = 0, bad_pieces = 0;
         // pieces adjust themselves while they are placed (heights, boxes): place the structures of the range first, as Mojang's saved chunks have been placed
-        for (int cz = sz0 - 8; cz <= sz1 + 8; cz++)
-            for (int cx = sx0 - 8; cx <= sx1 + 8; cx++) gen.decorate(cx, cz);
+        for (int cz = sz0; cz <= sz1; cz++)
+            for (int cx = sx0; cx <= sx1; cx++) gen.place_structures_of(cx, cz);
         for (int cz = sz0; cz <= sz1; cz++)
             for (int cx = sx0; cx <= sx1; cx++) {
                 std::shared_ptr<Chunk> c = src->chunk(cx, cz);
