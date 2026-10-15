@@ -434,7 +434,8 @@ public:
         // Block.canSupportCenter(level, pos, DOWN) && !(state.getBlock() instanceof FallingBlock)
         const auto& cl = jc::bd().classes(stateAbove.id);
         bool falling = std::find(cl.begin(), cl.end(), "FallingBlock") != cl.end();
-        return stateAbove.isFaceSturdy(Direction::DOWN) && !falling;
+        bool unstable_bottom = jc::bd().name(stateAbove.id).find("_fence_gate") != std::string::npos;   // tag unstable_bottom_center
+        return jc::bd().center_sturdy_down(stateAbove.id) && !unstable_bottom && !falling;
     }
     void placeSupport(JLevel& level, const BoundingBox& chunkBB, int x0, int y0, int z, int y1, int x1, JRandom random) {
 

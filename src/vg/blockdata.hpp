@@ -30,6 +30,7 @@ public:
     bool water(uint16_t id) const { return flags(id) & BF_WATER; }      // fluid state is water (water block, waterlogged, kelp, ...)
     bool lava(uint16_t id) const { return flags(id) & BF_LAVA; }
     bool fluid(uint16_t id) const { return flags(id) & (BF_WATER | BF_LAVA); }
+    bool center_sturdy_down(uint16_t id) const { return flags(id) & (1u << 19); }   // isFaceSturdy(DOWN, CENTER)
     bool sturdy(uint16_t id, int dir) const { return flags(id) & (1u << (BF_STURDY_SHIFT + dir)); }   // dir: 0 down 1 up 2 north 3 south 4 east 5 west
     bool collision_face_full(uint16_t id, int dir) const { return flags(id) & (1u << (BF_COLLISION_FACE_SHIFT + dir)); }
     int emission(uint16_t id) const { return int(flags(id) >> BF_EMISSION_SHIFT) & 15; }

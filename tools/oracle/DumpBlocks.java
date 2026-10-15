@@ -1,7 +1,7 @@
 // Development helper (not part of the server): writes the per-state facts world generation asks of block states, one state per line:
 //   name <TAB> properties (sorted, comma separated) <TAB> flags (hex)
 // flag bits: 0 air, 1 blocksMotion, 2 canBeReplaced, 3 isSolid, 4 canOcclude, 5 full collision shape, 6 water in fluid state, 7 lava in fluid state,
-//            8..13 sturdy face down/up/north/south/east/west, 14 liquid block, 15 solid render, 16 propagates skylight, 17 ignited by lava, 18 fluid source, 20..23 light emission, 24..29 collision shape has a full face down/up/north/south/east/west, 30 block has a dynamic shape
+//            8..13 sturdy face down/up/north/south/east/west, 14 liquid block, 15 solid render, 16 propagates skylight, 17 ignited by lava, 18 fluid source, 19 center of the down face is supported, 20..23 light emission, 24..29 collision shape has a full face down/up/north/south/east/west, 30 block has a dynamic shape
 // A second file (ARGS[1]) lists the class hierarchy of every block: name <TAB> Class>Super>Super..., used to pick the survival rules of plants and attachments.
 // usage: java -cp server.jar:libs/* tools/oracle/DumpBlocks.java OUTFILE [CLASSFILE]
 import java.io.PrintWriter;
@@ -58,6 +58,7 @@ public class DumpBlocks {
                 if (fl.is(Fluids.WATER) || fl.is(Fluids.FLOWING_WATER)) f |= 1L << 6;   // (tags are not bound outside a running server)
                 if (fl.is(Fluids.LAVA) || fl.is(Fluids.FLOWING_LAVA)) f |= 1L << 7;
                 for (int i = 0; i < 6; i++) if (s.isFaceSturdy(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, dirs[i])) f |= 1L << (8 + i);
+                if (s.isFaceSturdy(EmptyBlockGetter.INSTANCE, BlockPos.ZERO, Direction.DOWN, net.minecraft.world.level.block.SupportType.CENTER)) f |= 1L << 19;   // Block.canSupportCenter(DOWN) before the unstable-bottom tag
                 if (s.liquid()) f |= 1L << 14;
                 if (s.isSolidRender()) f |= 1L << 15;
                 if (s.propagatesSkylightDown()) f |= 1L << 16;
