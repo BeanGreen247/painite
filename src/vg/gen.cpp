@@ -6,6 +6,7 @@
 #include "decorate.hpp"
 #include "structure.hpp"
 #include "beardifier.hpp"
+#include "shape.hpp"
 #include "noisegen.hpp"
 #include "surface.hpp"
 #include <algorithm>
@@ -351,6 +352,30 @@ struct VanillaGen::Impl {
         for (int i = 0; i < 9; i++)
             if (i != 4) grid[i]->decorated_neighbors++;
     }
+    // LevelChunk.postProcessGeneration: the shapes of the blocks structures marked (fences, torches, ladders, iron bars) are fixed once the chunk and its surroundings are complete
+    void post_process(int cx, int cz, Proto& center) {
+        for (int dz = -2; dz <= 2; dz++)
+            for (int dx = -2; dx <= 2; dx++) decorate_one(cx + dx, cz + dz);
+        std::shared_ptr<Proto> holders[9];
+        Proto* grid[9];
+        for (int dz = -1; dz <= 1; dz++)
+            for (int dx = -1; dx <= 1; dx++) { holders[(dz + 1) * 3 + dx + 1] = proto(cx + dx, cz + dz); grid[(dz + 1) * 3 + dx + 1] = holders[(dz + 1) * 3 + dx + 1].get(); }
+        std::lock_guard<std::mutex> l(deco_mu);
+        ChunkBlocks* chunks[9];
+        for (int i = 0; i < 9; i++) chunks[i] = &grid[i]->blocks;
+        const int min_q = dim_min_y >> 2;
+        Proto* const (&g)[9] = reinterpret_cast<Proto* const (&)[9]>(grid);
+        Level level(*bd, cx, cz, chunks, GenRange{center.blocks.min_y, center.blocks.height}, [&](int x, int y, int z) {
+            return surface->biome_with(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
+        });
+        std::vector<std::array<int, 3>> marks;
+        marks.swap(center.blocks.post_marks);
+        for (auto& m : marks) {
+            uint16_t state = level.get(m[0], m[1], m[2]);
+            uint16_t updated = update_from_neighbour_shapes(*bd, level, BlockPos(m[0], m[1], m[2]), state);
+            if (updated != state) center.blocks.set_raw(m[0], m[1], m[2], updated);
+        }
+    }
 };
 
 VanillaGen::VanillaGen(const std::string& data_dir, const GenOptions& opt, const std::vector<std::string>& biome_names) : p_(std::make_unique<Impl>(data_dir, opt, biome_names)) {}
@@ -396,6 +421,7 @@ void VanillaGen::generate(Chunk& c) const {
             for (int dx = -1; dx <= 1; dx++) I.decorate_one(c.x + dx, c.z + dz);
     std::shared_ptr<Impl::Proto> pc = I.proto(c.x, c.z);
     I.build(*pc);
+    if (decorate && !pc->blocks.post_marks.empty()) I.post_process(c.x, c.z, *pc);
     const ChunkBlocks& cb = pc->blocks;
     const int first_section = (I.dim_min_y - kMinY) >> 4, sections = I.dim_height >> 4;
     for (int s = first_section; s < first_section + sections; s++) {

@@ -21,7 +21,7 @@ using namespace pn;
 int main(int argc, char** argv) {
     std::vector<int> bh_x, bh_z;
     bool has_only = false, dump_features = false, list_structures = false, starts_mode = false;
-    int sx0 = 0, sz0 = 0, sx1 = 0, sz1 = 0;
+    int sx0 = 0, sz0 = 0, sx1 = 0, sz1 = 0, scan_x0 = -16, scan_z0 = -16, scan_x1 = 15, scan_z1 = 15;
     int layer = INT32_MIN;
     bool probe = false;
     bool hist = false, has_col = false;
@@ -47,6 +47,7 @@ int main(int argc, char** argv) {
         else if (a == "--overlay") overlay = val();
         else if (a == "--order") order = val();
         else if (a == "--probe") probe = true;
+        else if (a == "--scan") { scan_x0 = std::stoi(val()); scan_z0 = std::stoi(val()); scan_x1 = std::stoi(val()); scan_z1 = std::stoi(val()); }
         else if (a == "--bh") { bh_x.push_back(std::stoi(val())); bh_z.push_back(std::stoi(val())); }
         else if (a == "--starts") starts_mode = true;
         else if (a == "--structures" || a == "--range") { list_structures = a == "--structures"; sx0 = std::stoi(val()); sz0 = std::stoi(val()); sx1 = std::stoi(val()); sz1 = std::stoi(val()); }
@@ -87,6 +88,9 @@ int main(int argc, char** argv) {
     }
     if (starts_mode) {   // structure starts of the reference world against ours, over the --structures chunk range
         int checked = 0, bad = 0, total_pieces = 0, bad_pieces = 0;
+        // pieces adjust themselves while they are placed (heights, boxes): place the structures of the range first, as Mojang's saved chunks have been placed
+        for (int cz = sz0 - 8; cz <= sz1 + 8; cz++)
+            for (int cx = sx0 - 8; cx <= sx1 + 8; cx++) gen.decorate(cx, cz);
         for (int cz = sz0; cz <= sz1; cz++)
             for (int cx = sx0; cx <= sx1; cx++) {
                 std::shared_ptr<Chunk> c = src->chunk(cx, cz);
@@ -168,8 +172,8 @@ int main(int argc, char** argv) {
     // chunks present in the reference world
     std::string region = src->region_dir;
     std::vector<std::pair<int, int>> chunks;
-    for (int cz = -16; cz < 16; cz++)
-        for (int cx = -16; cx < 16; cx++) {
+    for (int cz = scan_z0; cz <= scan_z1; cz++)
+        for (int cx = scan_x0; cx <= scan_x1; cx++) {
             Nbt root;
             if (anvil_read(region, cx, cz, root)) {
                 const Nbt* st = root.get("Status");
