@@ -108,8 +108,8 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 ## What does not work yet
 
 - No inventory: Java creative players can place what they pick, survival players cannot build or collect drops; Bedrock players can break blocks but not place them (their creative inventory is server-authoritative).
-- No mobs, no physics beyond what the clients simulate, no fluids flowing or redstone, no block entities (chests and signs are not sent to clients, so they are invisible; their data is kept in the world files), no weather, no nether or end (dimensions other than the overworld are ignored).
-- Terrain generation is basic: seeded hills, oceans, beaches, deserts, snow, forests, caves, ores and simple trees (level-type normal, large_biomes, amplified), superflat and void. No villages, structures, rivers, ravines, nether or end.
+- No mobs, no physics beyond what the clients simulate, no fluids flowing or redstone, no block entities (chests and signs are not sent to clients, so they are invisible; their data is kept in the world files), no weather, Nether and End exist with portals.
+- Terrain: `world.generator = "vanilla"` is a bit-exact port of Mojang's generator (noise, biomes, surface, carvers, features, Nether and End; about 0.9 % of blocks still differ because of decoration order). The older approximate generator remains the default. Structures are not vanilla-exact yet, see `docs/HANDOFF.md` for the plan.
 - Real-Mojang online login for Java and Microsoft login for Bedrock are untested against the live services (tests use local fakes).
 - Anti-xray, Velocity/BungeeCord forwarding, io_uring.
 - Java plugins and mods. Painite is native code and does not load Paper/Spigot/Bukkit plugins or Forge/Fabric mods; keep using Paper for those.
@@ -128,3 +128,7 @@ Companion web manager: [CreeperCrest](https://github.com/BeanGreen247/creepercre
 
 Source-available, all rights reserved. Read, build and run for personal use; no forks,
 redistribution or derivative works. See `LICENSE`.
+
+## Status for contributors
+
+The current plan, environment setup and next steps are in `docs/HANDOFF.md`.
