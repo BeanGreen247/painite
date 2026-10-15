@@ -170,6 +170,37 @@ static void write_stack(Wr& w, const sim::ItemStack& st, const VanillaData& vd) 
     }
 }
 
+static void write_lp_vec3(Wr& w, const sim::Vec3& value) {
+    auto sanitize = [](double v) {
+        if (std::isnan(v)) return 0.0;
+        return std::clamp(v, -1.7179869183E10, 1.7179869183E10);
+    };
+    const double x = sanitize(value.x), y = sanitize(value.y), z = sanitize(value.z);
+    const double max = std::max(std::abs(x), std::max(std::abs(y), std::abs(z)));
+    if (max < 3.051944088384301E-5) {
+        w.u8(0);
+        return;
+    }
+    const uint64_t scale = static_cast<uint64_t>(std::ceil(max));
+    const bool extra = (scale & 3u) != scale;
+    const uint64_t prefix = extra ? (scale & 3u) | 4u : scale;
+    auto pack = [](double v) { return static_cast<uint64_t>(std::llround((v * 0.5 + 0.5) * 32766.0)); };
+    const uint64_t packed = prefix | (pack(x / scale) << 3) | (pack(y / scale) << 18) | (pack(z / scale) << 33);
+    w.u8(static_cast<uint8_t>(packed));
+    w.u8(static_cast<uint8_t>(packed >> 8));
+    w.varint(static_cast<int32_t>(static_cast<uint32_t>(packed >> 16)));
+    if (extra) w.varint(static_cast<int32_t>(scale >> 2));
+}
+
+static void write_entity_data(Wr& w, const std::vector<sim::Entity::DataItem>& data) {
+    for (const auto& item : data) {
+        w.u8(static_cast<uint8_t>(item.index));
+        w.varint(item.serializer);
+        if (!item.value.empty()) w.raw(item.value.data(), item.value.size());
+    }
+    w.u8(0xff);
+}
+
 void Worker::java_event(JConn& c, const GEvent& ev) {
     PN_PERF("event.java");
     const VanillaData& vd = *c.vd;
@@ -348,6 +379,110 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
         case GEvent::ContainerClose:
             w.varint(vd.packet("play/c/container_close"));
             w.varint(ev.container);
+            send(c, w.b);
+            break;
+        case GEvent::EntityAdd: {
+            std::string type_name = ev.entity_kind;
+            size_t colon = type_name.find(':');
+            if (colon != std::string::npos) type_name.erase(0, colon + 1);
+            int type = vd.reg_id("entity_type/" + type_name);
+            if (type < 0) return;
+            w.varint(vd.packet("play/c/add_entity"));
+            w.varint(ev.entity_id);
+            w.raw(ev.entity_uuid, sizeof ev.entity_uuid);
+            w.varint(type);
+            w.f64(ev.pos.x); w.f64(ev.pos.y); w.f64(ev.pos.z);
+            write_lp_vec3(w, ev.entity_velocity);
+            w.u8(angle_byte(ev.pos.pitch));
+            w.u8(angle_byte(ev.pos.yaw));
+            w.u8(angle_byte(ev.pos.head));
+            w.varint(0);
+            send(c, w.b);
+            if (!ev.entity_data.empty()) {
+                Wr data;
+                data.varint(vd.packet("play/c/set_entity_data"));
+                data.varint(ev.entity_id);
+                write_entity_data(data, ev.entity_data);
+                send(c, data.b);
+            }
+            break;
+        }
+        case GEvent::EntityRemove:
+            w.varint(vd.packet("play/c/remove_entities"));
+            w.varint(1);
+            w.varint(ev.entity_id);
+            send(c, w.b);
+            break;
+        case GEvent::EntityMove: {
+            bool v3 = vd.protocol >= 777;
+            int props = ev.pos.ground ? 1 : 0;
+            auto head = [&](const char* name) {
+                w.varint(vd.packet(name));
+                w.varint(ev.entity_id);
+                if (v3) w.varint(props);
+            };
+            if (ev.moved && ev.turned) {
+                head("play/c/move_entity_pos_rot");
+                w.be16(static_cast<uint16_t>(ev.dx)); w.be16(static_cast<uint16_t>(ev.dy)); w.be16(static_cast<uint16_t>(ev.dz));
+                w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch));
+                if (!v3) w.boolean(ev.pos.ground);
+            } else if (ev.moved || !ev.turned) {
+                head("play/c/move_entity_pos");
+                w.be16(static_cast<uint16_t>(ev.dx)); w.be16(static_cast<uint16_t>(ev.dy)); w.be16(static_cast<uint16_t>(ev.dz));
+                if (!v3) w.boolean(ev.pos.ground);
+            } else {
+                w.varint(vd.packet("play/c/move_entity_rot"));
+                w.varint(ev.entity_id);
+                if (v3) { w.boolean(ev.pos.ground); w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch)); }
+                else { w.u8(angle_byte(ev.pos.yaw)); w.u8(angle_byte(ev.pos.pitch)); w.boolean(ev.pos.ground); }
+            }
+            send(c, w.b);
+            if (ev.turned) {
+                Wr head;
+                head.varint(vd.packet("play/c/rotate_head"));
+                head.varint(ev.entity_id);
+                head.u8(angle_byte(ev.pos.head));
+                send(c, head.b);
+            }
+            break;
+        }
+        case GEvent::EntitySync:
+            w.varint(vd.packet("play/c/entity_position_sync"));
+            w.varint(ev.entity_id);
+            if (vd.protocol >= 777) w.varint(0);
+            w.f64(ev.pos.x); w.f64(ev.pos.y); w.f64(ev.pos.z);
+            if (vd.protocol < 777) {
+                w.f64(ev.entity_velocity.x); w.f64(ev.entity_velocity.y); w.f64(ev.entity_velocity.z);
+            }
+            w.f32(ev.pos.yaw); w.f32(ev.pos.pitch);
+            w.boolean(ev.pos.ground);
+            send(c, w.b);
+            if (ev.turned) {
+                Wr head;
+                head.varint(vd.packet("play/c/rotate_head"));
+                head.varint(ev.entity_id);
+                head.u8(angle_byte(ev.pos.head));
+                send(c, head.b);
+            }
+            break;
+        case GEvent::EntityMotion:
+            w.varint(vd.packet("play/c/set_entity_motion"));
+            w.varint(ev.entity_id);
+            write_lp_vec3(w, ev.entity_velocity);
+            send(c, w.b);
+            break;
+        case GEvent::EntityData:
+            w.varint(vd.packet("play/c/set_entity_data"));
+            w.varint(ev.entity_id);
+            write_entity_data(w, ev.entity_data);
+            send(c, w.b);
+            break;
+        case GEvent::EntityTake:
+            if (vd.packet("play/c/take_item_entity") < 0) return;
+            w.varint(vd.packet("play/c/take_item_entity"));
+            w.varint(ev.entity_id);
+            w.varint(ev.other_entity_id);
+            w.varint(ev.value);
             send(c, w.b);
             break;
         default: break;

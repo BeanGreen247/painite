@@ -87,6 +87,8 @@ target_link_libraries(painite_gencmp PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads:
 target_compile_options(painite_gencmp PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
 
 # quick compile and test of the gameplay core (inventory, menus, ...) without the rest of the server
-add_executable(painite_simtest EXCLUDE_FROM_ALL tests/sim/simtest.cpp ${PAINITE_SIM_SOURCES} src/vg/json.cpp src/vg/random.cpp src/nbt.cpp)
+set(PAINITE_SIM_TEST_SOURCES ${PAINITE_SIM_SOURCES})
+list(FILTER PAINITE_SIM_TEST_SOURCES EXCLUDE REGEX "src/sim/entity_manager\\.cpp$")
+add_executable(painite_simtest EXCLUDE_FROM_ALL tests/sim/simtest.cpp ${PAINITE_SIM_TEST_SOURCES} src/blocks.cpp src/vg/json.cpp src/vg/random.cpp src/nbt.cpp)
 target_compile_options(painite_simtest PRIVATE -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(painite_simtest PRIVATE OpenSSL::Crypto)

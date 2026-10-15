@@ -4,6 +4,7 @@
 #include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
+#include "sim/data.hpp"
 #include "sim/item_nbt.hpp"
 #include <algorithm>
 #include <chrono>
@@ -18,6 +19,8 @@ void Game::start() {
     game_time_ = s_.world.game_time;
     day_time_ = s_.world.day_time;
     last_autosave_ = now_ms();
+    for (int dim = 0; dim < 3; ++dim)
+        entity_managers_[dim] = std::make_unique<sim::EntityManager>(s_.dim(dim), game_time_, s_.next_entity, dim);
     ticker_.start(s_.cfg.tick_threads > 0 ? s_.cfg.tick_threads : std::max(1, std::min(4, static_cast<int>(s_.cores.size()) / 2)));
     th_ = std::thread([this] { loop(); });
 }
@@ -195,6 +198,21 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     return id->gid;
 }
 
+void Game::add_entity(int dim, std::unique_ptr<sim::Entity> entity) {
+    if (dim < 0 || dim > 2 || !entity) {
+        warn("cannot add entity: invalid dimension or null entity");
+        return;
+    }
+    auto pending = std::make_shared<std::unique_ptr<sim::Entity>>(std::move(entity));
+    post_task([this, dim, pending] {
+        if (!entity_managers_[dim]) {
+            warn("cannot add entity: entity manager is not running");
+            return;
+        }
+        entity_managers_[dim]->add_entity(std::move(*pending));
+    });
+}
+
 void Game::remove_player(uint64_t gid) {
     save_player_data(gid);
     std::lock_guard<std::mutex> l(mu_);
@@ -202,6 +220,7 @@ void Game::remove_player(uint64_t gid) {
     if (it == players_.end()) return;
     auto gone = it->second.id;
     players_.erase(it);
+    for (auto& tracked : entity_tracks_) tracked.second.viewers.erase(gid);
     for (auto& kv : players_) {
         GEvent d;
         d.id = gone;
@@ -441,11 +460,23 @@ void Game::tick() {
     PN_PERF("tick.total");
     game_time_++;
     { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
+    { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
     day_time_++;
     portal_tick();
     if (game_time_ % 20 == 0) broadcast_time();
     std::lock_guard<std::mutex> l(mu_);
-    if (players_.empty()) return;
+    if (players_.empty()) {
+        std::unordered_set<int> live_entities;
+        for (const auto& manager : entity_managers_)
+            if (manager)
+                for (const auto& entity : manager->entities())
+                    live_entities.insert(entity->id);
+        for (auto it = entity_tracks_.begin(); it != entity_tracks_.end();) {
+            if (!live_entities.count(it->first)) it = entity_tracks_.erase(it);
+            else { it->second.viewers.clear(); ++it; }
+        }
+        return;
+    }
     PN_PERF("tick.players");
     struct Move { PState* p; GEvent ev; bool any = false; };
     std::vector<Move> moves;
@@ -545,6 +576,154 @@ void Game::tick() {
             if (fresh.count(vkv.first * 1000003ull + m.p->id->gid)) continue;
             queue_event(v.id, m.ev);
         }
+    }
+
+    std::unordered_set<int> live_entities;
+    for (int dim = 0; dim < 3; ++dim) {
+        sim::EntityManager* manager = entity_managers_[dim].get();
+        if (!manager) continue;
+        for (const auto& owned : manager->entities()) {
+            sim::Entity& entity = *owned;
+            live_entities.insert(entity.id);
+            EntityTrack& track = entity_tracks_[entity.id];
+            bool first = track.entity != &entity;
+            if (first) {
+                track = EntityTrack{};
+                track.entity = &entity;
+                track.pos = entity.pos;
+                track.delta = entity.delta;
+                track.yaw = entity.yaw;
+                track.pitch = entity.pitch;
+                track.on_ground = entity.on_ground;
+                entity.collect_data(track.data);
+            }
+
+            std::unordered_set<uint64_t> near;
+            const sim::EntityProps* props = sim::EntityTable::get().find(entity.type);
+            double entity_range = props ? props->tracking_range * 16.0 : 80.0;
+            for (auto& player : players_) {
+                PState& viewer = player.second;
+                if (viewer.id->bedrock || viewer.pos.dim != dim) continue;
+                double range = std::min(viewer.view * 16.0, entity_range);
+                double dx = viewer.pos.x - entity.pos.x;
+                double dy = viewer.pos.y - entity.pos.y;
+                double dz = viewer.pos.z - entity.pos.z;
+                if (dx * dx + dy * dy + dz * dz <= range * range) near.insert(player.first);
+            }
+
+            for (auto it = track.viewers.begin(); it != track.viewers.end();) {
+                if (near.count(*it)) { ++it; continue; }
+                auto viewer = players_.find(*it);
+                if (viewer != players_.end()) {
+                    GEvent event;
+                    event.kind = GEvent::EntityRemove;
+                    event.entity_id = entity.id;
+                    queue_event(viewer->second.id, std::move(event));
+                }
+                it = track.viewers.erase(it);
+            }
+            for (uint64_t gid : near) {
+                if (track.viewers.count(gid)) continue;
+                auto viewer = players_.find(gid);
+                if (viewer == players_.end()) continue;
+                track.viewers.insert(gid);
+                GEvent event;
+                event.kind = GEvent::EntityAdd;
+                event.entity_id = entity.id;
+                event.entity_kind = entity.type;
+                memcpy(event.entity_uuid, entity.uuid, sizeof event.entity_uuid);
+                event.pos.x = entity.pos.x; event.pos.y = entity.pos.y; event.pos.z = entity.pos.z;
+                event.pos.yaw = entity.yaw; event.pos.pitch = entity.pitch; event.pos.head = entity.yaw;
+                event.pos.ground = entity.on_ground;
+                event.entity_velocity = entity.delta;
+                event.entity_data = track.data;
+                queue_event(viewer->second.id, std::move(event));
+            }
+
+            if (!first) {
+                const double dx = entity.pos.x - track.pos.x, dy = entity.pos.y - track.pos.y, dz = entity.pos.z - track.pos.z;
+                const long qx = std::lround(dx * 4096.0), qy = std::lround(dy * 4096.0), qz = std::lround(dz * 4096.0);
+                auto angle = [](float value) { return static_cast<uint8_t>(static_cast<int>(std::floor(value * 256.0f / 360.0f))); };
+                const bool turned = angle(entity.yaw) != angle(track.yaw) || angle(entity.pitch) != angle(track.pitch);
+                const bool moved = qx != 0 || qy != 0 || qz != 0;
+                const bool too_far = std::labs(qx) > 32767 || std::labs(qy) > 32767 || std::labs(qz) > 32767;
+                if (moved || turned || entity.on_ground != track.on_ground) {
+                    for (uint64_t gid : track.viewers) {
+                        auto viewer = players_.find(gid);
+                        if (viewer == players_.end()) continue;
+                        GEvent event;
+                        event.kind = too_far ? GEvent::EntitySync : GEvent::EntityMove;
+                        event.entity_id = entity.id;
+                        event.pos.x = too_far ? entity.pos.x : track.pos.x + static_cast<double>(qx) / 4096.0;
+                        event.pos.y = too_far ? entity.pos.y : track.pos.y + static_cast<double>(qy) / 4096.0;
+                        event.pos.z = too_far ? entity.pos.z : track.pos.z + static_cast<double>(qz) / 4096.0;
+                        event.pos.yaw = entity.yaw; event.pos.pitch = entity.pitch; event.pos.head = entity.yaw;
+                        event.pos.ground = entity.on_ground;
+                        if (!too_far) {
+                            event.dx = static_cast<int16_t>(qx); event.dy = static_cast<int16_t>(qy); event.dz = static_cast<int16_t>(qz);
+                        }
+                        event.moved = moved; event.turned = turned;
+                        event.entity_velocity = entity.delta;
+                        queue_event(viewer->second.id, std::move(event));
+                    }
+                    if (too_far) track.pos = entity.pos;
+                    else {
+                        track.pos.x += static_cast<double>(qx) / 4096.0;
+                        track.pos.y += static_cast<double>(qy) / 4096.0;
+                        track.pos.z += static_cast<double>(qz) / 4096.0;
+                    }
+                }
+                if (turned) { track.yaw = entity.yaw; track.pitch = entity.pitch; }
+                if (entity.on_ground != track.on_ground) track.on_ground = entity.on_ground;
+
+                if (!(entity.delta == track.delta)) {
+                    for (uint64_t gid : track.viewers) {
+                        auto viewer = players_.find(gid);
+                        if (viewer == players_.end()) continue;
+                        GEvent event;
+                        event.kind = GEvent::EntityMotion;
+                        event.entity_id = entity.id;
+                        event.entity_velocity = entity.delta;
+                        queue_event(viewer->second.id, std::move(event));
+                    }
+                    track.delta = entity.delta;
+                }
+                std::vector<sim::Entity::DataItem> data;
+                entity.collect_data(data);
+                bool changed = data.size() != track.data.size();
+                if (!changed) {
+                    for (size_t i = 0; i < data.size(); ++i)
+                        if (data[i].index != track.data[i].index || data[i].serializer != track.data[i].serializer || data[i].value != track.data[i].value) {
+                            changed = true;
+                            break;
+                        }
+                }
+                if (changed) {
+                    for (uint64_t gid : track.viewers) {
+                        auto viewer = players_.find(gid);
+                        if (viewer == players_.end()) continue;
+                        GEvent event;
+                        event.kind = GEvent::EntityData;
+                        event.entity_id = entity.id;
+                        event.entity_data = data;
+                        queue_event(viewer->second.id, std::move(event));
+                    }
+                    track.data = std::move(data);
+                }
+            }
+        }
+    }
+    for (auto it = entity_tracks_.begin(); it != entity_tracks_.end();) {
+        if (live_entities.count(it->first)) { ++it; continue; }
+        for (uint64_t gid : it->second.viewers) {
+            auto viewer = players_.find(gid);
+            if (viewer == players_.end()) continue;
+            GEvent event;
+            event.kind = GEvent::EntityRemove;
+            event.entity_id = it->first;
+            queue_event(viewer->second.id, std::move(event));
+        }
+        it = entity_tracks_.erase(it);
     }
     flush_events();
 }

@@ -1,5 +1,7 @@
 // Checks of the gameplay core against what Mojang's code does (hand-worked cases), run without a server: painite_simtest
 #include "../../src/sim/inventory.hpp"
+#include "../../src/sim/entity_manager.hpp"
+#include "../../src/blocks.hpp"
 #include <cstdio>
 #include <cstdlib>
 
@@ -21,6 +23,24 @@ int main(int argc, char** argv) {
     std::string dir = argc > 1 ? argv[1] : "data/game/26.2";
     std::string err;
     if (!Items::load(dir, err)) { printf("cannot load items: %s\n", err.c_str()); return 2; }
+    size_t cut = dir.rfind('/');
+    std::string data_root = cut == std::string::npos ? "data" : dir.substr(0, cut);
+    cut = data_root.rfind('/');
+    data_root = cut == std::string::npos ? "data" : data_root.substr(0, cut);
+    if (!pn::Blocks::get().load({{777, data_root + "/vanilla-26.3.blocks"}, {776, data_root + "/vanilla-26.2.blocks"}}, err)) {
+        printf("cannot load block states: %s\n", err.c_str());
+        return 2;
+    }
+    if (!BlockCollisionShapes::get().load(dir + "/blockshapes_states.txt", dir + "/blockshapes.txt", err)) {
+        printf("cannot load block collision shapes: %s\n", err.c_str());
+        return 2;
+    }
+    uint16_t stone_state = pn::Blocks::get().default_state("minecraft:stone");
+    uint16_t slab_state = pn::Blocks::get().find("minecraft:oak_slab", "type=top,waterlogged=false");
+    CHECK(BlockCollisionShapes::get().is_full_block(stone_state));
+    CHECK(!BlockCollisionShapes::get().is_full_block(slab_state));
+    const auto& slab_boxes = BlockCollisionShapes::get().boxes(slab_state);
+    CHECK(slab_boxes.size() == 1 && slab_boxes[0].min_y == 0.5 && slab_boxes[0].max_y == 1.0);
     const Items& I = Items::get();
     const ItemType* stone = I.by_name("minecraft:stone");
     const ItemType* dirt = I.by_name("minecraft:dirt");

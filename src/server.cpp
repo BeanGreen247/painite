@@ -245,6 +245,15 @@ bool Server::start(std::string& err) {
         std::vector<std::pair<int, std::string>> files;
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
         if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
+        std::string shape_states = find_data_file(cfg.data_dir, exe_dir, "game/26.2/blockshapes_states.txt");
+        std::string shape_boxes = find_data_file(cfg.data_dir, exe_dir, "game/26.2/blockshapes.txt");
+        if (shape_states.empty() || shape_boxes.empty()) {
+            warn("no block collision shapes (run tools/fetch_gamedata.sh 26.2): simulated entities will not collide with blocks");
+        } else {
+            std::string shape_error;
+            if (!sim::BlockCollisionShapes::get().load(shape_states, shape_boxes, shape_error))
+                warn("block collision shapes: " + shape_error);
+        }
         if (!world.open(cfg.level_name, cfg.generator, cfg.level_type, cfg.level_seed, data.back(), err)) return false;
         for (int d = 1; d <= 2; d++) {   // the nether and the end share the overworld's folder, seed and biome list
             other_dims[d - 1] = std::make_unique<World>();

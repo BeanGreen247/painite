@@ -3,6 +3,7 @@
 #pragma once
 #include "auth.hpp"
 #include "region.hpp"
+#include "sim/entity_manager.hpp"
 #include "sim/player.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -46,7 +47,8 @@ struct GPos {
 
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
-                ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose } kind = Move;
+                ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose,
+                EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -60,6 +62,11 @@ struct GEvent {
     int container = 0, state = 0, slot = 0;
     std::vector<sim::ItemStack> items;
     sim::ItemStack stack;
+    int entity_id = 0, other_entity_id = 0;
+    uint8_t entity_uuid[16] = {};
+    std::string entity_kind;
+    sim::Vec3 entity_velocity;
+    std::vector<sim::Entity::DataItem> entity_data;
 };
 
 class Worker;
@@ -74,6 +81,7 @@ public:
     // --- called from worker threads ---
     uint64_t add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int gamemode, int view_chunks);
     void remove_player(uint64_t gid);
+    void add_entity(int dim, std::unique_ptr<sim::Entity> entity);
     void update_pos(uint64_t gid, const GPos& pos);
     void set_view(uint64_t gid, int view_chunks);
     void block_changed(int dim, int x, int y, int z, uint16_t id);   // tell everyone who can see that block
@@ -132,6 +140,14 @@ private:
         std::unique_ptr<sim::PlayerSim> sim;
         std::unique_ptr<sim::ContainerSynchronizer> sync;
     };
+    struct EntityTrack {
+        sim::Entity* entity = nullptr;
+        sim::Vec3 pos, delta;
+        float yaw = 0, pitch = 0;
+        bool on_ground = false;
+        std::vector<sim::Entity::DataItem> data;
+        std::unordered_set<uint64_t> viewers;
+    };
     void loop();
     void tick();
     void send_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);
@@ -148,6 +164,8 @@ private:
     std::atomic<bool> stop_{false};
     std::mutex mu_;
     std::unordered_map<uint64_t, PState> players_;
+    std::unique_ptr<sim::EntityManager> entity_managers_[3];
+    std::unordered_map<int, EntityTrack> entity_tracks_;
     std::unordered_map<int, std::vector<std::pair<uint64_t, GEvent>>> batch_;   // worker id -> events of the running tick
     uint64_t next_gid_ = 1;
     std::mutex task_mu_;
