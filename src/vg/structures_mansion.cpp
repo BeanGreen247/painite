@@ -556,7 +556,8 @@ public:
             else if (hasDoorDir && doorDir == Direction::SOUTH) pieceRot = rot_add(pieceRot, Rotation::CLOCKWISE_90);
             else roomType = rooms.get1x1Secret(random);
         }
-        BlockPos orientation = zero_position_with_transform(BlockPos(1, 0, 0), Mirror::NONE, pieceRot, 7, 7);
+        // 6, not Java's literal 7: matches the pieces Mojang's server saves (verified against a reference mansion)
+        BlockPos orientation = zero_position_with_transform(BlockPos(1, 0, 0), Mirror::NONE, pieceRot, 6, 6);
         pieceRot = rot_add(pieceRot, rotation);
         orientation = rotate_pos(orientation, rotation);
         BlockPos pos = roomPos.offset(orientation.x, 0, orientation.z);
