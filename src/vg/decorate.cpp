@@ -1,3 +1,4 @@
+#include <cstdlib>
 #include "decorate.hpp"
 #include <algorithm>
 #include <stdexcept>

@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cstdio>
 #include <map>
+#include <iostream>
+#include <set>
+#include <algorithm>
+#include <tuple>
 #include <string>
 
 namespace pn { int64_t now_ms() { return 0; } }   // World wants a clock; the comparison does not
@@ -17,12 +21,14 @@ using namespace pn;
 int main(int argc, char** argv) {
     bool has_only = false, dump_features = false;
     int layer = INT32_MIN;
+    bool probe = false;
     bool hist = false, has_col = false;
     int col_x = 0, col_z = 0, col_lo = 0, col_hi = 0;
     int smoke = -1;
     std::string histy;
     std::string vfilter;
     int only_x = 0, only_z = 0;
+    std::string order;
     std::string overlay, climate, world_dir, version = "26.2", stage = "noise", dim = "overworld", type = "normal";
     int64_t seed = 12345;
     int verbose = 0;
@@ -37,6 +43,8 @@ int main(int argc, char** argv) {
         else if (a == "--type") type = val();
         else if (a == "--climate") climate = val();
         else if (a == "--overlay") overlay = val();
+        else if (a == "--order") order = val();
+        else if (a == "--probe") probe = true;
         else if (a == "--dump-features") dump_features = true;
         else if (a == "--hist") hist = true;
         else if (a == "--column") { col_x = std::stoi(val()); col_z = std::stoi(val()); has_col = true; col_lo = std::stoi(val()); col_hi = std::stoi(val()); }
@@ -101,6 +109,19 @@ int main(int argc, char** argv) {
             }
         }
     printf("%zu chunks to compare in %s\n", chunks.size(), region.c_str());
+    if (!order.empty()) {   // decorate every chunk that vanilla decorated (the 3x3 around each full chunk) in a chosen global order
+        std::set<std::pair<int, int>> todo;
+        for (auto [cx, cz] : chunks) for (int dz = -1; dz <= 1; dz++) for (int dx = -1; dx <= 1; dx++) todo.insert({cx + dx, cz + dz});
+        std::vector<std::pair<int, int>> seq(todo.begin(), todo.end());   // sorted by x then z
+        auto dist = [](std::pair<int, int> c) { return int64_t(c.first) * c.first + int64_t(c.second) * c.second; };
+        if (order == "rowmajor") std::sort(seq.begin(), seq.end(), [](auto a, auto b) { return std::tie(a.second, a.first) < std::tie(b.second, b.first); });
+        else if (order == "rowmajor_desc") std::sort(seq.begin(), seq.end(), [](auto a, auto b) { return std::tie(a.second, a.first) > std::tie(b.second, b.first); });
+        else if (order == "colmajor_desc") std::reverse(seq.begin(), seq.end());
+        else if (order == "dist") std::stable_sort(seq.begin(), seq.end(), [&](auto a, auto b) { return dist(a) < dist(b); });
+        else if (order == "dist_desc") std::stable_sort(seq.begin(), seq.end(), [&](auto a, auto b) { return dist(a) > dist(b); });
+        else if (order != "colmajor") { fprintf(stderr, "unknown order\n"); return 1; }
+        for (auto [cx, cz] : seq) gen.decorate(cx, cz);
+    }
     auto norm = [&](uint16_t id) {
         const BlockInfo& bi = B.info(id);
         if (bi.name == "minecraft:water" || bi.name == "minecraft:lava") return bi.name;
@@ -131,6 +152,23 @@ int main(int argc, char** argv) {
                 printf("   ");
                 for (int x = 0; x < 16; x++) putchar(ch(ref->get(x, layer, z)));
                 putchar('\n');
+            }
+        }
+        if (probe) {   // stdin: "x y z radius name" -> blocks whose name contains `name` in the box (clipped to this chunk), ours and vanilla
+            std::string line;
+            while (std::getline(std::cin, line)) {
+                int px, py, pz, pr;
+                char nm[128];
+                if (sscanf(line.c_str(), "%d %d %d %d %127s", &px, &py, &pz, &pr, nm) != 5) continue;
+                long a = 0, b = 0;
+                for (int y = py - pr; y <= py + pr; y++)
+                    for (int z = std::max(pz - pr, cz * 16); z <= std::min(pz + pr, cz * 16 + 15); z++)
+                        for (int x = std::max(px - pr, cx * 16); x <= std::min(px + pr, cx * 16 + 15); x++) {
+                            if (y < kMinY || y >= kMinY + kHeight) continue;
+                            if (B.info(mine.get(x & 15, y, z & 15)).name.find(nm) != std::string::npos) a++;
+                            if (B.info(ref->get(x & 15, y, z & 15)).name.find(nm) != std::string::npos) b++;
+                        }
+                printf("probe %d %d %d r%d %s: ours %ld vanilla %ld\n", px, py, pz, pr, nm, a, b);
             }
         }
         if (hist) {

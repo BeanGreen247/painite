@@ -54,6 +54,7 @@ bool place_ore(FeatureEnv& env, const Json& config, Rng& random, const BlockPos&
     for (int xp = x_start; xp <= x_start + size_xz; xp++)
         for (int zp = z_start; zp <= z_start + size_xz; zp++)
             if (y_start <= lv.height(OCEAN_FLOOR_WG, xp, zp)) goto do_place;
+    if (std::getenv("PAINITE_TRACE")) { int mx = -9999; for (int xp = x_start; xp <= x_start + size_xz; xp++) for (int zp = z_start; zp <= z_start + size_xz; zp++) mx = std::max(mx, lv.height(OCEAN_FLOOR_WG, xp, zp)); fprintf(stderr, "ore-skip at %d %d %d y_start %d maxh %d\n", origin.x, origin.y, origin.z, y_start, mx); }
     return false;
 do_place:
     int placed = 0;
@@ -103,6 +104,7 @@ do_place:
                     for (auto& t : targets.arr) {
                         if (can_place_ore(env, cur, random, config, t, p)) {
                             lv.set_raw(x, y, z, target_state(env, t));
+                            if (std::getenv("PAINITE_CELLS") && env.top_feature && env.top_feature->find(std::getenv("PAINITE_CELLS")) != std::string::npos) fprintf(stderr, "vcell %d %d %d origin %d %d %d\n", x, y, z, origin.x, origin.y, origin.z);
                             placed++;
                             break;
                         }

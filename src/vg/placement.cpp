@@ -6,6 +6,8 @@
 
 namespace pn::vg {
 
+extern thread_local BlockPos g_trace_origin;
+
 namespace {
 
 std::string short_type(const Json& j) {
@@ -216,7 +218,9 @@ struct PlaceRun {
         if (std::getenv("PAINITE_DBG2") && env.top_feature && pos.x >= 184 && pos.x <= 190 && pos.z >= -82 && pos.z <= -76) fprintf(stderr, "%s modifier %zu %s at %d %d %d\n", env.top_feature->c_str(), i, t.c_str(), pos.x, pos.y, pos.z);
         if (t == "count") {
             int n = sample_int(m.at("count"), random);
-            for (int k = 0; k < n; k++) run(i + 1, pos);
+            for (int k = 0; k < n; k++) {
+                run(i + 1, pos);
+            }
         } else if (t == "in_square") {
             int x = random.next_int(16) + pos.x;
             int z = random.next_int(16) + pos.z;
@@ -228,7 +232,9 @@ struct PlaceRun {
             if (h > lv.min_y()) run(i + 1, BlockPos(pos.x, h, pos.z));
         } else if (t == "biome") {
             int b = lv.biome(pos);
-            if (env.biome_has_feature(b, *env.top_feature)) run(i + 1, pos);
+            bool ok = env.biome_has_feature(b, *env.top_feature);
+            if (const char* tr = std::getenv("PAINITE_TRACE")) if (env.top_feature->find(tr) != std::string::npos) fprintf(stderr, "trace-biome %s at %d %d %d biome %d %s\n", env.top_feature->c_str(), pos.x, pos.y, pos.z, b, ok ? "ok" : "REJECT");
+            if (ok) run(i + 1, pos);
         } else if (t == "rarity_filter") {
             if (random.next_float() < 1.0f / float(m.at("chance").int_value())) run(i + 1, pos);
         } else if (t == "block_predicate_filter") {
@@ -317,7 +323,9 @@ struct PlaceRun {
 
 }  // namespace
 
+thread_local BlockPos g_trace_origin;
 bool place_placed_feature(FeatureEnv& env, const Json& placed, Rng& random, const BlockPos& origin, const std::string* top_feature_id) {
+    if (top_feature_id) g_trace_origin = origin;
     const std::string* saved = env.top_feature;
     env.top_feature = top_feature_id;
     PlaceRun run{env, placed.at("placement"), resolve_ref(env, "configured_feature", placed.at("feature")), random};
@@ -330,6 +338,7 @@ bool place_configured_feature(FeatureEnv& env, const Json& cf, Rng& random, cons
     if (!env.level.can_write(origin)) return false;   // Feature.place: ensureCanWrite(origin)
     std::string type = cf.at("type").str;
     if (type.rfind("minecraft:", 0) == 0) type = type.substr(10);
+    if (const char* tr = std::getenv("PAINITE_TRACE")) if (env.top_feature && env.top_feature->find(tr) != std::string::npos) fprintf(stderr, "trace %s at %d %d %d (chunk %d %d)\n", env.top_feature->c_str(), origin.x, origin.y, origin.z, g_trace_origin.x >> 4, g_trace_origin.z >> 4);
     return place_feature_type(env, type, cf.at("config"), random, origin);
 }
 

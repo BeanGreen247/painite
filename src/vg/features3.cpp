@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include "mathutil.hpp"
+#include "multiface.hpp"
 #include <stdexcept>
 
 namespace pn::vg {
@@ -532,107 +533,6 @@ bool place_root_system(FeatureEnv& env, const Json& config, Rng& random, const B
     return true;
 }
 
-// ---- multiface growth (glow lichen)
-const char* const kFaceNames[6] = {"down", "up", "north", "south", "west", "east"};
-const Dir kOpposite[6] = {UP, DOWN, SOUTH, NORTH, EAST, WEST};
-
-bool mf_can_attach(FeatureEnv& env, int dir_to_neighbour, const BlockPos& neighbour) {
-    const BlockData& bd = env.bd();
-    uint16_t s = env.level.get(neighbour);
-    int face = kOpposite[dir_to_neighbour];
-    return bd.sturdy(s, face) || bd.collision_face_full(s, face);
-}
-bool mf_has_face(const BlockData& bd, uint16_t s, int d) { return bd.has_prop(s, kFaceNames[d]) && bd.prop(s, kFaceNames[d]) == "true"; }
-
-// MultifaceBlock.getStateForPlacement(oldState, level, pos, direction); kNoState = null
-uint16_t mf_state_for_placement(FeatureEnv& env, const std::string& block, uint16_t old, const BlockPos& pos, int dir) {
-    const BlockData& bd = env.bd();
-    bool is_this = bd.name(old) == block;
-    if (!(!is_this || !mf_has_face(bd, old, dir))) return kNoState;
-    if (!mf_can_attach(env, dir, pos + Dir(dir))) return kNoState;
-    uint16_t ns;
-    if (is_this) ns = old;
-    else if (bd.water(old) && (bd.flags(old) & BF_SOURCE)) ns = bd.with(bd.default_state(block), "waterlogged", "true");
-    else ns = bd.default_state(block);
-    return bd.with(ns, kFaceNames[dir], "true");
-}
-
-bool mf_can_spread_into(FeatureEnv& env, const std::string& block, const BlockPos& pos, int face) {
-    const BlockData& bd = env.bd();
-    uint16_t ex = env.level.get(pos);
-    bool replaceable = bd.air(ex) || bd.name(ex) == block || (bd.name(ex) == "minecraft:water" && (bd.flags(ex) & BF_SOURCE));
-    if (!replaceable) return false;
-    // isValidStateForPlacement
-    if (bd.name(ex) == block && mf_has_face(bd, ex, face)) return false;
-    return mf_can_attach(env, face, pos + Dir(face));
-}
-
-// MultifaceSpreader.spreadFromFaceTowardRandomDirection; returns whether something was placed
-bool mf_spread_toward_random(FeatureEnv& env, const std::string& block, uint16_t state, const BlockPos& pos, int starting_face, Rng& random) {
-    const BlockData& bd = env.bd();
-    int dirs[6] = {0, 1, 2, 3, 4, 5};
-    for (int i = 6; i > 1; i--) { int swap = random.next_int(i); std::swap(dirs[i - 1], dirs[swap]); }
-    for (int spread : dirs) {
-        if (kOpposite[spread] == starting_face || spread == starting_face) continue;
-        // same axis: down/up (0,1), north/south (2,3), west/east (4,5)
-        if ((spread >> 1) == (starting_face >> 1)) continue;
-        if (!(mf_has_face(bd, state, starting_face) && !mf_has_face(bd, state, spread))) continue;
-        struct Sp { BlockPos pos; int face; };
-        Sp types[3] = {{pos, spread}, {pos + Dir(spread), starting_face}, {(pos + Dir(spread)) + Dir(starting_face), int(kOpposite[spread])}};
-        for (auto& t : types) {
-            if (mf_can_spread_into(env, block, t.pos, t.face)) {
-                uint16_t old = env.level.get(t.pos);
-                uint16_t ns = mf_state_for_placement(env, block, old, t.pos, t.face);
-                if (ns != kNoState) { env.level.set(t.pos, ns); return true; }
-                break;
-            }
-        }
-    }
-    return false;
-}
-
-bool place_multiface(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
-    Level& lv = env.level;
-    const BlockData& bd = env.bd();
-    std::string block = config.at("block").str;
-    if (block != "minecraft:glow_lichen") throw std::runtime_error("multiface growth for " + block + " is not ported yet");
-    int search = int(config.get_int("search_range", 10));
-    float chance = config.has("chance_of_spreading") ? config.at("chance_of_spreading").float_value() : 0.5f;
-    auto air_or_water = [&](uint16_t s) { return bd.air(s) || bd.name(s) == "minecraft:water"; };
-    if (!air_or_water(lv.get(origin))) return false;
-    std::vector<int> valid;
-    if (config.get_bool("can_place_on_ceiling", false)) valid.push_back(UP);
-    if (config.get_bool("can_place_on_floor", false)) valid.push_back(DOWN);
-    if (config.get_bool("can_place_on_wall", false)) for (int d : {NORTH, EAST, SOUTH, WEST}) valid.push_back(d);
-    auto shuffled = [&](std::vector<int> v) { for (int i = int(v.size()); i > 1; i--) { int swap = random.next_int(i); std::swap(v[size_t(i - 1)], v[size_t(swap)]); } return v; };
-    auto place_if_possible = [&](const BlockPos& pos, uint16_t old, const std::vector<int>& dirs) {
-        for (int d : dirs) {
-            if (state_in_set(env, lv.get(pos + Dir(d)), config.at("can_be_placed_on"))) {
-                uint16_t ns = mf_state_for_placement(env, block, old, pos, d);
-                if (ns == kNoState) return false;
-                lv.set(pos, ns);
-                if (random.next_float() < chance) mf_spread_toward_random(env, block, ns, pos, d, random);
-                return true;
-            }
-        }
-        return false;
-    };
-    std::vector<int> dirs = shuffled(valid);
-    if (place_if_possible(origin, lv.get(origin), dirs)) return true;
-    for (int sd : dirs) {
-        std::vector<int> placement;
-        for (int d : valid) if (d != kOpposite[sd]) placement.push_back(d);
-        placement = shuffled(placement);
-        for (int i = 0; i < search; i++) {
-            BlockPos pos = origin + Dir(sd);
-            uint16_t st = lv.get(pos);
-            if (!air_or_water(st) && bd.name(st) != block) break;
-            if (place_if_possible(pos, st, placement)) return true;
-        }
-    }
-    return false;
-}
-
 // ---- dripstone (speleothem)
 struct SpCfg {
     std::string base, pointed;   // block names
@@ -950,6 +850,7 @@ bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& c
     if (type == "underwater_magma") return place_underwater_magma(env, config, random, origin);
     if (type == "root_system") return place_root_system(env, config, random, origin);
     if (type == "multiface_growth") return place_multiface(env, config, random, origin);
+    if (type == "sculk_patch") return place_sculk_patch(env, config, random, origin);
     if (type == "speleothem") return place_speleothem(env, config, random, origin);
     if (type == "speleothem_cluster") return place_speleothem_cluster(env, config, random, origin);
     if (type == "large_dripstone") return place_large_dripstone(env, config, random, origin);

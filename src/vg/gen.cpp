@@ -132,6 +132,7 @@ struct VanillaGen::Impl {
                                                   [this](int qx, int qy, int qz) { return biome_value(qx, qy, qz); });
         if (opt.dim != 2) make_carvers();
         quart_rows = size_t(dim_height / 4);
+        if (opt.dim != 2) check_y_independence();
         decorator = std::make_unique<Decorator>(reg, o.seed, climate.biomes);
     }
 
@@ -175,6 +176,44 @@ struct VanillaGen::Impl {
     }
     uint8_t biome_at(int qx, int qy, int qz) const { return biome_index[size_t(biome_value(qx, qy, qz))]; }
 
+    // the climate functions other than depth do not depend on y: one sample per column serves every height
+    struct Climate2D { int64_t t, h, c, e, w; };
+    bool y_independent = false;
+    Climate2D climate_2d(int qx, int qz) const {
+        Ctx ctx{qx * 4, 0, qz * 4, nullptr};
+        return {quantize_coord(float(t->compute(ctx))), quantize_coord(float(h->compute(ctx))), quantize_coord(float(c->compute(ctx))), quantize_coord(float(e->compute(ctx))), quantize_coord(float(w->compute(ctx)))};
+    }
+    int biome_at_depth(const Climate2D& k, int qx, int qy, int qz) const {
+        TargetPoint tp{k.t, k.h, k.c, k.e, quantize_coord(float(d->compute(Ctx{qx * 4, qy * 4, qz * 4, nullptr}))), k.w};
+        return climate.list->find_value(tp);
+    }
+    void check_y_independence() {
+        y_independent = opt.dim != 2;
+        for (int i = 0; i < 6 && y_independent; i++) {
+            int qx = i * 37 - 100, qz = i * 91 - 200;
+            for (int qy : {-16, 20, 60}) {
+                Ctx a{qx * 4, 0, qz * 4, nullptr}, b{qx * 4, qy * 4, qz * 4, nullptr};
+                for (NodeP n : {t, h, c, e, w})
+                    if (n->compute(a) != n->compute(b)) { y_independent = false; break; }
+            }
+        }
+    }
+    // carver lists come from the biome at the chunk's corner at y 0: remembered per chunk
+    mutable std::mutex carver_mu;
+    mutable std::map<std::pair<int, int>, int> carver_cache;
+    int carver_biome(int qx, int qz) const {
+        std::pair<int, int> key{qx, qz};
+        {
+            std::lock_guard<std::mutex> l(carver_mu);
+            auto it = carver_cache.find(key);
+            if (it != carver_cache.end()) return it->second;
+        }
+        int v = biome_value(qx, 0, qz);
+        std::lock_guard<std::mutex> l(carver_mu);
+        carver_cache[key] = v;
+        return v;
+    }
+
     // BIOMES + NOISE + SURFACE + CARVERS of one chunk
     void build(Proto& p) {
         std::lock_guard<std::mutex> l(p.mu);
@@ -182,13 +221,17 @@ struct VanillaGen::Impl {
         auto t0 = std::chrono::steady_clock::now();
         auto lap = [&](const char* what) { if (!std::getenv("PAINITE_PROF")) return; auto t1 = std::chrono::steady_clock::now(); fprintf(stderr, "  [prof] %s %.1f ms\n", what, std::chrono::duration<double, std::milli>(t1 - t0).count()); t0 = t1; };
         p.biomes.assign(quart_rows * 16, 0);
-        for (size_t qy = 0; qy < quart_rows; qy++)
-            for (int qz = 0; qz < 4; qz++)
-                for (int qx = 0; qx < 4; qx++) {
-                    int v = biome_value(p.cx * 4 + qx, int(qy) + (dim_min_y >> 2), p.cz * 4 + qz);
+        for (int qz = 0; qz < 4; qz++)
+            for (int qx = 0; qx < 4; qx++) {
+                Climate2D k{};
+                if (y_independent) k = climate_2d(p.cx * 4 + qx, p.cz * 4 + qz);
+                for (size_t qy = 0; qy < quart_rows; qy++) {
+                    int yq = int(qy) + (dim_min_y >> 2);
+                    int v = y_independent ? biome_at_depth(k, p.cx * 4 + qx, yq, p.cz * 4 + qz) : biome_value(p.cx * 4 + qx, yq, p.cz * 4 + qz);
                     p.biomes[(qy * 4 + size_t(qz)) * 4 + size_t(qx)] = uint8_t(v);
                     p.present.insert(v);
                 }
+            }
         lap("biomes");
         ChunkFill fill(*state, ns, pal, p.cx, p.cz, dim_min_y, dim_height);
         lap("fill setup");
@@ -198,19 +241,26 @@ struct VanillaGen::Impl {
         // quart cells of this chunk and the border the position fuzz can reach, sampled once
         const int min_q = dim_min_y >> 2;
         std::vector<uint8_t> memo(size_t(6 * 6) * quart_rows, 255);
+        std::vector<std::pair<Climate2D, bool>> cols(36, {Climate2D{}, false});
         std::function<int(int, int, int)> lookup = [&](int qx, int qy, int qz) {
             int dx = qx - (p.cx * 4 - 1), dz = qz - (p.cz * 4 - 1);
             if (dx < 0 || dx >= 6 || dz < 0 || dz >= 6) return biome_value(qx, qy, qz);
             if (dx >= 1 && dx <= 4 && dz >= 1 && dz <= 4) return int(p.biomes[(size_t(qy - min_q) * 4 + size_t(dz - 1)) * 4 + size_t(dx - 1)]);
             uint8_t& m = memo[(size_t(qy - min_q) * 6 + size_t(dz)) * 6 + size_t(dx)];
-            if (m == 255) m = uint8_t(biome_value(qx, qy, qz));
+            if (m == 255) {
+                if (y_independent) {
+                    auto& col = cols[size_t(dz) * 6 + size_t(dx)];
+                    if (!col.second) { col.first = climate_2d(qx, qz); col.second = true; }
+                    m = uint8_t(biome_at_depth(col.first, qx, qy, qz));
+                } else m = uint8_t(biome_value(qx, qy, qz));
+            }
             return int(m);
         };
         p.blocks.init(fill.min_y(), fill.height(), std::move(blocks), bd->chunk_flags());
         if (opt.stage != "noise") surface->build(p.blocks, p.cx, p.cz, fill, std::getenv("PAINITE_NOMEMO") ? nullptr : &lookup);
         lap("surface");
         if (carvers && opt.stage != "noise" && opt.stage != "surface")
-            carvers->carve(p.blocks, p.cx, p.cz, fill, [this](int qx, int qz) { return biome_value(qx, 0, qz); }, &lookup);
+            carvers->carve(p.blocks, p.cx, p.cz, fill, [this](int qx, int qz) { return carver_biome(qx, qz); }, &lookup);
         lap("carve");
         p.built = true;
     }
@@ -261,6 +311,8 @@ VanillaGen::~VanillaGen() = default;
 const std::vector<std::vector<std::string>>& VanillaGen::decorator_steps() const { return p_->decorator->step_features(); }
 int VanillaGen::min_y() const { return p_->dim_min_y; }
 int VanillaGen::height() const { return p_->dim_height; }
+
+void VanillaGen::decorate(int cx, int cz) const { p_->decorate_one(cx, cz); }
 
 void VanillaGen::generate(Chunk& c) const {
     Impl& I = *p_;
