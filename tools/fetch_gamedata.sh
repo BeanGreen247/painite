@@ -20,5 +20,7 @@ cp -r "$tmp/gen/reports" "$out/reports"
 rm -rf "$tmp"
 (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpGameplay.java "../../$out/blockprops.txt" "../../$out/entityprops.txt" >/dev/null 2>&1) \
   || echo "$v: could not dump the block and entity facts" >&2
+(cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpShapes.java "../../$out/blockshapes_states.txt" "../../$out/blockshapes.txt" >/dev/null 2>&1) \
+  || echo "$v: could not dump the collision shapes" >&2
 touch "$out/.done"
 echo "$v: $(find "$out" -type f | wc -l) files in $out"

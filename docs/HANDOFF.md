@@ -42,6 +42,8 @@ Protocol independent rules, ported from Mojang's classes, tested without a serve
 - `loot.*`: data driven loot tables (pools, entries, conditions, functions) rolled with Mojang's random call order; `fill()` for seeded containers. Not yet: enchant_randomly/enchant_with_levels, furnace_smelt, copy_components (block entities), exploration_map, entity predicates beyond type/flags/variants. Unverified against Mojang yet: compare by opening the same structure chests on a reference world and on Painite with a bot.
 - `data.*`: `Tags`, `BlockTable` (hardness, resistance, requires tool, ...), `EntityTable` (size, tracking range, default attributes).
 - Server wiring: `Game` owns a `PlayerSim` per player (`inv_*` methods), container events go to the worker as `GEvent::Container*`; player inventories are saved in `Inventory` (stacks with components keep Painite's `painite_patch` byte array until persistent component codecs exist).
+- `phys.*` (AABB collision per Mojang's Entity.collide incl. step up), `entity.*` (Entity base, ItemEntity with Mojang's tick, merge, push out of blocks) compile and are untested/unwired. `tools/oracle/DumpShapes.java` writes `data/game/26.2/blockshapes_states.txt` (state to shape id) and `blockshapes.txt` (shape id to boxes).
+- A prompt for handing the work to another assistant is in `docs/COPILOT_PROMPT.md`.
 - Next: digging (port `ServerPlayerGameMode`: progress, tool speed, drops via block loot tables), item entities and a real entity system (needs block collision shapes from an oracle dump), pickup, placing consuming items, then health/hunger/damage, mobs, fluids, random ticks, redstone, recipes.
 
 ## Verification workflow (needs JDK 25 on PATH, see Environment)
