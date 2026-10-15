@@ -3,8 +3,10 @@
 #pragma once
 #include "auth.hpp"
 #include "region.hpp"
+#include "sim/player.hpp"
 #include <atomic>
 #include <condition_variable>
+#include <map>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -43,7 +45,8 @@ struct GPos {
 };
 
 struct GEvent {
-    enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension } kind = Move;
+    enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
+                ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -53,6 +56,10 @@ struct GEvent {
     int64_t t0 = 0, t1 = 0;                // Time: world age, day time
     int value = 0;
     std::string text;
+    // container events (the player's own worker encodes them)
+    int container = 0, state = 0, slot = 0;
+    std::vector<sim::ItemStack> items;
+    sim::ItemStack stack;
 };
 
 class Worker;
@@ -82,6 +89,15 @@ public:
     int gamemode_of(uint64_t gid);
     int op_level(uint64_t gid);
     int players();
+
+    // --- inventory (called from worker threads; the game state lives in sim::PlayerSim) ---
+    void inv_click(uint64_t gid, int container, int state, int slot, int button, int mode, const std::map<int, sim::HashedLite>& changed, const sim::HashedLite& carried);
+    void inv_close(uint64_t gid, int container);
+    void inv_set_held(uint64_t gid, int slot);
+    void inv_creative_slot(uint64_t gid, int slot, const sim::ItemStack& stack);
+    sim::ItemStack inv_held(uint64_t gid);                  // a copy of the stack in the selected hotbar slot
+    bool inv_consume_held(uint64_t gid, int n);             // remove n from the selected stack (not in creative); false when it holds fewer
+    void inv_sync(uint64_t gid);                            // send the whole inventory again (join, dimension change)
 
     // world clock
     int64_t game_time() const { return game_time_; }
@@ -113,6 +129,8 @@ private:
         int gamemode = 0, view = 8;
         std::unordered_set<uint64_t> seen;   // players this one currently has spawned
         int64_t last_save_ms = 0;
+        std::unique_ptr<sim::PlayerSim> sim;
+        std::unique_ptr<sim::ContainerSynchronizer> sync;
     };
     void loop();
     void tick();

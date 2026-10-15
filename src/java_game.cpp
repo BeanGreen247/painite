@@ -151,6 +151,25 @@ void Worker::change_dimension(JConn& c, const GPos& p) {
     pump_chunks(c);
 }
 
+// An item stack on the wire. The item id is looked up by name in the connection's own registry; component patches are
+// version specific encodings, so a stack that carries one is only sent as is to a client of the data version Painite loaded them from.
+static void write_stack(Wr& w, const sim::ItemStack& st, const VanillaData& vd) {
+    if (st.is_empty()) { w.varint(0); return; }
+    int id = vd.reg_id("item/" + st.item()->name.substr(st.item()->name.find(':') + 1), -1);
+    if (id < 0) { w.varint(0); return; }
+    w.varint(st.count());
+    w.varint(id);
+    if (vd.version == "26.2") {
+        w.varint(static_cast<int32_t>(st.patch().added.size()));
+        w.varint(static_cast<int32_t>(st.patch().removed.size()));
+        for (auto& kv : st.patch().added) { w.varint(kv.first); w.raw(kv.second.data(), kv.second.size()); }
+        for (int r : st.patch().removed) w.varint(r);
+    } else {
+        w.varint(0);
+        w.varint(0);
+    }
+}
+
 void Worker::java_event(JConn& c, const GEvent& ev) {
     PN_PERF("event.java");
     const VanillaData& vd = *c.vd;
@@ -292,6 +311,45 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             break;
         case GEvent::Message: send_chat(c, ev.text); break;
         case GEvent::Kick: kick(c, ev.text); break;
+        case GEvent::ContainerContent: {
+            w.varint(vd.packet("play/c/container_set_content"));
+            w.varint(ev.container);
+            w.varint(ev.state);
+            w.varint(static_cast<int32_t>(ev.items.size()));
+            for (auto& st : ev.items) write_stack(w, st, vd);
+            write_stack(w, ev.stack, vd);
+            send(c, w.b);
+            break;
+        }
+        case GEvent::ContainerSlot:
+            w.varint(vd.packet("play/c/container_set_slot"));
+            w.varint(ev.container);
+            w.varint(ev.state);
+            w.be16(static_cast<uint16_t>(ev.slot));
+            write_stack(w, ev.stack, vd);
+            send(c, w.b);
+            break;
+        case GEvent::SetCursor:
+            w.varint(vd.packet("play/c/set_cursor_item"));
+            write_stack(w, ev.stack, vd);
+            send(c, w.b);
+            break;
+        case GEvent::SetPlayerSlot:
+            w.varint(vd.packet("play/c/set_player_inventory"));
+            w.varint(ev.slot);
+            write_stack(w, ev.stack, vd);
+            send(c, w.b);
+            break;
+        case GEvent::HeldSlot:
+            w.varint(vd.packet("play/c/set_held_slot"));
+            w.varint(ev.slot);
+            send(c, w.b);
+            break;
+        case GEvent::ContainerClose:
+            w.varint(vd.packet("play/c/container_close"));
+            w.varint(ev.container);
+            send(c, w.b);
+            break;
         default: break;
     }
 }
@@ -350,16 +408,75 @@ static uint16_t placed_state(uint16_t base, int face, float yaw, float cursor_y)
 
 void Worker::on_creative_slot(JConn& c, Rd& r) {
     int slot = static_cast<int16_t>(r.be16());
-    int count = r.varint();
-    if (r.bad || slot < 36 || slot > 44) return;
-    int idx = slot - 36;
-    c.hotbar[idx] = 0;
-    c.hotbar_name[idx].clear();
-    if (count <= 0) return;
-    int item = r.varint();
-    if (r.bad || item < 0 || static_cast<size_t>(item) >= c.vd->items.size()) return;
-    c.hotbar_name[idx] = c.vd->items[static_cast<size_t>(item)];
-    c.hotbar[idx] = Blocks::get().default_state(c.vd->items[static_cast<size_t>(item)]);
+    if (r.bad || !c.gid) return;
+    // the wire item id is the id of the client's own registry: take the name from it, then build the stack for Painite's registry
+    sim::ItemStack st;
+    {
+        Rd peek = r;
+        int count = peek.varint();
+        if (count > 0) {
+            int wire_id = peek.varint();
+            if (peek.bad || wire_id < 0 || static_cast<size_t>(wire_id) >= c.vd->items.size()) return;
+            const sim::ItemType* t = sim::Items::get().by_name(c.vd->items[static_cast<size_t>(wire_id)]);
+            if (!t) return;
+            st = sim::ItemStack(t, count);
+            int pos = peek.varint(), neg = peek.varint();
+            if (peek.bad || pos < 0 || neg < 0) return;
+            if (c.vd->version == "26.2") {   // component values are only kept for the data version Painite loaded
+                for (int i = 0; i < pos && !peek.bad; i++) {
+                    int type = peek.varint(), len = peek.varint();
+                    if (peek.bad || len < 0 || static_cast<size_t>(len) > peek.left()) return;
+                    st.patch().added[type] = std::vector<uint8_t>(peek.p, peek.p + len);
+                    peek.p += len;
+                }
+                for (int i = 0; i < neg && !peek.bad; i++) st.patch().removed.insert(peek.varint());
+            }
+        }
+    }
+    s_.game.inv_creative_slot(c.gid, slot, st);
+    // placing still reads the hotbar mirror kept on the connection
+    if (slot >= 36 && slot <= 44) {
+        int idx = slot - 36;
+        c.hotbar[idx] = 0;
+        c.hotbar_name[idx].clear();
+        if (!st.is_empty()) {
+            c.hotbar_name[idx] = st.item()->name;
+            c.hotbar[idx] = Blocks::get().default_state(st.item()->name);
+        }
+    }
+}
+
+void Worker::on_container_click(JConn& c, Rd& r) {
+    int container = r.varint();
+    int state = r.varint();
+    int slot = static_cast<int16_t>(r.be16());
+    int button = static_cast<int8_t>(r.u8());
+    int mode = r.varint();
+    auto hashed = [&](sim::HashedLite& h) {
+        h = sim::HashedLite();
+        h.present = r.boolean();
+        if (!h.present) return;
+        h.item = r.varint();
+        h.count = r.varint();
+        int pos = r.varint();
+        int neg = r.varint();
+        if (pos < 0 || neg < 0 || pos > 256 || neg > 256) { r.bad = true; return; }
+        for (int i = 0; i < pos && !r.bad; i++) { int t = r.varint(); h.added[t] = static_cast<int32_t>(r.be32()); }
+        for (int i = 0; i < neg && !r.bad; i++) h.removed.insert(r.varint());
+    };
+    int n = r.varint();
+    if (r.bad || n < 0 || n > 128) return;
+    std::map<int, sim::HashedLite> changed;
+    for (int i = 0; i < n && !r.bad; i++) {
+        int sl = static_cast<int16_t>(r.be16());
+        sim::HashedLite h;
+        hashed(h);
+        changed[sl] = h;
+    }
+    sim::HashedLite carried;
+    hashed(carried);
+    if (r.bad || !c.gid) return;
+    s_.game.inv_click(c.gid, container, state, slot, button, mode, changed, carried);
 }
 
 void Worker::on_dig(JConn& c, Rd& r) {

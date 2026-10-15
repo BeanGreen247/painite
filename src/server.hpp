@@ -159,6 +159,7 @@ private:
     void on_dig(JConn& c, Rd& r);
     void on_place(JConn& c, Rd& r);
     void on_creative_slot(JConn& c, Rd& r);
+    void on_container_click(JConn& c, Rd& r);
     void send_block_ack(JConn& c, int seq);
     void send_block_update(JConn& c, int x, int y, int z, uint16_t block);
     void send_time(JConn& c, int64_t age, int64_t day);

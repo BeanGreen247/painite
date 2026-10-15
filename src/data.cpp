@@ -170,6 +170,35 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
         }
         break;
     }
+    // every synchronized registry: entry names in packet order
+    for (auto& p : v.config_packets) {
+        int32_t pid = 0;
+        size_t n = read_varint(p.data(), p.size(), pid);
+        if (pid != i.cf_registry_data || n == 0) continue;
+        size_t pos = n;
+        auto rstr = [&](std::string& out) {
+            int32_t l = 0;
+            size_t k = read_varint(p.data() + pos, p.size() - pos, l);
+            if (!k || l < 0 || pos + k + static_cast<size_t>(l) > p.size()) return false;
+            out.assign(reinterpret_cast<const char*>(p.data() + pos + k), static_cast<size_t>(l));
+            pos += k + static_cast<size_t>(l);
+            return true;
+        };
+        std::string reg;
+        int32_t count = 0;
+        if (!rstr(reg)) continue;
+        size_t k = read_varint(p.data() + pos, p.size() - pos, count);
+        if (!k) continue;
+        pos += k;
+        auto& names = v.dyn[reg];
+        for (int e = 0; e < count; e++) {
+            std::string name;
+            if (!rstr(name) || pos >= p.size()) break;
+            bool has_data = p[pos++] != 0;
+            names.push_back(name);
+            if (has_data) break;
+        }
+    }
     // config packets we generate ourselves (brand) are dropped from the replay; remember the known-packs split
     std::vector<std::vector<uint8_t>> kept;
     for (auto& p : v.config_packets) {

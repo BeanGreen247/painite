@@ -36,6 +36,7 @@ struct VanillaData {
     std::map<std::string, int> pid;  // every packet id by "play/c/add_entity"
     std::vector<std::string> biomes; // biome names in registry order
     std::vector<std::string> items;  // item names (minecraft:stone) by registry id
+    std::map<std::string, std::vector<std::string>> dyn;   // synchronized registries ("minecraft:enchantment", "minecraft:damage_type", ...): entry names in the order of the recorded registry_data packets, which is their protocol id
     int data_version = 0;
     int reg_id(const std::string& k, int def = -1) const { auto it = reg.find(k); return it == reg.end() ? def : it->second; }
     int packet(const char* k) const { auto it = pid.find(k); return it == pid.end() ? -1 : it->second; }

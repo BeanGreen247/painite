@@ -1,4 +1,7 @@
 #include "server.hpp"
+#include "sim/item.hpp"
+#include "sim/data.hpp"
+#include "sim/loot.hpp"
 #include "log.hpp"
 #include "util.hpp"
 #include "perf.hpp"
@@ -211,6 +214,22 @@ bool Server::start(std::string& err) {
     if (cfg.workers_min < 1) cfg.workers_min = 1;
     if (cfg.workers_min > cfg.workers_max) cfg.workers_min = cfg.workers_max;
 
+    {   // gameplay data (items, loot tables, recipes ...): data/game/26.2, made by tools/fetch_gamedata.sh
+        std::string err2;
+        for (std::string d : {cfg.data_dir + "/game/26.2", std::string("data/game/26.2"), exe_dir + "/data/game/26.2", exe_dir + "/../data/game/26.2"}) {
+            if (access((d + "/.done").c_str(), R_OK) != 0) continue;
+            if (sim::Items::load(d, err2)) {
+                sim::Tags::set_dir(d);
+                sim::LootTables::set_dir(d);
+                if (!sim::BlockTable::get().load(d, err2)) warn("block facts: " + err2);
+                if (!sim::EntityTable::get().load(d, err2)) warn("entity facts: " + err2);
+                info("gameplay data loaded from " + d);
+                break;
+            }
+            warn("gameplay data unusable: " + err2);
+        }
+        if (sim::Items::get().size() == 0) warn("no gameplay data (data/game/26.2): inventories and survival rules are off. Run tools/fetch_gamedata.sh 26.2");
+    }
     auto bins = list_vanilla_bins(cfg.data_dir, exe_dir);
     if (bins.empty()) { err = "no protocol data found (data/vanilla-*.bin). Run: python3 tools/fetch_vanilla_data.py"; return false; }
     for (auto& b : bins) {
@@ -221,6 +240,7 @@ bool Server::start(std::string& err) {
     }
     if (data.empty()) { err = "none of the protocol data files could be loaded"; return false; }
     std::sort(data.begin(), data.end(), [](auto& a, auto& b) { return a.protocol < b.protocol; });
+    for (auto& v : data) if (v.version == "26.2") sim::Registries::set_dynamic(v.dyn);   // enchantment, damage type, ... ids of the version the gameplay data is for
     {
         std::vector<std::pair<int, std::string>> files;
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first

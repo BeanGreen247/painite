@@ -51,6 +51,15 @@ struct RegistriesLoader {
 };
 
 const Registries& Registries::get() { return g_regs; }
+void Registries::set_dynamic(const std::map<std::string, std::vector<std::string>>& regs) {
+    for (auto& kv : regs) {
+        auto& ids = g_regs.ids_[kv.first];
+        auto& names = g_regs.names_[kv.first];
+        ids.clear();
+        names = kv.second;
+        for (size_t i = 0; i < names.size(); i++) ids[names[i]] = int(i);
+    }
+}
 bool Registries::load(const std::string& dir, std::string& err) { return RegistriesLoader::run(dir, err); }
 int Registries::id(const std::string& registry, const std::string& name) const {
     auto r = ids_.find(registry);
@@ -184,6 +193,16 @@ void ItemStack::write(std::vector<uint8_t>& out) const {
     put_varint(out, int(patch_.added.size()));
     put_varint(out, int(patch_.removed.size()));
     for (auto& kv : patch_.added) { put_varint(out, kv.first); out.insert(out.end(), kv.second.begin(), kv.second.end()); }
+    for (int r : patch_.removed) put_varint(out, r);
+}
+
+void ItemStack::write_delimited(std::vector<uint8_t>& out) const {
+    if (is_empty()) { put_varint(out, 0); return; }
+    put_varint(out, count_);
+    put_varint(out, item_->index);
+    put_varint(out, int(patch_.added.size()));
+    put_varint(out, int(patch_.removed.size()));
+    for (auto& kv : patch_.added) { put_varint(out, kv.first); put_varint(out, int(kv.second.size())); out.insert(out.end(), kv.second.begin(), kv.second.end()); }
     for (int r : patch_.removed) put_varint(out, r);
 }
 

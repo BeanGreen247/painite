@@ -54,6 +54,8 @@ class Registries {
 public:
     static const Registries& get();
     static bool load(const std::string& game_dir, std::string& err);
+    // synchronized registries (enchantments, damage types, ...): entry names in registry_data order, which is their id on the wire
+    static void set_dynamic(const std::map<std::string, std::vector<std::string>>& regs);
     int id(const std::string& registry, const std::string& name) const;   // -1 when unknown
     const std::string& name(const std::string& registry, int id) const;
     int size(const std::string& registry) const;
@@ -147,6 +149,8 @@ public:
     // item stack wire format (ItemStack.OPTIONAL_STREAM_CODEC): count, item id, component patch
     void write(std::vector<uint8_t>& out) const;
     // reads a stack the client sent (OPTIONAL_UNTRUSTED_STREAM_CODEC: every component value is length prefixed); false when the data is bad
+    // the same with length prefixed components (what clients send, and what Painite keeps in its own player files)
+    void write_delimited(std::vector<uint8_t>& out) const;
     static bool read_untrusted(const uint8_t*& p, const uint8_t* end, ItemStack& out);
 
 private:

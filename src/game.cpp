@@ -4,6 +4,7 @@
 #include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
+#include "sim/item_nbt.hpp"
 #include <algorithm>
 #include <chrono>
 #include <pthread.h>
@@ -53,6 +54,94 @@ void Game::flush_events() {
     }
 }
 
+// ---- inventory --------------------------------------------------------------------------------------------
+
+namespace {
+// Turns what a menu wants the client to know into events for the player's worker
+class MenuSync : public sim::ContainerSynchronizer {
+public:
+    MenuSync(Game* g, std::shared_ptr<const GIdentity> id, std::function<void(const std::shared_ptr<const GIdentity>&, GEvent)> send) : game(g), id_(std::move(id)), send_(std::move(send)) {}
+    void send_initial_data(sim::Menu& m, const std::vector<sim::ItemStack>& items, const sim::ItemStack& carried, const std::vector<int>&) override {
+        GEvent e;
+        e.kind = GEvent::ContainerContent;
+        e.container = m.container_id;
+        e.state = m.increment_state_id();
+        e.items = items;
+        e.stack = carried;
+        send_(id_, std::move(e));
+    }
+    void send_slot_change(sim::Menu& m, int slot, const sim::ItemStack& s) override {
+        GEvent e;
+        e.kind = GEvent::ContainerSlot;
+        e.container = m.container_id;
+        e.state = m.increment_state_id();
+        e.slot = slot;
+        e.stack = s;
+        send_(id_, std::move(e));
+    }
+    void send_carried_change(sim::Menu&, const sim::ItemStack& s) override {
+        GEvent e;
+        e.kind = GEvent::SetCursor;
+        e.stack = s;
+        send_(id_, std::move(e));
+    }
+    void send_data_change(sim::Menu&, int, int) override {}
+    Game* game;
+private:
+    std::shared_ptr<const GIdentity> id_;
+    std::function<void(const std::shared_ptr<const GIdentity>&, GEvent)> send_;
+};
+}  // namespace
+
+void Game::inv_click(uint64_t gid, int container, int state, int slot, int button, int mode, const std::map<int, sim::HashedLite>& changed, const sim::HashedLite& carried) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim || mode < 0 || mode > 6) return;
+    it->second.sim->handle_container_click(container, state, slot, button, sim::ContainerInput(mode), changed, carried);
+}
+void Game::inv_close(uint64_t gid, int container) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return;
+    it->second.sim->handle_container_close(container);
+    it->second.sim->menu->broadcast_changes();
+}
+void Game::inv_set_held(uint64_t gid, int slot) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it != players_.end() && it->second.sim) it->second.sim->handle_set_carried_item(slot);
+}
+void Game::inv_creative_slot(uint64_t gid, int slot, const sim::ItemStack& stack) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return;
+    it->second.sim->handle_creative_slot(slot, stack);
+}
+sim::ItemStack Game::inv_held(uint64_t gid) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return sim::ItemStack();
+    return it->second.sim->held_item();
+}
+bool Game::inv_consume_held(uint64_t gid, int n) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return false;
+    auto& sm = *it->second.sim;
+    if (sm.has_infinite_materials()) return true;
+    sim::ItemStack& h = sm.held_item();
+    if (h.is_empty() || h.count() < n) return false;
+    h.shrink(n);
+    sm.inventory_menu->broadcast_changes();
+    return true;
+}
+void Game::inv_sync(uint64_t gid) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return;
+    it->second.sim->menu->broadcast_full_state();
+}
+
 // ---- registry ---------------------------------------------------------------------------------------------
 
 uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int gamemode, int view_chunks) {
@@ -66,6 +155,28 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     ps.gamemode = gamemode;
     ps.view = view_chunks;
     ps.last_save_ms = now_ms();
+    if (sim::Items::get().size() > 0) {
+    ps.sim = std::make_unique<sim::PlayerSim>();
+    ps.sim->gamemode = gamemode;
+    {   // the saved inventory
+        Nbt saved;
+        if (s_.world.load_player(uuid_string(id->uuid), saved) && saved.type == Nbt::Compound) {
+            if (const Nbt* inv = saved.get("Inventory"); inv && inv->type == Nbt::List)
+                for (auto& e : inv->list) {
+                    sim::ItemStack st;
+                    int slot = -1;
+                    if (sim::item_from_nbt(e, st, &slot) && !st.is_empty() && slot >= 0 && slot < ps.sim->inv.size()) ps.sim->inv.set_item(slot, st);
+                }
+            ps.sim->inv.selected = int(std::max<int64_t>(0, std::min<int64_t>(8, saved.geti("SelectedItemSlot", 0))));
+        }
+    }
+    ps.sync = std::make_unique<MenuSync>(this, id, [this](const std::shared_ptr<const GIdentity>& to, GEvent ev) { send_event(to, std::move(ev)); });
+    ps.sim->inventory_menu->set_synchronizer(ps.sync.get());
+    GEvent held;
+    held.kind = GEvent::HeldSlot;
+    held.slot = ps.sim->inv.selected;
+    send_event(id, held);
+    }
     for (auto& kv : players_) {
         GEvent a;
         a.kind = GEvent::AddTab;
@@ -185,6 +296,7 @@ void Game::set_gamemode(uint64_t gid, int mode) {
         if (it == players_.end()) return;
         id = it->second.id;
         it->second.gamemode = mode;
+        if (it->second.sim) it->second.sim->gamemode = mode;
         for (auto& kv : players_) {
             GEvent e;
             e.kind = GEvent::Gamemode;
@@ -243,6 +355,8 @@ void Game::save_player_data(uint64_t gid) {
     std::shared_ptr<GIdentity> id;
     GPos pos;
     int gm = 0;
+    Nbt inventory_list = Nbt::list_of(Nbt::Compound);
+    int selected_slot = 0;
     {
         std::lock_guard<std::mutex> l(mu_);
         auto it = players_.find(gid);
@@ -251,6 +365,12 @@ void Game::save_player_data(uint64_t gid) {
         pos = it->second.pos;
         gm = it->second.gamemode;
         it->second.last_save_ms = now_ms();
+        if (it->second.sim) {
+            auto& inv = it->second.sim->inv;
+            for (int i = 0; i < inv.size(); i++)
+                if (!inv.item(i).is_empty()) inventory_list.list.push_back(sim::item_to_nbt(inv.item(i), i));
+            selected_slot = inv.selected;
+        }
     }
     World& w = s_.world;
     std::string u = uuid_string(id->uuid);
@@ -278,6 +398,8 @@ void Game::save_player_data(uint64_t gid) {
     root.put("OnGround", Nbt::make(Nbt::Byte, pos.ground));
     root.put("Dimension", Nbt::str(dim_info(pos.dim).name));
     root.put("playerGameType", Nbt::make(Nbt::Int, gm));
+    root.put("Inventory", std::move(inventory_list));
+    root.put("SelectedItemSlot", Nbt::make(Nbt::Int, selected_slot));
     root.put("DataVersion", Nbt::make(Nbt::Int, w.data_version));
     if (!w.save_player(u, root)) warn("could not save player data for " + id->name);
 }
@@ -330,6 +452,7 @@ void Game::tick() {
     std::unordered_map<int64_t, std::vector<PState*>> grid;   // 512 block regions
     for (auto& kv : players_) {
         PState& p = kv.second;
+        if (p.sim) p.sim->menu->broadcast_changes();
         Move m;
         m.p = &p;
         if (p.dirty) {

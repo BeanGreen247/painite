@@ -710,7 +710,12 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
         if (c.gamemode == 1) on_creative_slot(c, r);
     } else if (pid == c.vd->packet("play/s/set_carried_item")) {
         int slot = static_cast<int16_t>(r.be16());
-        if (!r.bad && slot >= 0 && slot < 9) c.held = slot;
+        if (!r.bad && slot >= 0 && slot < 9) { c.held = slot; if (c.gid) s_.game.inv_set_held(c.gid, slot); }
+    } else if (pid == c.vd->packet("play/s/container_click")) {
+        on_container_click(c, r);
+    } else if (pid == c.vd->packet("play/s/container_close")) {
+        int container = r.varint();
+        if (!r.bad && c.gid) s_.game.inv_close(c.gid, container);
     } else if (pid == c.vd->packet("play/s/punch") || pid == c.vd->packet("play/s/swing")) {
         if (c.gid) s_.game.swing(c.gid);
     } else if (pid == id.pls_batch_received) {
