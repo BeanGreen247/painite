@@ -19,7 +19,9 @@ namespace pn { int64_t now_ms() { return 0; } }   // World wants a clock; the co
 using namespace pn;
 
 int main(int argc, char** argv) {
-    bool has_only = false, dump_features = false;
+    std::vector<int> bh_x, bh_z;
+    bool has_only = false, dump_features = false, list_structures = false, starts_mode = false;
+    int sx0 = 0, sz0 = 0, sx1 = 0, sz1 = 0;
     int layer = INT32_MIN;
     bool probe = false;
     bool hist = false, has_col = false;
@@ -45,6 +47,9 @@ int main(int argc, char** argv) {
         else if (a == "--overlay") overlay = val();
         else if (a == "--order") order = val();
         else if (a == "--probe") probe = true;
+        else if (a == "--bh") { bh_x.push_back(std::stoi(val())); bh_z.push_back(std::stoi(val())); }
+        else if (a == "--starts") starts_mode = true;
+        else if (a == "--structures" || a == "--range") { list_structures = a == "--structures"; sx0 = std::stoi(val()); sz0 = std::stoi(val()); sx1 = std::stoi(val()); sz1 = std::stoi(val()); }
         else if (a == "--dump-features") dump_features = true;
         else if (a == "--hist") hist = true;
         else if (a == "--column") { col_x = std::stoi(val()); col_z = std::stoi(val()); has_col = true; col_lo = std::stoi(val()); col_hi = std::stoi(val()); }
@@ -76,6 +81,69 @@ int main(int argc, char** argv) {
     opt.climate_dump = climate;
     opt.overlay = overlay;
     vg::VanillaGen gen("data", opt, vd.biomes);
+    if (!bh_x.empty()) {
+        for (size_t i = 0; i < bh_x.size(); i++) printf("baseheight %d %d %d\n", bh_x[i], bh_z[i], gen.debug_base_height(bh_x[i], bh_z[i], 0));
+        return 0;
+    }
+    if (starts_mode) {   // structure starts of the reference world against ours, over the --structures chunk range
+        int checked = 0, bad = 0, total_pieces = 0, bad_pieces = 0;
+        for (int cz = sz0; cz <= sz1; cz++)
+            for (int cx = sx0; cx <= sx1; cx++) {
+                std::shared_ptr<Chunk> c = src->chunk(cx, cz);
+                std::map<std::string, std::vector<std::string>> vanilla;
+                if (const Nbt* st = c->extra.get("structures"))
+                    if (const Nbt* starts = st->get("starts"))
+                        for (auto& kv : starts->map) {
+                            std::vector<std::string> pieces;
+                            if (const Nbt* ch = kv.second.get("Children"))
+                                for (auto& pc : ch->list) {
+                                    char buf[512];
+                                    const Nbt* bb = pc.get("BB");
+                                    std::string id = pc.gets("id");
+                                    if (bb && bb->ia.size() == 6) {
+                                        if (pc.get("PosX")) {
+                                            const Nbt* pe = pc.get("pool_element");
+                                            std::string loc = pe ? pe->gets("location") : "";
+                                            std::string et = pe ? pe->gets("element_type") : "";
+                                            if (et == "minecraft:list_pool_element") loc = "list";
+                                            else if (et == "minecraft:feature_pool_element") loc = pe->gets("feature");
+                                            else if (et == "minecraft:empty_pool_element") loc = "empty";
+                                            snprintf(buf, sizeof buf, "%s BB[%d,%d,%d,%d,%d,%d] pos(%d,%d,%d) gld=%d rot=%s el=%s", id.c_str(), bb->ia[0], bb->ia[1], bb->ia[2], bb->ia[3], bb->ia[4], bb->ia[5],
+                                                     int(pc.geti("PosX")), int(pc.geti("PosY")), int(pc.geti("PosZ")), int(pc.geti("ground_level_delta")), pc.gets("rotation").c_str(), loc.c_str());
+                                        } else snprintf(buf, sizeof buf, "%s BB[%d,%d,%d,%d,%d,%d]", id.c_str(), bb->ia[0], bb->ia[1], bb->ia[2], bb->ia[3], bb->ia[4], bb->ia[5]);
+                                        pieces.push_back(buf);
+                                    }
+                                }
+                            if (kv.second.gets("id") != "INVALID" && kv.second.get("Children") && !kv.second.get("Children")->list.empty()) vanilla[kv.first] = pieces;
+                        }
+                std::map<std::string, std::vector<std::string>> ours;
+                for (auto& e : gen.structure_starts_detail(cx, cz)) ours[e.first] = e.second;
+                if (vanilla.empty() && ours.empty()) continue;
+                checked++;
+                bool ok = true;
+                for (auto& kv : vanilla) {
+                    auto it = ours.find(kv.first);
+                    if (it == ours.end()) { printf("chunk %d,%d: vanilla has %s (%zu pieces), we have none\n", cx, cz, kv.first.c_str(), kv.second.size()); ok = false; continue; }
+                    total_pieces += int(kv.second.size());
+                    size_t n = std::max(kv.second.size(), it->second.size());
+                    int shown = 0;
+                    if (kv.second.size() != it->second.size()) { printf("chunk %d,%d %s: %zu pieces vs ours %zu\n", cx, cz, kv.first.c_str(), kv.second.size(), it->second.size()); ok = false; }
+                    for (size_t i = 0; i < n; i++) {
+                        std::string a = i < kv.second.size() ? kv.second[i] : "-", b = i < it->second.size() ? it->second[i] : "-";
+                        if (verbose >= 2 && a == b) printf("  piece %zu same: %s\n", i, a.c_str());
+                        if (a != b) { bad_pieces++; ok = false; if (shown++ < (verbose ? 100 : 3)) printf("  piece %zu\n    vanilla %s\n    ours    %s\n", i, a.c_str(), b.c_str()); }
+                    }
+                }
+                for (auto& kv : ours) if (!vanilla.count(kv.first)) { printf("chunk %d,%d: we have %s (%zu pieces), vanilla has none\n", cx, cz, kv.first.c_str(), kv.second.size()); ok = false; }
+                if (!ok) bad++;
+            }
+        printf("starts: %d chunks checked, %d differ; %d pieces, %d differ\n", checked, bad, total_pieces, bad_pieces);
+        return bad ? 1 : 0;
+    }
+    if (list_structures) {
+        for (auto& l : gen.describe_structures(sx0, sz0, sx1, sz1)) printf("%s\n", l.c_str());
+        return 0;
+    }
     if (smoke >= 0) {
         std::map<std::string, int> errors;
         int ok = 0;

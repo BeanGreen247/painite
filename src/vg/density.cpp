@@ -1,4 +1,5 @@
 #include "density.hpp"
+#include "beardifier.hpp"
 #include <cmath>
 #include <stdexcept>
 
@@ -513,6 +514,6 @@ NodeP Compiler::object(const Json& j) {
     throw std::runtime_error("unknown density function type " + type);
 }
 
-double BeardifierNode::compute(const Ctx&) const { return 0.0; }
+double BeardifierNode::compute(const Ctx& c) const { return chunk && chunk->beardifier ? chunk->beardifier->compute(c.x, c.y, c.z) : 0.0; }
 
 }  // namespace pn::vg

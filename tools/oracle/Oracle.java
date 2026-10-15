@@ -5,6 +5,7 @@
 //   df NAME X Y Z          a noise router function evaluated directly at a block (no cell interpolation): continents erosion temperature vegetation depth ridges
 //                          preliminary_surface_level final_density barrier fluid_level_floodedness fluid_level_spread lava vein_toggle vein_ridged vein_gap
 //   noise NAME X Y Z       a named noise (minecraft:temperature ...) at a point
+//   baseheight X Z [TYPE]  NoiseBasedChunkGenerator.getBaseHeight (first free y; TYPE WORLD_SURFACE_WG (default) or OCEAN_FLOOR_WG)
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.util.Map;
@@ -17,6 +18,14 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
 import net.minecraft.data.registries.VanillaRegistries;
+import net.minecraft.core.Holder;
+import net.minecraft.world.level.LevelHeightAccessor;
+import net.minecraft.world.level.biome.BiomeSource;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterLists;
+import net.minecraft.world.level.chunk.ChunkGenerator;
+import net.minecraft.world.level.levelgen.NoiseBasedChunkGenerator;
+import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterList;
@@ -39,6 +48,7 @@ public class Oracle {
         Climate.ParameterList<ResourceKey<Biome>> list = null;
         for (Map.Entry<MultiNoiseBiomeSourceParameterList.Preset, Climate.ParameterList<ResourceKey<Biome>>> e : MultiNoiseBiomeSourceParameterList.knownPresets().entrySet())
             if (e.getKey().id().getPath().equals(settingsName.equals("nether") ? "nether" : "overworld")) list = e.getValue();
+        NoiseBasedChunkGenerator generator = null;
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
         String line;
         while ((line = in.readLine()) != null) {
@@ -73,6 +83,17 @@ public class Oracle {
                         default -> throw new IllegalArgumentException(name);
                     };
                     System.out.println(name + " " + x + " " + y + " " + z + " " + Double.toString(f.compute(new DensityFunction.SinglePointContext(x, y, z))));
+                }
+                case "baseheight" -> {
+                    if (generator == null) {
+                        Holder<NoiseGeneratorSettings> settingsHolder = provider.lookupOrThrow(Registries.NOISE_SETTINGS).getOrThrow(key);
+                        BiomeSource bs = MultiNoiseBiomeSource.createFromPreset(provider.lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST).getOrThrow(settingsName.equals("nether") ? MultiNoiseBiomeSourceParameterLists.NETHER : MultiNoiseBiomeSourceParameterLists.OVERWORLD));
+                        generator = new NoiseBasedChunkGenerator(bs, settingsHolder);
+                    }
+                    int x = Integer.parseInt(t[1]), z = Integer.parseInt(t[2]);
+                    Heightmap.Types type = t.length > 3 ? Heightmap.Types.valueOf(t[3]) : Heightmap.Types.WORLD_SURFACE_WG;
+                    int minY = settingsName.equals("nether") ? 0 : -64, height = settingsName.equals("nether") ? 256 : 384;
+                    System.out.println("baseheight " + x + " " + z + " " + generator.getBaseHeight(x, z, type, LevelHeightAccessor.create(minY, height), state));
                 }
                 case "noise" -> {
                     ResourceKey<NormalNoise.NoiseParameters> nk = ResourceKey.create(Registries.NOISE, Identifier.parse(t[1]));

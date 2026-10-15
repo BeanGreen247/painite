@@ -30,6 +30,10 @@ for v in "${versions[@]}"; do
   if command -v java >/dev/null 2>&1; then
     tools/oracle_cp.sh "$v"
     (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlocks.java "../../$out/blockflags.txt" "../../$out/blockclasses.txt" >/dev/null 2>&1) || echo "$v: could not dump the block facts" >&2
+    # how rotating and mirroring a block state changes it (structure templates)
+    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpTransforms.java "../../$out/blocktransforms.txt" >/dev/null 2>&1) || echo "$v: could not dump the state transforms" >&2
+    # block entity type per block and which of them hold a loot table seed (structure templates)
+    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlockEntities.java "../../$out/blockentities.txt" >/dev/null 2>&1) || echo "$v: could not dump the block entity types" >&2
   fi
   touch "$out/.done"
   rm -rf "$tmp"

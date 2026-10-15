@@ -4,6 +4,8 @@
 #include "carver.hpp"
 #include "climate.hpp"
 #include "decorate.hpp"
+#include "structure.hpp"
+#include "beardifier.hpp"
 #include "noisegen.hpp"
 #include "surface.hpp"
 #include <algorithm>
@@ -36,6 +38,8 @@ struct VanillaGen::Impl {
     std::unique_ptr<SurfaceSystem> surface;
     std::unique_ptr<Carvers> carvers;
     std::unique_ptr<Decorator> decorator;
+    std::unique_ptr<StructureState> structures;
+    std::vector<std::string> structure_biome_names;   // "minecraft:<name>" per climate value
     std::vector<BiomeInfo> biome_infos;
     FeatureShared feature_shared;
     size_t quart_rows = 0;                   // quart cells per column over the dimension's height
@@ -134,6 +138,36 @@ struct VanillaGen::Impl {
         quart_rows = size_t(dim_height / 4);
         if (opt.dim != 2) check_y_independence();
         decorator = std::make_unique<Decorator>(reg, o.seed, climate.biomes);
+        make_structures();
+    }
+
+    // terrain height of a column without building the chunk (NoiseBasedChunkGenerator.getBaseHeight / getBaseColumn)
+    int base_height(int x, int z, HeightmapType t) const {
+        ChunkFill col(*state, ns, pal, x, z, dim_min_y, dim_height, ChunkFill::ColumnTag{});
+        const uint8_t* flags = bd->chunk_flags();
+        auto tester = [flags, t](uint16_t id) { return t == WORLD_SURFACE_WG ? !(flags[id] & kFlagAir) : (flags[id] & kFlagBlocksMotion) != 0; };
+        return col.column(x, z, tester);
+    }
+    void base_column(int x, int z, std::vector<uint16_t>& out) const {
+        ChunkFill col(*state, ns, pal, x, z, dim_min_y, dim_height, ChunkFill::ColumnTag{});
+        col.column(x, z, nullptr, &out);
+    }
+
+    void make_structures() {
+        for (auto& n : climate.biomes) structure_biome_names.push_back("minecraft:" + n);
+        StructureEnv env;
+        env.seed = opt.seed;
+        env.dim = opt.dim;
+        env.min_y = dim_min_y;
+        env.height = dim_height;
+        env.sea_level = ns.sea_level;
+        env.biome_at = [this](int qx, int qy, int qz) { return biome_value(qx, qy, qz); };
+        env.biome_names = &structure_biome_names;
+        env.base_height = [this](int x, int z, HeightmapType t) { return base_height(x, z, t); };
+        env.base_column = [this](int x, int z, std::vector<uint16_t>& out) { base_column(x, z, out); };
+        env.reg = &reg;
+        env.bd = bd.get();
+        structures = std::make_unique<StructureState>(env, climate.biomes);
     }
 
     void make_carvers() {
@@ -234,6 +268,11 @@ struct VanillaGen::Impl {
             }
         lap("biomes");
         ChunkFill fill(*state, ns, pal, p.cx, p.cz, dim_min_y, dim_height);
+        std::unique_ptr<Beardifier> beard;
+        if (structures && structures->has_structures()) {
+            beard = std::make_unique<Beardifier>(structures->starts_touching(p.cx, p.cz), p.cx, p.cz);
+            if (!beard->empty()) fill.set_beardifier(beard.get());
+        }
         lap("fill setup");
         std::vector<uint16_t> blocks;
         fill.fill(blocks);
@@ -299,7 +338,14 @@ struct VanillaGen::Impl {
         env.biomes = &biome_infos;
         env.sea_level = ns.sea_level;
         env.seed = opt.seed;
-        decorator->decorate(env, cx, cz, biomes);
+        std::vector<std::shared_ptr<const StructureStart>> touching;
+        bool have_touching = false;
+        Decorator::StructureHook hook = [&](int step, WorldgenRandomXoro& random, int64_t seed) {
+            if (!structures || !structures->has_structures()) return;
+            if (!have_touching) { touching = structures->starts_touching(cx, cz); have_touching = true; }
+            structures->place_step(step, touching, env, random, seed, cx, cz);
+        };
+        decorator->decorate(env, cx, cz, biomes, hook);
         center.decorated = true;
         for (int i = 0; i < 9; i++)
             if (i != 4) grid[i]->decorated_neighbors++;
@@ -309,6 +355,33 @@ struct VanillaGen::Impl {
 VanillaGen::VanillaGen(const std::string& data_dir, const GenOptions& opt, const std::vector<std::string>& biome_names) : p_(std::make_unique<Impl>(data_dir, opt, biome_names)) {}
 VanillaGen::~VanillaGen() = default;
 const std::vector<std::vector<std::string>>& VanillaGen::decorator_steps() const { return p_->decorator->step_features(); }
+std::vector<std::string> VanillaGen::describe_structures(int cx0, int cz0, int cx1, int cz1) const {
+    std::vector<std::string> out;
+    if (!p_->structures) return out;
+    for (int cz = cz0; cz <= cz1; cz++)
+        for (int cx = cx0; cx <= cx1; cx++)
+            for (auto& st : p_->structures->starts_at(cx, cz)) {
+                BoundingBox b = st->bounds();
+                char buf[256];
+                snprintf(buf, sizeof buf, "%s %d %d pieces=%zu bb=[%d,%d,%d -> %d,%d,%d]", st->structure.c_str(), cx, cz, st->pieces.size(), b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
+                out.push_back(buf);
+            }
+    return out;
+}
+
+std::vector<std::pair<std::string, std::vector<std::string>>> VanillaGen::structure_starts_detail(int cx, int cz) const {
+    std::vector<std::pair<std::string, std::vector<std::string>>> out;
+    if (!p_->structures) return out;
+    for (auto& st : p_->structures->starts_at(cx, cz)) {
+        std::vector<std::string> pieces;
+        for (auto& pc : st->pieces) pieces.push_back(pc->describe());
+        out.emplace_back(st->structure, std::move(pieces));
+    }
+    return out;
+}
+
+int VanillaGen::debug_base_height(int x, int z, int heightmap) const { return p_->base_height(x, z, HeightmapType(heightmap)); }
+
 int VanillaGen::min_y() const { return p_->dim_min_y; }
 int VanillaGen::height() const { return p_->dim_height; }
 

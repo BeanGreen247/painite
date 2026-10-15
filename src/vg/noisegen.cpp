@@ -257,20 +257,30 @@ ChunkFill::~ChunkFill() = default;
 
 ChunkFill::ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const FillPalette& pal, int chunk_x, int chunk_z, int dim_min_y, int dim_height)
     : state_(state), ns_(ns), pal_(pal), chunk_x_(chunk_x), chunk_z_(chunk_z) {
+    init(chunk_x, chunk_z, dim_min_y, dim_height, false, 0, 0);
+}
+
+ChunkFill::ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const FillPalette& pal, int bx, int bz, int dim_min_y, int dim_height, ColumnTag)
+    : state_(state), ns_(ns), pal_(pal), chunk_x_(bx >> 4), chunk_z_(bz >> 4) {
+    init(bx >> 4, bz >> 4, dim_min_y, dim_height, true, bx, bz);
+}
+
+void ChunkFill::init(int chunk_x, int chunk_z, int dim_min_y, int dim_height, bool column, int bx, int bz) {
+    const NoiseSettingsData& ns = ns_;
     // clampToHeightAccessor
     min_y_ = std::max(ns.min_y, dim_min_y);
     height_ = std::min(ns.min_y + ns.height, dim_min_y + dim_height) - min_y_;
     cn_.cell_width = ns.cell_width();
     cn_.cell_height = ns.cell_height();
-    cn_.cell_count_xz = 16 / cn_.cell_width;
+    cn_.cell_count_xz = column ? 1 : 16 / cn_.cell_width;
     cn_.cell_count_y = floor_div(height_, cn_.cell_height);
     cn_.cell_noise_min_y = floor_div(min_y_, cn_.cell_height);
-    cn_.first_cell_x = floor_div(chunk_x * 16, cn_.cell_width);
-    cn_.first_cell_z = floor_div(chunk_z * 16, cn_.cell_width);
-    cn_.first_noise_x = (chunk_x * 16) >> 2;
-    cn_.first_noise_z = (chunk_z * 16) >> 2;
+    cn_.first_cell_x = floor_div(column ? bx : chunk_x * 16, cn_.cell_width);
+    cn_.first_cell_z = floor_div(column ? bz : chunk_z * 16, cn_.cell_width);
+    cn_.first_noise_x = (cn_.first_cell_x * cn_.cell_width) >> 2;
+    cn_.first_noise_z = (cn_.first_cell_z * cn_.cell_width) >> 2;
     cn_.noise_size_xz = (cn_.cell_count_xz * cn_.cell_width) >> 2;
-    comp_ = std::make_unique<Compiler>(state, &cn_);
+    comp_ = std::make_unique<Compiler>(state_, &cn_);
     const Json& r = *ns.router;
     prelim_ = comp_->compile(r.at("preliminary_surface_level"));
     final_density_ = comp_->compile(r.at("final_density"));
@@ -295,6 +305,54 @@ ChunkFill::ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const
         full_ = std::make_shared<CacheAllInCellNode>(&cn_, add);
     }
     aquifer_ = std::make_unique<Aquifer>(*this, chunk_x, chunk_z, min_y_, height_, ns.aquifers);
+}
+
+int ChunkFill::column(int bx, int bz, const std::function<bool(uint16_t)>& tester, std::vector<uint16_t>* states) {
+    if (cn_.cell_count_y <= 0) return min_y_;
+    const int cw = cn_.cell_width, ch = cn_.cell_height;
+    if (states) states->assign(size_t(height_), pal_.air);
+    cn_.interpolating = true;
+    auto fill_slice = [&](bool slice0, int cell_x) {
+        cn_.cell_start_x = cell_x * cw;
+        cn_.in_cell_x = 0;
+        for (int zi = 0; zi < cn_.cell_count_xz + 1; zi++) {
+            cn_.cell_start_z = (cn_.first_cell_z + zi) * cw;
+            cn_.in_cell_z = 0;
+            cn_.in_cell_y = 0;
+            for (auto* it : cn_.interpolators) it->fill_slice(slice0, zi);
+        }
+    };
+    fill_slice(true, cn_.first_cell_x);
+    fill_slice(false, cn_.first_cell_x + 1);
+    cn_.cell_start_x = cn_.first_cell_x * cw;
+    const double factor_x = double(floor_mod(bx, cw)) / cw, factor_z = double(floor_mod(bz, cw)) / cw;
+    int result = min_y_;
+    bool found = false;
+    for (int cell_y_index = cn_.cell_count_y - 1; cell_y_index >= 0 && !found; cell_y_index--) {
+        for (auto* it : cn_.interpolators) it->select_cell_yz(cell_y_index, 0);
+        cn_.filling_cell = true;
+        cn_.cell_start_y = (cell_y_index + cn_.cell_noise_min_y) * ch;
+        cn_.cell_start_z = cn_.first_cell_z * cw;
+        for (auto* cc : cn_.cell_caches) cc->fill_cell();
+        cn_.filling_cell = false;
+        for (int y_in_cell = ch - 1; y_in_cell >= 0; y_in_cell--) {
+            int pos_y = (cn_.cell_noise_min_y + cell_y_index) * ch + y_in_cell;
+            cn_.in_cell_y = pos_y - cn_.cell_start_y;
+            for (auto* it : cn_.interpolators) it->update_for_y(double(y_in_cell) / ch);
+            cn_.in_cell_x = floor_mod(bx, cw);
+            for (auto* it : cn_.interpolators) it->update_for_x(factor_x);
+            cn_.in_cell_z = floor_mod(bz, cw);
+            cn_.epoch++;
+            for (auto* it : cn_.interpolators) it->update_for_z(factor_z);
+            double density = full_->compute(cn_.here());
+            uint16_t st = state_at(bx, pos_y, bz, density);
+            if (st == 0xffff) st = pal_.default_block;
+            if (states) (*states)[size_t(pos_y - min_y_)] = st;
+            if (!found && tester && tester(st)) { result = pos_y + 1; found = true; if (!states) break; }
+        }
+    }
+    cn_.interpolating = false;
+    return result;
 }
 
 bool ChunkFill::aquifer_substance(int x, int y, int z, double density, uint16_t& out) { return aquifer_->compute_substance(x, y, z, density, out); }

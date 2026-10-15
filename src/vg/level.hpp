@@ -63,6 +63,9 @@ public:
         return true;
     }
     bool set(const BlockPos& p, uint16_t id) { return set(p.x, p.y, p.z, id); }
+    // BlockEntity data of a block placed during generation (the chunk it is in keeps it)
+    void set_block_entity(const BlockPos& p, pn::Nbt nbt) { if (ChunkBlocks* c = chunk_for(p.x, p.z)) c->block_entities[{p.x, p.y, p.z}] = std::move(nbt); }
+    void remove_block_entity(const BlockPos& p) { if (ChunkBlocks* c = chunk_for(p.x, p.z)) c->block_entities.erase({p.x, p.y, p.z}); }
     // writes that skip the heightmaps (sections written to directly)
     void set_raw(int x, int y, int z, uint16_t id) { if (ChunkBlocks* c = chunk_for(x, z)) c->set_raw(x, y, z, id); }
     // Level.getHeight: first free y of the heightmap

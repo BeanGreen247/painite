@@ -2,6 +2,7 @@
 #pragma once
 #include "density.hpp"
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace pn::vg {
@@ -27,9 +28,16 @@ class ChunkFill {
 public:
     // dim_min_y/dim_height: the dimension's own range (clamps the noise range like clampToHeightAccessor)
     ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const FillPalette& pal, int chunk_x, int chunk_z, int dim_min_y, int dim_height);
+    // a one cell wide noise chunk around block column (bx, bz), as NoiseBasedChunkGenerator.iterateNoiseColumn builds it (the aquifer belongs to the column's chunk)
+    struct ColumnTag {};
+    ChunkFill(const WorldState& state, const NoiseSettingsData& ns, const FillPalette& pal, int bx, int bz, int dim_min_y, int dim_height, ColumnTag);
+    // iterateNoiseColumn for the column given to the constructor: scans from the top, returns y + 1 of the first block `tester` accepts (min_y when none);
+    // `states`, when given, receives every block of the column from min_y up
+    int column(int bx, int bz, const std::function<bool(uint16_t)>& tester, std::vector<uint16_t>* states = nullptr);
     ~ChunkFill();
     // blocks[(y - min_y) * 256 + z * 16 + x], y over [min_y, min_y + height); air where nothing is placed
     void fill(std::vector<uint16_t>& blocks, std::vector<uint8_t>* fluid_update_marks = nullptr);
+    void set_beardifier(const Beardifier* b) { cn_.beardifier = b; }
     int min_y() const { return min_y_; }
     int height() const { return height_; }
     int preliminary_surface_level(int x, int z);
@@ -39,6 +47,7 @@ public:
     bool aquifer_should_schedule() const;
     NodeP node(const char* name) const;   // wrapped router functions: erosion, depth, ...
 private:
+    void init(int chunk_x, int chunk_z, int dim_min_y, int dim_height, bool column, int bx, int bz);
     friend class Aquifer;
     uint16_t state_at(int x, int y, int z, double density);
     const WorldState& state_;

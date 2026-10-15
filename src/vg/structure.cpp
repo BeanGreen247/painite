@@ -1,5 +1,6 @@
 // Structure sets, placement and start creation (ChunkGenerator.createStructures / createReferences, ChunkGeneratorStructureState).
 #include "structure.hpp"
+#include "template.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -79,6 +80,12 @@ ChunkPos potential_chunk(const StructurePlacement& p, int64_t seed, int sx, int 
 
 }  // namespace
 
+std::string StructurePiece::describe() const {
+    char buf[256];
+    snprintf(buf, sizeof buf, "%s BB[%d,%d,%d,%d,%d,%d]", type.c_str(), bb.x0, bb.y0, bb.z0, bb.x1, bb.y1, bb.z1);
+    return buf;
+}
+
 bool StructureContext::could_structure_exist_in_column(int x, int z, int min_y, int max_y) const {
     int qx = x >> 2, qz = z >> 2;
     for (int qy = min_y >> 2; qy <= (max_y >> 2); qy++)
@@ -88,14 +95,18 @@ bool StructureContext::could_structure_exist_in_column(int x, int z, int min_y, 
 
 StructureState::StructureState(const StructureEnv& env, const std::vector<std::string>& climate_biomes) : env_(env) {
     const Registry& reg = *env_.reg;
+    templates_ = std::make_unique<TemplateManager>(reg, *env_.bd);
+    env_.templates = templates_.get();
     // the generator's possible biomes decide which sets exist here
     std::set<int> possible;
     for (size_t i = 0; i < climate_biomes.size(); i++) possible.insert(int(i));
     by_step_.assign(11, {});
+    all_by_step_.assign(11, {});
     std::vector<std::string> structure_ids = reg.list("structure");
     std::sort(structure_ids.begin(), structure_ids.end());
     for (auto& id : structure_ids) {
         const Json& j = reg.get("structure", id);
+        all_by_step_[size_t(step_of(j.get_string("step", "surface_structures")))].push_back("minecraft:" + Registry::strip(id));
         std::string type = j.get_string("type");
         auto it = structure_factories().find(type);
         if (it == structure_factories().end()) continue;
@@ -265,6 +276,27 @@ std::vector<std::shared_ptr<const StructureStart>> StructureState::starts_at(int
     }
     std::lock_guard<std::mutex> l(mu_);
     return cache_.emplace(ChunkPos{cx, cz}, std::move(out)).first->second;
+}
+
+void StructureState::place_step(int step, const std::vector<std::shared_ptr<const StructureStart>>& touching, FeatureEnv& fenv, Rng& random, int64_t decoration_seed, int cx, int cz) {
+    if (step < 0 || size_t(step) >= all_by_step_.size() || touching.empty()) return;
+    const BoundingBox chunk_bb(cx * 16, env_.min_y + 1, cz * 16, cx * 16 + 15, env_.min_y + env_.height - 1, cz * 16 + 15);
+    PieceCtx ctx{fenv, fenv.level, env_, *templates_, random, chunk_bb, {cx, cz}};
+    const auto& ids = all_by_step_[size_t(step)];
+    for (size_t index = 0; index < ids.size(); index++) {
+        bool any = false;
+        for (auto& st : touching) if (st->structure == ids[index]) { any = true; break; }
+        if (!any) continue;
+        random.set_seed(decoration_seed + int64_t(index) + int64_t(10000) * int64_t(step));
+        for (auto& st : touching) {
+            if (st->structure != ids[index] || st->pieces.empty()) continue;
+            const BoundingBox center_bb = st->pieces[0]->bb;
+            BlockPos center = center_bb.center();
+            BlockPos reference(center.x, center_bb.y0, center.z);
+            for (auto& piece : st->pieces)
+                if (piece->bb.intersects(chunk_bb)) piece->post_process(ctx, reference);
+        }
+    }
 }
 
 std::vector<std::shared_ptr<const StructureStart>> StructureState::starts_touching(int cx, int cz) {

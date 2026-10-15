@@ -1,6 +1,7 @@
 // Biome decoration: the order features run in (FeatureSorter) and the per-chunk decoration pass (ChunkGenerator.applyBiomeDecoration).
 #pragma once
 #include "feature.hpp"
+#include <functional>
 #include <set>
 
 namespace pn::vg {
@@ -10,7 +11,9 @@ public:
     // biomes: names of the generator's biomes in the order of its biome source (index = biome value)
     Decorator(const Registry& reg, int64_t seed, const std::vector<std::string>& biomes);
     // features of one chunk: the biomes present in the 3x3 chunks around it decide which features run
-    void decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::set<int>& biomes_in_region) const;
+    // structure_hook(step, random, decoration_seed) runs before the features of each step (11 steps at least), as the structures of that step are placed
+    using StructureHook = std::function<void(int step, WorldgenRandomXoro& random, int64_t decoration_seed)>;
+    void decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::set<int>& biomes_in_region, const StructureHook& structure_hook = nullptr) const;
     bool biome_has_feature(int biome, const std::string& placed_feature) const;
     size_t steps() const { return step_features_.size(); }
     const std::vector<std::vector<std::string>>& step_features() const { return step_features_; }

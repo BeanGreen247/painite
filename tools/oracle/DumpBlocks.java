@@ -1,7 +1,7 @@
 // Development helper (not part of the server): writes the per-state facts world generation asks of block states, one state per line:
 //   name <TAB> properties (sorted, comma separated) <TAB> flags (hex)
 // flag bits: 0 air, 1 blocksMotion, 2 canBeReplaced, 3 isSolid, 4 canOcclude, 5 full collision shape, 6 water in fluid state, 7 lava in fluid state,
-//            8..13 sturdy face down/up/north/south/east/west, 14 liquid block, 15 solid render, 16 propagates skylight, 17 ignited by lava, 18 fluid source, 20..23 light emission, 24..29 collision shape has a full face down/up/north/south/east/west
+//            8..13 sturdy face down/up/north/south/east/west, 14 liquid block, 15 solid render, 16 propagates skylight, 17 ignited by lava, 18 fluid source, 20..23 light emission, 24..29 collision shape has a full face down/up/north/south/east/west, 30 block has a dynamic shape
 // A second file (ARGS[1]) lists the class hierarchy of every block: name <TAB> Class>Super>Super..., used to pick the survival rules of plants and attachments.
 // usage: java -cp server.jar:libs/* tools/oracle/DumpBlocks.java OUTFILE [CLASSFILE]
 import java.io.PrintWriter;
@@ -64,6 +64,7 @@ public class DumpBlocks {
                 if (s.ignitedByLava()) f |= 1L << 17;
                 if (!fl.isEmpty() && fl.isSource()) f |= 1L << 18;
                 f |= ((long) s.getLightEmission()) << 20;
+                if (s.getBlock().hasDynamicShape()) f |= 1L << 30;
                 for (int i = 0; i < 6; i++) if (net.minecraft.world.level.block.Block.isFaceFull(s.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO), dirs[i])) f |= 1L << (24 + i);
                 w.println(name + "\t" + ps + "\t" + Long.toHexString(f));
             }

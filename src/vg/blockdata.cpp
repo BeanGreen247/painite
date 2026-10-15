@@ -11,14 +11,32 @@ BlockData::BlockData(const std::string& flags_path, const std::string& classes_p
     std::ifstream f(flags_path);
     if (!f) throw std::runtime_error("missing " + flags_path + " (run tools/fetch_worldgen.sh)");
     std::string line;
+    std::vector<int> line_id;   // state ordinal in Mojang's registry (= line of the file) -> internal id, -1 when this version's block list lacks it
     while (std::getline(f, line)) {
         size_t a = line.find('\t'), b = line.find('\t', a + 1);
-        if (a == std::string::npos || b == std::string::npos) continue;
+        if (a == std::string::npos || b == std::string::npos) { line_id.push_back(-1); continue; }
         uint16_t id = B_.find(line.substr(0, a), line.substr(a + 1, b - a - 1));
         // find() falls back to the default state when the properties are unknown: only take exact matches
         const BlockInfo& bi = B_.info(id);
-        if (bi.name != line.substr(0, a) || bi.props != line.substr(a + 1, b - a - 1)) continue;
+        if (bi.name != line.substr(0, a) || bi.props != line.substr(a + 1, b - a - 1)) { line_id.push_back(-1); continue; }
         flags_[id] = uint32_t(std::stoull(line.substr(b + 1), nullptr, 16));
+        line_id.push_back(id);
+    }
+    {   // rotate / mirror tables (tools/oracle/DumpTransforms.java), identity where missing
+        xform_.resize(B_.count() * 5);
+        for (size_t i = 0; i < B_.count(); i++) for (int k = 0; k < 5; k++) xform_[i * 5 + size_t(k)] = uint16_t(i);
+        std::string tpath = flags_path.substr(0, flags_path.rfind('/') + 1) + "blocktransforms.txt";
+        std::ifstream tf(tpath);
+        if (tf) {
+            size_t n = 0;
+            while (std::getline(tf, line) && n < line_id.size()) {
+                std::istringstream ls(line);
+                int v[5];
+                if (line_id[n] >= 0 && (ls >> v[0] >> v[1] >> v[2] >> v[3] >> v[4]))
+                    for (int k = 0; k < 5; k++) if (v[k] >= 0 && size_t(v[k]) < line_id.size() && line_id[size_t(v[k])] >= 0) xform_[size_t(line_id[n]) * 5 + size_t(k)] = uint16_t(line_id[size_t(v[k])]);
+                n++;
+            }
+        }
     }
     {
         std::ifstream cf(classes_path);

@@ -25,6 +25,11 @@ public:
     void generate(Chunk& c) const;                 // thread-safe
     void decorate(int cx, int cz) const;           // decorates one chunk (its neighbours' states are built as needed); generate() does this for the 3x3 around its chunk
     const std::vector<std::vector<std::string>>& decorator_steps() const;   // the features of each decoration step in run order (debugging)
+    // development: the structure starts created in a chunk range, one line each ("id chunkX chunkZ pieces bounds")
+    std::vector<std::string> describe_structures(int cx0, int cz0, int cx1, int cz1) const;
+    // development: the starts created at one chunk and the description of each piece
+    std::vector<std::pair<std::string, std::vector<std::string>>> structure_starts_detail(int cx, int cz) const;
+    int debug_base_height(int x, int z, int heightmap) const;   // NoiseBasedChunkGenerator.getBaseHeight (0 WORLD_SURFACE_WG, 2 OCEAN_FLOOR_WG)
     int min_y() const;
     int height() const;
 private:

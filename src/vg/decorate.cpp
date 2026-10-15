@@ -92,7 +92,7 @@ bool Decorator::biome_has_feature(int biome, const std::string& placed_feature) 
     return biome >= 0 && size_t(biome) < biome_feature_names_.size() && biome_feature_names_[size_t(biome)].count(placed_feature) != 0;
 }
 
-void Decorator::decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::set<int>& biomes_in_region) const {
+void Decorator::decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::set<int>& biomes_in_region, const StructureHook& structure_hook) const {
     const int origin_x = chunk_x * 16, origin_z = chunk_z * 16;
     // WorldgenRandom(XoroshiroRandomSource).setDecorationSeed
     WorldgenRandomXoro random(seed_);
@@ -100,8 +100,10 @@ void Decorator::decorate(FeatureEnv& env, int chunk_x, int chunk_z, const std::s
     int64_t z_scale = random.next_long() | 1;
     int64_t decoration_seed = int64_t(uint64_t(int64_t(origin_x)) * uint64_t(x_scale) + uint64_t(int64_t(origin_z)) * uint64_t(z_scale)) ^ seed_;
     random.set_seed(decoration_seed);
-    for (size_t step = 0; step < step_features_.size(); step++) {
-        // (structures of this step would be placed here)
+    const size_t steps = std::max<size_t>(11, step_features_.size());
+    for (size_t step = 0; step < steps; step++) {
+        if (structure_hook) structure_hook(int(step), random, decoration_seed);
+        if (step >= step_features_.size()) continue;
         std::set<int> indices;
         for (int b : biomes_in_region)
             if (size_t(b) < biome_step_indices_.size() && step < biome_step_indices_[size_t(b)].size())

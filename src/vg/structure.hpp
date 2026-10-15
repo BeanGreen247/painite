@@ -1,6 +1,7 @@
 // Mojang's structure system: bounding boxes, structure sets and their placement (random spread, concentric rings), structure starts made of pieces,
 // and the per-dimension state that creates starts on demand. The structure types themselves live in structures_*.cpp.
 #pragma once
+#include "feature.hpp"
 #include "level.hpp"
 #include "random.hpp"
 #include "registry.hpp"
@@ -14,6 +15,8 @@
 #include <vector>
 
 namespace pn::vg {
+
+class TemplateManager;
 
 struct BoundingBox {
     int x0 = 0, y0 = 0, z0 = 0, x1 = -1, y1 = -1, z1 = -1;   // inclusive corners
@@ -83,7 +86,21 @@ struct StructureEnv {
     std::function<void(int, int, std::vector<uint16_t>&)> base_column;
     const Registry* reg = nullptr;
     const BlockData* bd = nullptr;
+    TemplateManager* templates = nullptr;   // owned by the StructureState
 };
+
+// What a piece sees while it is placed into a chunk
+struct PieceCtx {
+    FeatureEnv& fenv;                         // the 3x3 chunk region the decoration pass works on
+    Level& level;
+    const StructureEnv& senv;
+    TemplateManager& templates;
+    Rng& random;                              // the decoration random (seeded per structure)
+    BoundingBox chunk_bb;                     // the chunk being decorated
+    ChunkPos chunk;
+};
+
+struct PieceJunction { int source_x, source_ground_y, source_z, delta_y; bool rigid; };
 
 // One piece of a structure (StructurePiece): a bounding box, a type id for the saved form, and what it places into a chunk.
 class StructurePiece {
@@ -95,11 +112,17 @@ public:
     int orientation = -1;                     // Direction ordinal or -1
     Rotation rotation = Rotation::NONE;
     Mirror mirror = Mirror::NONE;
-    // writes the part inside `chunk_bb` (the chunk being decorated)
-    virtual void post_process(Level& level, Rng& random, const BoundingBox& chunk_bb, ChunkPos chunk, const BlockPos& pivot) = 0;
+    // writes the part inside `ctx.chunk_bb` (StructurePiece.postProcess)
+    virtual void post_process(PieceCtx& ctx, const BlockPos& pivot) = 0;
+    virtual void move(int dx, int dy, int dz) { bb.move(dx, dy, dz); }
+    // one line describing the piece the way its saved form reads (development: compared with Mojang's chunk NBT)
+    virtual std::string describe() const;
     // the terrain adaptation of a piece (Beardifier input): which boxes, and how the terrain bends around them
     int terrain_adaptation = 0;               // 0 none, 1 beard_thin, 2 beard_box, 3 bury, 4 encapsulate
     int ground_level_delta = 0;
+    // jigsaw pieces (PoolElementStructurePiece): rigid projection and the junctions the Beardifier reads
+    bool is_pool = false, rigid = false;
+    std::vector<PieceJunction> junctions;
 };
 
 struct StructureStart {
@@ -184,18 +207,21 @@ public:
     // the starts whose bounds touch chunk (cx, cz), in structure registry order within each step (createReferences + StructureManager.startsForStructure)
     std::vector<std::shared_ptr<const StructureStart>> starts_touching(int cx, int cz);
     const StructureEnv& env() const { return env_; }
+    TemplateManager& templates() { return *templates_; }
     const std::vector<StructureSetData>& sets() const { return sets_; }
-    // structures in the order decoration visits them: per step, registry (alphabetical id) order
-    const std::vector<std::string>& structures_of_step(int step) const { return by_step_[size_t(step)]; }
+    // StructureStart.placeInChunk for every structure of a decoration step, in registry order (the index of a structure counts every structure of the step)
+    void place_step(int step, const std::vector<std::shared_ptr<const StructureStart>>& touching, FeatureEnv& fenv, Rng& random, int64_t decoration_seed, int cx, int cz);
     bool has_structures() const { return !sets_.empty(); }
 private:
     bool is_structure_chunk(const StructureSetData& set, int cx, int cz);
     std::vector<ChunkPos> ring_positions(const StructurePlacement& p);
     bool try_generate(const std::string& structure, int cx, int cz, std::vector<std::shared_ptr<const StructureStart>>& out);
     StructureEnv env_;
+    std::unique_ptr<TemplateManager> templates_;
     std::vector<StructureSetData> sets_;
     std::map<std::string, std::unique_ptr<Structure>> structures_;
-    std::vector<std::vector<std::string>> by_step_;
+    std::vector<std::vector<std::string>> by_step_;       // structures of this dimension per step
+    std::vector<std::vector<std::string>> all_by_step_;   // every structure of the registry per step, alphabetical
     std::mutex mu_;
     std::map<ChunkPos, std::vector<std::shared_ptr<const StructureStart>>> cache_;
 };

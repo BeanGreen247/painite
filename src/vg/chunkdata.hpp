@@ -1,6 +1,9 @@
 // The blocks of one chunk while it is generated: a flat array over the generated height range, the heightmaps kept live like ProtoChunk does, and the fluid positions marked for post-processing.
 #pragma once
+#include "../nbt.hpp"
 #include <cstdint>
+#include <map>
+#include <array>
 #include <vector>
 
 namespace pn::vg {
@@ -27,6 +30,7 @@ struct ChunkBlocks {
     int hm[kHeightmapTypes][256];     // first free y per column and heightmap (Heightmap.getFirstAvailable)
     uint8_t hm_active = 0;            // bit per HeightmapType that is kept up to date
     const uint8_t* flags = nullptr;   // per block id: kFlag*
+    std::map<std::array<int, 3>, pn::Nbt> block_entities;   // block entity data placed during generation, keyed by (x, y, z)
 
     bool air(uint16_t id) const { return flags[id] & kFlagAir; }
     bool fluid(uint16_t id) const { return flags[id] & kFlagFluid; }
