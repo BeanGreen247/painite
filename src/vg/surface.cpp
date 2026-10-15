@@ -246,6 +246,17 @@ struct NoiseCond : Lazy<false> {
     }
 };
 
+// noise_threshold with is_3d: sampled at the block's y, so it is refreshed for every y step
+struct Noise3dCond : Lazy<true> {
+    const NormalNoise* noise;
+    double lo, hi;
+    using Lazy<true>::Lazy;
+    bool compute(SCtx& c) const override {
+        double v = noise->get_value(c.block_x, c.block_y, c.block_z);
+        return v >= lo && v <= hi;
+    }
+};
+
 struct GradientCond : Lazy<true> {
     int true_below, false_above;
     const PosFactory* random;
@@ -365,6 +376,14 @@ struct TreeBuilder {
             return c;
         }
         if (t == "minecraft:noise_threshold") {
+            const Json* is3d = j.find("is_3d");
+            if (is3d && is3d->is_bool() && is3d->boolean()) {
+                auto c3 = std::make_unique<Noise3dCond>(slots++);
+                c3->noise = I.state.noise(j.at("noise").str);
+                c3->lo = j.at("min_threshold").number();
+                c3->hi = j.at("max_threshold").number();
+                return c3;
+            }
             auto c = std::make_unique<NoiseCond>(slots++);
             c->noise = I.state.noise(j.at("noise").str);
             c->lo = j.at("min_threshold").number();

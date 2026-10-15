@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
         if (!locates.empty()) {
             for (auto& id : locates) {
                 bot.drop("system_chat");
-                bot.command("locate structure " + (id.find(':') == std::string::npos ? "minecraft:" + id : id));
+                bot.command(std::string(dim == "overworld" ? "" : "execute in minecraft:" + dim + " run ") + "locate structure " + (id.find(':') == std::string::npos ? "minecraft:" + id : id));
                 bot.until([&] { return bot.count("system_chat") >= 1; }, 120000);
                 std::string text;
                 for (auto& p : bot.take("system_chat")) text.append(p.begin(), p.end());
