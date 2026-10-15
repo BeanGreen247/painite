@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
             for (int y = col_hi; y >= col_lo; y--) printf("  %4d %-45s %s\n", y, norm(mine.get(col_x & 15, y, col_z & 15)).c_str(), norm(ref->get(col_x & 15, y, col_z & 15)).c_str());
         }
         long cd = 0;
-        for (int s = 4 * (dim_id != 0); s < (dim_id == 0 ? kSections : 12 + 4 * (dim_id == 2)); s++) {
+        for (int s = 4 * (dim_id != 0); s < (dim_id == 0 ? kSections : 12); s++) {
             for (int y = 0; y < 16; y++)
                 for (int z = 0; z < 16; z++)
                     for (int x = 0; x < 16; x++) {

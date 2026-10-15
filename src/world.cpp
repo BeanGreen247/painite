@@ -37,8 +37,14 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
 
 // Mojang's generator (src/vg) needs the extracted worldgen data; null when it is missing or the dimension is not supported
 static std::unique_ptr<vg::VanillaGen> make_vanilla_gen(int dim, uint64_t seed, const std::string& level_type, const std::vector<std::string>& biome_names) {
-    for (const char* d : {"data", "../data"}) {
-        std::string root = std::string(d) + "/worldgen/26.2";
+    std::string exe_dir;
+    {
+        char buf[4096];
+        ssize_t n = readlink("/proc/self/exe", buf, sizeof buf - 1);
+        if (n > 0) { buf[n] = 0; exe_dir = buf; exe_dir = exe_dir.substr(0, exe_dir.rfind('/')); }
+    }
+    for (std::string d : {std::string("data"), std::string("../data"), exe_dir + "/data", exe_dir + "/../data"}) {
+        std::string root = d + "/worldgen/26.2";
         if (access((root + "/.done").c_str(), R_OK) != 0 || access((root + "/blockflags.txt").c_str(), R_OK) != 0) continue;
         try {
             vg::GenOptions o;

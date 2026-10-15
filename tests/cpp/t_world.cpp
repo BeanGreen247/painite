@@ -111,6 +111,25 @@ void roundtrip(Ctx& t, Env& e) {
 
 
 // The layouts Painite writes (play Login, Login Success, ...) must still parse the vanilla samples recorded in data/vanilla-*.bin.
+// The ported Mojang generator serves chunks: bedrock floor, stone and a surface of its own
+void vanilla_terrain(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    auto names = load_block_names(e.data_dir + "/vanilla-26.3.blocks", true);
+    auto got = collect_chunks(e.port(), "Walker", ids, 60, 40);
+    t.check(got.size() >= 20, "vanilla generator sent " + std::to_string(got.size()) + " chunks");
+    int bedrock = 0, stone = 0, other = 0;
+    for (auto& kv : got) {
+        const ChunkData& c = kv.second;
+        if (c.sections.empty()) continue;
+        for (int i = 0; i < 4096; i += 7) {
+            auto it = names.find(c.sections[0].blocks[size_t(i)]);
+            std::string n = it == names.end() ? "?" : it->second;
+            if (n.find("bedrock") != std::string::npos) bedrock++; else if (n.find("stone") != std::string::npos || n.find("deepslate") != std::string::npos) stone++; else other++;
+        }
+    }
+    t.check(bedrock > 0 && stone > 0, "lowest section holds bedrock and stone");
+}
+
 void layouts(Ctx& t, Env& e) {
     namespace fs = std::filesystem;
     std::vector<std::string> files;
@@ -184,6 +203,17 @@ void reg_world(Registry& reg) {
     };
     g.tests.push_back({"mojang-reads-painite-world", roundtrip});
     reg.push_back(std::move(g));
+    Group v;
+    v.name = "vanilla-gen";
+    v.opts = [](const Env&) {
+        ServerOpts o;
+        o.properties = "gamemode=creative\nview-distance=4\n";
+        o.toml = "[world]\ngenerator = \"vanilla\"\n";
+        o.bedrock = false;
+        return o;
+    };
+    v.tests.push_back({"vanilla-terrain", vanilla_terrain});
+    reg.push_back(std::move(v));
     Group l;
     l.name = "layouts";
     l.needs_server = false;
