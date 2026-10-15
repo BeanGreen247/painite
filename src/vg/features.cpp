@@ -206,6 +206,7 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
     if (type == "disk") return place_disk(env, config, random, origin);
     if (type == "simple_block") return place_simple_block(env, config, random, origin);
     if (type == "no_op") return true;
+    if (type == "fallen_tree") return place_fallen_tree_feature(env, config, random, origin);
     if (type == "tree") return place_tree_feature(env, config, random, origin);
     if (type == "random_selector") {
         for (auto& f : config.at("features").arr) {

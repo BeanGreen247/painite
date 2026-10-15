@@ -1,4 +1,5 @@
 #include "world.hpp"
+#include "vg/gen.hpp"
 #include "perf.hpp"
 #include "dimension.hpp"
 #include "worldgen.hpp"
@@ -31,6 +32,27 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
     sec[s]->b[((y & 15) << 8) | (lz << 4) | lx] = id;
     version++;
     dirty = true;
+}
+
+
+// Mojang's generator (src/vg) needs the extracted worldgen data; null when it is missing or the dimension is not supported
+static std::unique_ptr<vg::VanillaGen> make_vanilla_gen(int dim, uint64_t seed, const std::string& level_type, const std::vector<std::string>& biome_names) {
+    for (const char* d : {"data", "../data"}) {
+        std::string root = std::string(d) + "/worldgen/26.2";
+        if (access((root + "/.done").c_str(), R_OK) != 0 || access((root + "/blockflags.txt").c_str(), R_OK) != 0) continue;
+        try {
+            vg::GenOptions o;
+            o.version = "26.2";
+            o.dim = dim;
+            o.seed = int64_t(seed);
+            o.level_type = level_type;
+            return std::make_unique<vg::VanillaGen>(d, o, biome_names);
+        } catch (const std::exception& e) {
+            warn(std::string("vanilla world generator unavailable: ") + e.what());
+            return nullptr;
+        }
+    }
+    return nullptr;
 }
 
 World::World() {}
@@ -96,6 +118,8 @@ bool World::open(const std::string& d, const std::string& generator, const std::
     if (kind == "terrain" && (lt == "flat" || lt == "void")) gk = lt == "flat" ? GenKind::Flat : GenKind::Void;
     seed = stored_seed.empty() ? seed_from_string(seed_str) : static_cast<uint64_t>(strtoll(stored_seed.c_str(), nullptr, 10));
     gen = std::make_unique<WorldGen>(gk, seed, biome_names);
+    if (generator == "vanilla" && (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified))
+        vgen = make_vanilla_gen(0, seed, lt, biome_names);
     gen_name = gk == GenKind::Void ? "void" : gk == GenKind::Flat ? "flat" : gk == GenKind::LargeBiomes ? "large_biomes" : gk == GenKind::Amplified ? "amplified" : "normal";
     if (!existing && gk != GenKind::Void) {
         std::ofstream pj(dir + "/painite.json");
@@ -131,6 +155,26 @@ bool World::open(const std::string& d, const std::string& generator, const std::
         spawn_x = sx;
         spawn_z = sz;
         spawn_y = gen->surface_height(sx, sz) + 1;
+        if (vgen) {   // the first dry column around the origin in Mojang's terrain
+            bool found = false;
+            for (int r = 0; r < 12 && !found; r++)
+                for (int i = -r; i <= r && !found; i++)
+                    for (int j = -r; j <= r && !found; j++) {
+                        if (std::max(std::abs(i), std::abs(j)) != r) continue;
+                        Chunk tmp;
+                        tmp.x = i; tmp.z = j;
+                        vgen->generate(tmp);
+                        for (int y = 319; y >= 63; y--) {
+                            uint16_t b = tmp.get(8, y, 8);
+                            if (b == 0) continue;
+                            const BlockInfo& bi = Blocks::get().info(b);
+                            if (bi.fluid || bi.name == "minecraft:ice" || bi.name.find("leaves") != std::string::npos) break;
+                            spawn_x = i * 16 + 8; spawn_z = j * 16 + 8; spawn_y = y + 1;
+                            found = true;
+                            break;
+                        }
+                    }
+        }
     }
     info(std::string("World \"") + dir + "\": " + (existing ? "existing region files in " + region_dir : std::string("no chunks yet")) + (", missing chunks: " + gen_name + (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified ? " terrain, seed " + std::to_string(static_cast<long long>(seed)) : std::string())));
     (void)err;
@@ -157,6 +201,7 @@ bool World::open_dimension(const World& ow, int d, std::string& err) {
     }
     mkdir(region_dir.c_str(), 0755);
     gen = std::make_unique<WorldGen>(d == 1 ? GenKind::Nether : GenKind::End, seed, biome_names);
+    if (ow.vgen) vgen = make_vanilla_gen(d, seed, "normal", biome_names);
     gen_name = d == 1 ? "nether" : "end";
     (void)err;
     return true;
@@ -329,6 +374,9 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
     Nbt root;
     if (anvil_read(region_dir, cx, cz, root) && from_nbt(*c, root)) {
         // loaded
+    } else if (vgen) {
+        vgen->generate(*c);
+        c->dirty = true;
     } else if (gen) {
         gen->generate(*c);
         c->dirty = gen->kind() != GenKind::Void;

@@ -806,6 +806,21 @@ void run_decorator(DecoCtx& c, const Json& d) {
             uint16_t s = provide_state(t.env, d.at("block_provider"), r, placement);
             if (s != kNoState) t.set_decoration(placement, s);
         }
+    } else if (type == "attached_to_logs") {
+        float prob = d.at("probability").float_value();
+        static const char* names[6] = {"down", "up", "north", "south", "west", "east"};
+        std::vector<Dir> dirs;
+        for (auto& dn : d.at("directions").arr) for (int k = 0; k < 6; k++) if (dn.str == names[k]) dirs.push_back(Dir(k));
+        std::vector<BlockPos> shuffled = c.logs;
+        shuffle(shuffled, r);
+        for (auto& lp : shuffled) {
+            Dir dir = dirs[size_t(r.next_int(int(dirs.size())))];
+            BlockPos pp = rel(lp, dir);
+            if (r.next_float() <= prob && c.is_air(pp)) {
+                uint16_t st = provide_state(t.env, d.at("block_provider"), r, pp);
+                if (st != kNoState) t.set_decoration(pp, st);
+            }
+        }
     } else {
         throw std::runtime_error("tree decorator not ported yet: " + type);
     }
@@ -924,7 +939,56 @@ bool place_tree(FeatureEnv& env, const Json& cfg, Rng& random, const BlockPos& o
     return true;
 }
 
+bool place_fallen_tree(FeatureEnv& env, const Json& cfg, Rng& random, const BlockPos& origin) {
+    Level& lv = env.level;
+    Json empty = Json::parse("{}");
+    auto decorate = [&](const BlockPos* logs, size_t n, const Json* decs) {
+        if (!decs || decs->arr.empty()) return;
+        TreeCtx t(env, random, empty);
+        for (size_t i = 0; i < n; i++) t.trunks.add(logs[i]);
+        DecoCtx dc(t);
+        for (auto& d : decs->arr) run_decorator(dc, d);
+    };
+    auto place_log = [&](const BlockPos& p, char axis) {
+        uint16_t st = provide_state(env, cfg.at("trunk_provider"), random, p);
+        if (axis && env.bd().has_prop(st, "axis")) st = env.bd().with(st, "axis", std::string(1, axis));
+        lv.set(p, st);
+    };
+    auto over_solid = [&](const BlockPos& p) { return env.bd().sturdy(lv.get(p.below()), UP); };
+    auto valid = [&](const BlockPos& p) { uint16_t s = lv.get(p); return env.bd().air(s) || env.bd().in_tag(s, "minecraft:replaceable_by_trees"); };
+    place_log(origin, 0);
+    decorate(&origin, 1, cfg.find("stump_decorators"));
+    Dir dir = kHorizontal[random.next_int(4)];
+    int len = sample_int(cfg.at("log_length"), random) - 2;
+    int extra = random.next_int(2);
+    BlockPos start = rel(origin, dir, 2 + extra);
+    start = start.above();
+    for (int i = 0; i < 6; i++) {
+        if (valid(start) && over_solid(start)) break;
+        start = start.below();
+    }
+    int gap = 0;
+    BlockPos p = start;
+    bool ok = true;
+    for (int i = 0; i < len; i++) {
+        if (!valid(p)) { ok = false; break; }
+        if (!over_solid(p)) { if (++gap > 2) { ok = false; break; } } else gap = 0;
+        p = rel(p, dir);
+    }
+    if (ok) {
+        char axis = (dir == NORTH || dir == SOUTH) ? 'z' : 'x';
+        JHashSet logs;
+        p = start;
+        for (int i = 0; i < len; i++) { place_log(p, axis); logs.add(p); p = rel(p, dir); }
+        auto items = logs.items();
+        decorate(items.data(), items.size(), cfg.find("log_decorators"));
+    }
+    return true;
+}
+
 }  // namespace
+
+bool place_fallen_tree_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) { return place_fallen_tree(env, config, random, origin); }
 
 bool place_tree_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) { return place_tree(env, config, random, origin); }
 

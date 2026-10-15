@@ -15,6 +15,7 @@
 #include <vector>
 
 namespace pn {
+namespace vg { class VanillaGen; }
 
 constexpr int kMinY = -64, kHeight = 384, kSections = 24;
 
@@ -65,6 +66,7 @@ public:
     int difficulty = 2;                  // 0 peaceful .. 3 hard, from level.dat
     int data_version = 0;
     std::string dir, region_dir;
+    std::unique_ptr<vg::VanillaGen> vgen;  // Mojang's generator ported (generator=vanilla); wins over gen when set
     std::unique_ptr<class WorldGen> gen;   // fills chunks that are not on disk; null = leave them empty
     uint64_t seed = 0;
     std::string gen_name;

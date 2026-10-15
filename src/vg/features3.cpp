@@ -531,6 +531,278 @@ bool place_root_system(FeatureEnv& env, const Json& config, Rng& random, const B
     return true;
 }
 
+// ---- multiface growth (glow lichen)
+const char* const kFaceNames[6] = {"down", "up", "north", "south", "west", "east"};
+const Dir kOpposite[6] = {UP, DOWN, SOUTH, NORTH, EAST, WEST};
+
+bool mf_can_attach(FeatureEnv& env, int dir_to_neighbour, const BlockPos& neighbour) {
+    const BlockData& bd = env.bd();
+    uint16_t s = env.level.get(neighbour);
+    int face = kOpposite[dir_to_neighbour];
+    return bd.sturdy(s, face) || bd.collision_face_full(s, face);
+}
+bool mf_has_face(const BlockData& bd, uint16_t s, int d) { return bd.has_prop(s, kFaceNames[d]) && bd.prop(s, kFaceNames[d]) == "true"; }
+
+// MultifaceBlock.getStateForPlacement(oldState, level, pos, direction); kNoState = null
+uint16_t mf_state_for_placement(FeatureEnv& env, const std::string& block, uint16_t old, const BlockPos& pos, int dir) {
+    const BlockData& bd = env.bd();
+    bool is_this = bd.name(old) == block;
+    if (!(!is_this || !mf_has_face(bd, old, dir))) return kNoState;
+    if (!mf_can_attach(env, dir, pos + Dir(dir))) return kNoState;
+    uint16_t ns;
+    if (is_this) ns = old;
+    else if (bd.water(old) && (bd.flags(old) & BF_SOURCE)) ns = bd.with(bd.default_state(block), "waterlogged", "true");
+    else ns = bd.default_state(block);
+    return bd.with(ns, kFaceNames[dir], "true");
+}
+
+bool mf_can_spread_into(FeatureEnv& env, const std::string& block, const BlockPos& pos, int face) {
+    const BlockData& bd = env.bd();
+    uint16_t ex = env.level.get(pos);
+    bool replaceable = bd.air(ex) || bd.name(ex) == block || (bd.name(ex) == "minecraft:water" && (bd.flags(ex) & BF_SOURCE));
+    if (!replaceable) return false;
+    // isValidStateForPlacement
+    if (bd.name(ex) == block && mf_has_face(bd, ex, face)) return false;
+    return mf_can_attach(env, face, pos + Dir(face));
+}
+
+// MultifaceSpreader.spreadFromFaceTowardRandomDirection; returns whether something was placed
+bool mf_spread_toward_random(FeatureEnv& env, const std::string& block, uint16_t state, const BlockPos& pos, int starting_face, Rng& random) {
+    const BlockData& bd = env.bd();
+    int dirs[6] = {0, 1, 2, 3, 4, 5};
+    for (int i = 6; i > 1; i--) { int swap = random.next_int(i); std::swap(dirs[i - 1], dirs[swap]); }
+    for (int spread : dirs) {
+        if (kOpposite[spread] == starting_face || spread == starting_face) continue;
+        // same axis: down/up (0,1), north/south (2,3), west/east (4,5)
+        if ((spread >> 1) == (starting_face >> 1)) continue;
+        if (!(mf_has_face(bd, state, starting_face) && !mf_has_face(bd, state, spread))) continue;
+        struct Sp { BlockPos pos; int face; };
+        Sp types[3] = {{pos, spread}, {pos + Dir(spread), starting_face}, {(pos + Dir(spread)) + Dir(starting_face), int(kOpposite[spread])}};
+        for (auto& t : types) {
+            if (mf_can_spread_into(env, block, t.pos, t.face)) {
+                uint16_t old = env.level.get(t.pos);
+                uint16_t ns = mf_state_for_placement(env, block, old, t.pos, t.face);
+                if (ns != kNoState) { env.level.set(t.pos, ns); return true; }
+                break;
+            }
+        }
+    }
+    return false;
+}
+
+bool place_multiface(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    Level& lv = env.level;
+    const BlockData& bd = env.bd();
+    std::string block = config.at("block").str;
+    if (block != "minecraft:glow_lichen") throw std::runtime_error("multiface growth for " + block + " is not ported yet");
+    int search = int(config.get_int("search_range", 10));
+    float chance = config.has("chance_of_spreading") ? config.at("chance_of_spreading").float_value() : 0.5f;
+    auto air_or_water = [&](uint16_t s) { return bd.air(s) || bd.name(s) == "minecraft:water"; };
+    if (!air_or_water(lv.get(origin))) return false;
+    std::vector<int> valid;
+    if (config.get_bool("can_place_on_ceiling", false)) valid.push_back(UP);
+    if (config.get_bool("can_place_on_floor", false)) valid.push_back(DOWN);
+    if (config.get_bool("can_place_on_wall", false)) for (int d : {NORTH, EAST, SOUTH, WEST}) valid.push_back(d);
+    auto shuffled = [&](std::vector<int> v) { for (int i = int(v.size()); i > 1; i--) { int swap = random.next_int(i); std::swap(v[size_t(i - 1)], v[size_t(swap)]); } return v; };
+    auto place_if_possible = [&](const BlockPos& pos, uint16_t old, const std::vector<int>& dirs) {
+        for (int d : dirs) {
+            if (state_in_set(env, lv.get(pos + Dir(d)), config.at("can_be_placed_on"))) {
+                uint16_t ns = mf_state_for_placement(env, block, old, pos, d);
+                if (ns == kNoState) return false;
+                lv.set(pos, ns);
+                if (random.next_float() < chance) mf_spread_toward_random(env, block, ns, pos, d, random);
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<int> dirs = shuffled(valid);
+    if (place_if_possible(origin, lv.get(origin), dirs)) return true;
+    for (int sd : dirs) {
+        std::vector<int> placement;
+        for (int d : valid) if (d != kOpposite[sd]) placement.push_back(d);
+        placement = shuffled(placement);
+        for (int i = 0; i < search; i++) {
+            BlockPos pos = origin + Dir(sd);
+            uint16_t st = lv.get(pos);
+            if (!air_or_water(st) && bd.name(st) != block) break;
+            if (place_if_possible(pos, st, placement)) return true;
+        }
+    }
+    return false;
+}
+
+// ---- dripstone (speleothem)
+struct SpCfg {
+    std::string base, pointed;   // block names
+    const Json* replaceable;
+};
+bool sp_is_base(FeatureEnv& env, const SpCfg& c, uint16_t s) { return env.bd().name(s) == c.base || state_in_set(env, s, *c.replaceable); }
+bool sp_empty_or_water(const BlockData& bd, uint16_t s) { return bd.air(s) || bd.name(s) == "minecraft:water"; }
+
+bool sp_place_base_if_possible(FeatureEnv& env, const SpCfg& c, const BlockPos& p) {
+    if (state_in_set(env, env.level.get(p), *c.replaceable)) { env.level.set(p, env.bd().default_state(c.base)); return true; }
+    return false;
+}
+
+void sp_grow(FeatureEnv& env, const SpCfg& c, const BlockPos& start, int tip_dir, int height, bool merged) {
+    const BlockData& bd = env.bd();
+    Level& lv = env.level;
+    if (!sp_is_base(env, c, lv.get(start + kOpposite[tip_dir]))) return;
+    static const char* names[6] = {"down", "up", "north", "south", "west", "east"};
+    BlockPos pos = start;
+    auto put = [&](const char* thickness) {
+        uint16_t st = bd.with(bd.with(bd.default_state(c.pointed), "vertical_direction", names[tip_dir]), "thickness", thickness);
+        if (bd.has_prop(st, "waterlogged")) st = bd.with(st, "waterlogged", bd.water(lv.get(pos)) ? "true" : "false");
+        lv.set(pos, st);
+        pos = pos + Dir(tip_dir);
+    };
+    if (height >= 3) { put("base"); for (int i = 0; i < height - 3; i++) put("middle"); }
+    if (height >= 2) put("frustum");
+    if (height >= 1) put(merged ? "tip_merge" : "tip");
+}
+
+bool place_speleothem(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& pos) {
+    Level& lv = env.level;
+    const BlockData& bd = env.bd();
+    SpCfg c{config.at("base_block").at("Name").str, config.at("pointed_block").at("Name").str, &config.at("replaceable_blocks")};
+    float taller = config.has("chance_of_taller_generation") ? config.at("chance_of_taller_generation").float_value() : 0.2f;
+    float dir_spread = config.has("chance_of_directional_spread") ? config.at("chance_of_directional_spread").float_value() : 0.7f;
+    float r2 = config.has("chance_of_spread_radius2") ? config.at("chance_of_spread_radius2").float_value() : 0.5f;
+    float r3 = config.has("chance_of_spread_radius3") ? config.at("chance_of_spread_radius3").float_value() : 0.5f;
+    bool above = sp_is_base(env, c, lv.get(pos.above())), below = sp_is_base(env, c, lv.get(pos.below()));
+    int tip;
+    if (above && below) tip = random.next_boolean() ? DOWN : UP;
+    else if (above) tip = DOWN;
+    else if (below) tip = UP;
+    else return false;
+    BlockPos root = pos + kOpposite[tip];
+    // createPatchOfBaseBlocks
+    static const Dir horiz[4] = {NORTH, EAST, SOUTH, WEST};
+    sp_place_base_if_possible(env, c, root);
+    for (Dir d : horiz) {
+        if (!(random.next_float() > dir_spread)) {
+            BlockPos p1 = root + d;
+            sp_place_base_if_possible(env, c, p1);
+            if (!(random.next_float() > r2)) {
+                BlockPos p2 = p1 + Dir(random.next_int(6));
+                sp_place_base_if_possible(env, c, p2);
+                if (!(random.next_float() > r3)) {
+                    BlockPos p3 = p2 + Dir(random.next_int(6));
+                    sp_place_base_if_possible(env, c, p3);
+                }
+            }
+        }
+    }
+    int height = (random.next_float() < taller && sp_empty_or_water(bd, lv.get(pos + Dir(tip)))) ? 2 : 1;
+    sp_grow(env, c, pos, tip, height, false);
+    return true;
+}
+
+struct Col { bool has_floor = false, has_ceiling = false; int floor = 0, ceiling = 0; };
+
+bool place_speleothem_cluster(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    Level& lv = env.level;
+    const BlockData& bd = env.bd();
+    SpCfg c{config.at("base_block").at("Name").str, config.at("pointed_block").at("Name").str, &config.at("replaceable_blocks")};
+    if (!sp_empty_or_water(bd, lv.get(origin))) return false;
+    int height = sample_int(config.at("height"), random);
+    float wetness = sample_float(config.at("wetness"), random);
+    float density = sample_float(config.at("density"), random);
+    int xr = sample_int(config.at("radius"), random);
+    int zr = sample_int(config.at("radius"), random);
+    int search = int(config.at("floor_to_ceiling_search_range").int_value());
+    int max_diff = int(config.at("max_stalagmite_stalactite_height_diff").int_value());
+    int deviation = int(config.at("height_deviation").int_value());
+    int max_edge = int(config.at("max_distance_from_edge_affecting_chance_of_speleothem").int_value());
+    int max_center = int(config.at("max_distance_from_center_affecting_height_bias").int_value());
+    float chance_at_max = config.at("chance_of_speleothem_at_max_distance_from_center").float_value();
+    auto is_lava = [&](const BlockPos& p) { return bd.name(lv.get(p)) == "minecraft:lava"; };
+    auto clamped_map_f = [](float v, float a, float b, float x, float y) { float f = (v - a) / (b - a); return f < 0.0f ? x : f > 1.0f ? y : x + f * (y - x); };
+    auto spel_height = [&](int dx, int dz, int max_height) -> int {
+        if (random.next_float() > density) return 0;
+        int dist = std::abs(dx) + std::abs(dz);
+        float mean = float(clamped_map(double(dist), 0.0, double(max_center), double(max_height) / 2.0, 0.0));
+        float n = mean + float(random.next_gaussian()) * float(deviation);
+        float lo = 0.0f, hi = float(max_height);
+        n = n < lo ? lo : std::min(n, hi);
+        return int(n);
+    };
+    auto replace_with_base = [&](BlockPos p, int max_count, Dir d) {
+        for (int i = 0; i < max_count; i++) { if (!sp_place_base_if_possible(env, c, p)) return; p = p + d; }
+    };
+    for (int dx = -xr; dx <= xr; dx++)
+        for (int dz = -zr; dz <= zr; dz++) {
+            int xe = xr - std::abs(dx), ze = zr - std::abs(dz);
+            float chance = clamped_map_f(float(std::min(xe, ze)), 0.0f, float(max_edge), chance_at_max, 1.0f);
+            BlockPos pos = origin.offset(dx, 0, dz);
+            // Column.scan
+            Col base;
+            if (!sp_empty_or_water(bd, lv.get(pos))) continue;
+            {
+                BlockPos m = pos;
+                for (int i = 1; i < search && sp_empty_or_water(bd, lv.get(m)); i++) m = m.above();
+                if (!sp_empty_or_water(bd, lv.get(m))) { base.has_ceiling = true; base.ceiling = m.y; }
+                m = pos;
+                for (int i = 1; i < search && sp_empty_or_water(bd, lv.get(m)); i++) m = m.below();
+                if (!sp_empty_or_water(bd, lv.get(m))) { base.has_floor = true; base.floor = m.y; }
+            }
+            if (!base.has_ceiling && !base.has_floor) continue;
+            bool want_pool = random.next_float() < wetness;
+            Col col = base;
+            bool pool = false;
+            if (want_pool && base.has_floor) {
+                BlockPos fp(pos.x, base.floor, pos.z);
+                uint16_t st = lv.get(fp);
+                bool ok = !(bd.name(st) == "minecraft:water" || bd.name(st) == c.base || bd.name(st) == c.pointed);
+                if (ok) {
+                    if (bd.water(lv.get(fp.above()))) ok = false;
+                    else {
+                        static const Dir horiz[4] = {NORTH, EAST, SOUTH, WEST};
+                        auto adj = [&](const BlockPos& q) { uint16_t s2 = lv.get(q); return bd.in_tag(s2, "minecraft:base_stone_overworld") || bd.water(s2); };
+                        for (Dir d : horiz) if (!adj(fp + d)) { ok = false; break; }
+                        if (ok) ok = adj(fp.below());
+                    }
+                }
+                if (ok) { pool = true; col.floor = base.floor - 1; lv.set(fp, bd.default_state("minecraft:water")); }
+            }
+            (void)pool;
+            bool want_stalactite = random.next_double() < double(chance);
+            int stalactite = 0;
+            if (base.has_ceiling && want_stalactite && !is_lava(BlockPos(pos.x, base.ceiling, pos.z))) {
+                int thickness = sample_int(config.at("speleothem_block_layer_thickness"), random);
+                replace_with_base(BlockPos(pos.x, base.ceiling, pos.z), thickness, UP);
+                int max_h = col.has_floor ? std::min(height, base.ceiling - col.floor) : height;
+                stalactite = spel_height(dx, dz, max_h);
+            }
+            bool want_stalagmite = random.next_double() < double(chance);
+            int stalagmite = 0;
+            if (col.has_floor && want_stalagmite && !is_lava(BlockPos(pos.x, col.floor, pos.z))) {
+                int thickness = sample_int(config.at("speleothem_block_layer_thickness"), random);
+                replace_with_base(BlockPos(pos.x, col.floor, pos.z), thickness, DOWN);
+                if (base.has_ceiling) {
+                    int r = random.next_int(2 * max_diff + 1) - max_diff;
+                    stalagmite = std::max(0, stalactite + r);
+                } else stalagmite = spel_height(dx, dz, height);
+            }
+            int actual_stalagmite, actual_stalactite;
+            if (base.has_ceiling && col.has_floor && base.ceiling - stalactite <= col.floor + stalagmite) {
+                int floor_y = col.floor, ceiling_y = base.ceiling;
+                int lowest = std::max(ceiling_y - stalactite, floor_y + 1);
+                int highest = std::min(floor_y + stalagmite, ceiling_y - 1);
+                int actual_bottom = random.next_int(highest + 1 - lowest + 1) + lowest;
+                int actual_top = actual_bottom - 1;
+                actual_stalactite = ceiling_y - actual_bottom;
+                actual_stalagmite = actual_top - floor_y;
+            } else { actual_stalactite = stalactite; actual_stalagmite = stalagmite; }
+            bool merge = random.next_boolean();
+            merge = merge && actual_stalactite > 0 && actual_stalagmite > 0 && col.has_floor && base.has_ceiling && actual_stalactite + actual_stalagmite == base.ceiling - col.floor - 1;
+            if (base.has_ceiling) sp_grow(env, c, BlockPos(pos.x, base.ceiling - 1, pos.z), DOWN, actual_stalactite, merge);
+            if (col.has_floor) sp_grow(env, c, BlockPos(pos.x, col.floor + 1, pos.z), UP, actual_stalagmite, merge);
+        }
+    return true;
+}
+
 }  // namespace
 
 bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled) {
@@ -543,6 +815,9 @@ bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& c
     if (type == "blue_ice") return place_blue_ice(env, config, random, origin);
     if (type == "underwater_magma") return place_underwater_magma(env, config, random, origin);
     if (type == "root_system") return place_root_system(env, config, random, origin);
+    if (type == "multiface_growth") return place_multiface(env, config, random, origin);
+    if (type == "speleothem") return place_speleothem(env, config, random, origin);
+    if (type == "speleothem_cluster") return place_speleothem_cluster(env, config, random, origin);
     if (type == "geode") return place_geode(env, config, random, origin);
     if (type == "monster_room") return place_monster_room(env, config, random, origin);
     handled = false;
