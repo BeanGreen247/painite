@@ -16,9 +16,10 @@ find_package(Threads REQUIRED)
 find_package(OpenSSL REQUIRED)
 
 file(GLOB PAINITE_VG_SOURCES CONFIGURE_DEPENDS src/vg/*.cpp)
+file(GLOB PAINITE_SIM_SOURCES CONFIGURE_DEPENDS src/sim/*.cpp)
 set_source_files_properties(${PAINITE_VG_SOURCES} PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")   # the port of Mojang's float and double math must not fuse operations
 add_executable(painite
-  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp src/rak.cpp src/auth.cpp src/hash.cpp src/nbt.cpp src/anvil.cpp src/blocks.cpp src/world.cpp src/jchunk.cpp src/lists.cpp src/game.cpp src/commands.cpp src/java_game.cpp src/bchunk.cpp src/bedrock_game.cpp src/xbox.cpp src/skin.cpp src/region.cpp src/worldgen.cpp src/worldgen_dims.cpp src/portal.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp ${PAINITE_VG_SOURCES})
+  src/main.cpp src/config.cpp src/data.cpp src/log.cpp src/server.cpp src/worker.cpp src/java.cpp src/bedrock.cpp src/rak.cpp src/auth.cpp src/hash.cpp src/nbt.cpp src/anvil.cpp src/blocks.cpp src/world.cpp src/jchunk.cpp src/lists.cpp src/game.cpp src/commands.cpp src/java_game.cpp src/bchunk.cpp src/bedrock_game.cpp src/xbox.cpp src/skin.cpp src/region.cpp src/worldgen.cpp src/worldgen_dims.cpp src/portal.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp ${PAINITE_VG_SOURCES} ${PAINITE_SIM_SOURCES})
 target_link_libraries(painite PRIVATE ZLIB::ZLIB OpenSSL::SSL OpenSSL::Crypto Threads::Threads)
 target_compile_options(painite PRIVATE -Wall -Wextra -Wno-unused-parameter -fno-plt)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
@@ -84,3 +85,7 @@ add_executable(painite_gencmp EXCLUDE_FROM_ALL tests/cpp/gencmp.cpp ${PAINITE_VG
 target_include_directories(painite_gencmp PRIVATE src)
 target_link_libraries(painite_gencmp PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
 target_compile_options(painite_gencmp PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
+
+# quick compile and test of the gameplay core (inventory, menus, ...) without the rest of the server
+add_executable(painite_simtest EXCLUDE_FROM_ALL tests/sim/simtest.cpp ${PAINITE_SIM_SOURCES} src/vg/json.cpp)
+target_compile_options(painite_simtest PRIVATE -Wall -Wextra -Wno-unused-parameter)
