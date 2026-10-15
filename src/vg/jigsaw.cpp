@@ -527,7 +527,7 @@ class JigsawStructure : public Structure {
 public:
     JigsawParams params;
     std::optional<GenerationStub> find_generation_point(const StructureContext& ctx) const override {
-        int height = params.start_height(ctx.random, ctx.env.min_y, ctx.env.height);
+        int height = params.start_height(ctx.random, ctx.env.gen_min_y, ctx.env.gen_height);
         BlockPos start(ctx.chunk.x * 16, height, ctx.chunk.z * 16);
         return add_pieces(ctx, params, start);
     }

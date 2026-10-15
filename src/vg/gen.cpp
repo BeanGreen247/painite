@@ -162,6 +162,8 @@ struct VanillaGen::Impl {
         env.dim = opt.dim;
         env.min_y = dim_min_y;
         env.height = dim_height;
+        env.gen_min_y = std::max(dim_min_y, ns.min_y);
+        env.gen_height = std::min(dim_height, ns.height);
         env.sea_level = ns.sea_level;
         env.biome_at = [this](int qx, int qy, int qz) { return biome_value(qx, qy, qz); };
         env.biome_names = &structure_biome_names;

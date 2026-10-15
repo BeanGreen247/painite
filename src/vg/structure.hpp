@@ -78,6 +78,7 @@ struct StructureEnv {
     int64_t seed = 0;
     int dim = 0;                              // 0 overworld, 1 nether, 2 end
     int min_y = -64, height = 384, sea_level = 63;
+    int gen_min_y = 0, gen_height = 0;   // WorldGenerationContext: max of dimension and generator min y, min of dimension and generator depth (height providers)
     std::function<int(int, int, int)> biome_at;                         // quart coordinates -> biome name index
     const std::vector<std::string>* biome_names = nullptr;              // "minecraft:plains", ...
     // NoiseBasedChunkGenerator.getBaseHeight: first free y of the column for a heightmap (WORLD_SURFACE_WG or OCEAN_FLOOR_WG)

@@ -822,7 +822,7 @@ public:
         int blockX = ctx.chunk.x * 16 + random.nextInt(16);
         int blockZ = ctx.chunk.z * 16 + random.nextInt(16);
         int seaLevel = ctx.env.sea_level;
-        int y = height(ctx.random, ctx.env.min_y, ctx.env.height);
+        int y = height(ctx.random, ctx.env.gen_min_y, ctx.env.gen_height);
         std::vector<uint16_t> column;
         ctx.env.base_column(blockX, blockZ, column);
         auto block_at = [&](int yy) -> BS { int i = yy - ctx.env.min_y; return i >= 0 && size_t(i) < column.size() ? BS(column[size_t(i)]) : BS(0); };
