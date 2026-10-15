@@ -2,6 +2,7 @@
 #include "game.hpp"
 #include "dimension.hpp"
 #include "structures.hpp"
+#include "vg/gen.hpp"
 #include "worldgen.hpp"
 #include "hash.hpp"
 #include "log.hpp"
@@ -352,14 +353,23 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         std::string name = a.size() >= 3 ? a[2] : a.size() == 2 ? a[1] : "";
         GPos cur = gid ? position(gid) : GPos{};
         int d = exec_dim_ >= 0 ? exec_dim_ : cur.dim;
-        const StructureGen* sg = s_.dim(d).gen ? s_.dim(d).gen->structures() : nullptr;
-        if (!sg) { reply("This world has no generated structures"); return; }
         int ox, oz;
-        if (name.empty() || !sg->locate(lower(name), static_cast<int>(std::floor(cur.x)), static_cast<int>(std::floor(cur.z)), ox, oz)) {
-            std::string o = "Could not find that structure nearby. Here: ";
-            for (auto& k : sg->kinds()) o += k + " ";
-            reply(o);
-            return;
+        if (World& w = s_.dim(d); w.vgen) {   // Mojang's generator: structures by id ("village_plains", "minecraft:monument", "#minecraft:village")
+            std::string id = lower(name);
+            if (id.rfind("structure ", 0) == 0) id = id.substr(10);
+            if (id.empty() || !w.vgen->locate({id}, static_cast<int>(std::floor(cur.x)), static_cast<int>(std::floor(cur.z)), ox, oz)) {
+                reply("Could not find a structure of that type nearby");
+                return;
+            }
+        } else {
+            const StructureGen* sg = w.gen ? w.gen->structures() : nullptr;
+            if (!sg) { reply("This world has no generated structures"); return; }
+            if (name.empty() || !sg->locate(lower(name), static_cast<int>(std::floor(cur.x)), static_cast<int>(std::floor(cur.z)), ox, oz)) {
+                std::string o = "Could not find that structure nearby. Here: ";
+                for (auto& k : sg->kinds()) o += k + " ";
+                reply(o);
+                return;
+            }
         }
         double dist = std::sqrt((ox - cur.x) * (ox - cur.x) + (oz - cur.z) * (oz - cur.z));
         char b[200];

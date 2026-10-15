@@ -155,6 +155,7 @@ struct VanillaGen::Impl {
     }
 
     void make_structures() {
+        if (std::getenv("PAINITE_NO_STRUCTURES")) return;
         for (auto& n : climate.biomes) structure_biome_names.push_back("minecraft:" + n);
         StructureEnv env;
         env.seed = opt.seed;
@@ -418,6 +419,25 @@ void VanillaGen::place_structures_of(int cx, int cz) const {
     }
 }
 
+std::vector<std::string> VanillaGen::structure_names() const { return p_->structures ? p_->structures->structure_ids() : std::vector<std::string>(); }
+
+bool VanillaGen::locate(const std::vector<std::string>& wanted, int bx, int bz, int& out_x, int& out_z) const {
+    if (!p_->structures) return false;
+    std::set<std::string> ids;
+    std::function<void(const std::string&, int)> add = [&](const std::string& id, int depth) {
+        if (depth > 8) return;
+        if (!id.empty() && id[0] == '#') {
+            try {
+                const Json& t = p_->reg.tag("structure/" + Registry::strip(id.substr(1)));
+                if (const Json* v = t.find("values"))
+                    for (auto& e : v->arr) add(e.is_str() ? e.str : e.get_string("id"), depth + 1);
+            } catch (...) {}
+        } else ids.insert(id.rfind("minecraft:", 0) == 0 ? id : "minecraft:" + id);
+    };
+    for (auto& w : wanted) add(w, 0);
+    return p_->structures->locate(ids, bx, bz, 100, out_x, out_z);
+}
+
 int VanillaGen::min_y() const { return p_->dim_min_y; }
 int VanillaGen::height() const { return p_->dim_height; }
 
@@ -458,6 +478,16 @@ void VanillaGen::generate(Chunk& c) const {
             memcpy(&sec->b[y * 256], &cb.b[size_t(yy) * 256], 256 * sizeof(uint16_t));
         }
         c.sec[s] = std::move(sec);
+    }
+    // what generation attached to blocks and the entities it created
+    if (!cb.block_entities.empty() || !cb.entities.empty()) {
+        if (c.extra.type != pn::Nbt::Compound) c.extra = pn::Nbt::compound();
+        if (!cb.block_entities.empty()) {
+            pn::Nbt list = pn::Nbt::list_of(pn::Nbt::Compound);
+            for (auto& kv : cb.block_entities) list.list.push_back(kv.second);
+            c.extra.put("block_entities", std::move(list));
+        }
+        c.gen_entities = cb.entities;
     }
     // settled chunks are no longer needed by their neighbours
     {

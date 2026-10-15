@@ -32,6 +32,9 @@ public:
     int debug_base_height(int x, int z, int heightmap) const;   // NoiseBasedChunkGenerator.getBaseHeight (0 WORLD_SURFACE_WG, 2 OCEAN_FLOOR_WG)
     // development: decorate every chunk that one of the structure starts created at (cx, cz) touches, so its pieces are placed (they adjust their boxes while they are)
     void place_structures_of(int cx, int cz) const;
+    // /locate structure: ids are full structure ids or a "#minecraft:tag" of structures
+    bool locate(const std::vector<std::string>& wanted, int bx, int bz, int& out_x, int& out_z) const;
+    std::vector<std::string> structure_names() const;
     int min_y() const;
     int height() const;
 private:

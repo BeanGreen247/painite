@@ -30,6 +30,7 @@ struct Chunk {
     std::mutex mu;
     std::unique_ptr<Section> sec[kSections];
     Nbt extra;                       // chunk NBT as loaded, minus sections (entities, block entities, ...)
+    std::vector<Nbt> gen_entities;   // entities the generator made (structures: witches, guardians, ...), taken over by the entity system
     std::atomic<uint32_t> version{1};
     bool dirty = false;
     int64_t last_used_ms = 0;

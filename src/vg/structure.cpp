@@ -377,3 +377,87 @@ std::vector<std::shared_ptr<const StructureStart>> StructureState::starts_touchi
 }
 
 }  // namespace pn::vg
+
+namespace pn::vg {
+
+std::vector<std::string> StructureState::structure_ids() const {
+    std::vector<std::string> out;
+    for (auto& kv : structures_) out.push_back(kv.first);
+    return out;
+}
+
+bool StructureState::locate(const std::set<std::string>& ids, int bx, int bz, int max_radius, int& out_x, int& out_z) {
+    auto has_wanted = [&](int cx, int cz) {
+        for (auto& st : starts_at(cx, cz)) if (ids.count(st->structure)) return true;
+        return false;
+    };
+    // the placements of the sets that hold a wanted structure
+    std::vector<const StructureSetData*> sets;
+    for (auto& set : sets_) {
+        bool any = false;
+        for (auto& e : set.structures) if (ids.count(e.structure)) any = true;
+        if (any) sets.push_back(&set);
+    }
+    if (sets.empty()) return false;
+    bool found = false;
+    double best = 1e300;
+    auto dist2 = [&](int x, int z) { double dx = double(x - bx), dz = double(z - bz); return dx * dx + dz * dz; };
+    auto locate_pos = [](const StructurePlacement& p, int cx, int cz, int& x, int& z) { x = cx * 16 + p.locate_x; z = cz * 16 + p.locate_z; };
+    // concentric rings: every ring position that could be closer and holds a wanted start
+    for (auto* set : sets) {
+        const StructurePlacement& p = set->placement;
+        if (p.type != StructurePlacement::CONCENTRIC_RINGS) continue;
+        double closest = 1e300;
+        bool have = false;
+        int rx = 0, rz = 0;
+        for (auto& c : p.rings) {
+            double d = dist2(c.x * 16 + 8, c.z * 16 + 8);
+            bool is_closest = !have || d < closest;
+            if (!is_closest || !has_wanted(c.x, c.z)) continue;
+            locate_pos(p, c.x, c.z, rx, rz);
+            closest = d;
+            have = true;
+        }
+        if (have) {
+            double nd = dist2(rx, rz);
+            if (nd < best) { best = nd; out_x = rx; out_z = rz; found = true; }
+        }
+    }
+    // random spread: ring by ring of grid cells, nearest ring first
+    std::vector<const StructureSetData*> spread;
+    for (auto* set : sets) if (set->placement.type == StructurePlacement::RANDOM_SPREAD) spread.push_back(set);
+    if (!spread.empty()) {
+        int origin_x = bx >> 4, origin_z = bz >> 4;
+        for (int radius = 0; radius <= max_radius; ++radius) {
+            bool found_something = false;
+            for (auto* set : spread) {
+                const StructurePlacement& p = set->placement;
+                int spacing = p.spacing;
+                bool hit = false;
+                int hx = 0, hz = 0;
+                for (int x = -radius; x <= radius && !hit; ++x) {
+                    bool x_edge = x == -radius || x == radius;
+                    for (int z = -radius; z <= radius && !hit; ++z) {
+                        bool z_edge = z == -radius || z == radius;
+                        if (!x_edge && !z_edge) continue;
+                        ChunkPos target = potential_chunk(p, env_.seed, origin_x + spacing * x, origin_z + spacing * z);
+                        if (!is_structure_chunk(*set, target.x, target.z)) continue;
+                        bool wanted = false;
+                        for (auto& st : starts_at(target.x, target.z)) if (ids.count(st->structure)) wanted = true;
+                        if (!wanted) continue;
+                        locate_pos(p, target.x, target.z, hx, hz);
+                        hit = true;
+                    }
+                }
+                if (!hit) continue;
+                found_something = true;
+                double nd = dist2(hx, hz);
+                if (nd < best) { best = nd; out_x = hx; out_z = hz; found = true; }
+            }
+            if (found_something) return found;
+        }
+    }
+    return found;
+}
+
+}  // namespace pn::vg

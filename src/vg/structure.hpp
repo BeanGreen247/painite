@@ -231,6 +231,9 @@ public:
     // StructureStart.placeInChunk for every structure of a decoration step, in registry order (the index of a structure counts every structure of the step)
     void place_step(int step, const std::vector<std::shared_ptr<const StructureStart>>& touching, FeatureEnv& fenv, Rng& random, int64_t decoration_seed, int cx, int cz);
     bool has_structures() const { return !sets_.empty(); }
+    // ChunkGenerator.findNearestMapStructure: the nearest start of one of `ids` around block (bx, bz), searching `max_radius` placement rings; false when none
+    bool locate(const std::set<std::string>& ids, int bx, int bz, int max_radius, int& out_x, int& out_z);
+    std::vector<std::string> structure_ids() const;
 private:
     bool is_structure_chunk(const StructureSetData& set, int cx, int cz);
     std::vector<ChunkPos> ring_positions(const StructurePlacement& p);
