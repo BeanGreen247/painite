@@ -6,7 +6,7 @@ Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~
 - Goal: **one-to-one vanilla parity, byte-exact where possible**: worldgen, what clients see, gameplay. Java first; **Bedrock parity is out of scope for now**.
 - Gameplay/entity/physics/tick behaviour: model on **Cuberite's** implementation (accurate, readable open source), then adjust toward Mojang's. Worldgen is a bit-exact Mojang port (`src/vg`), verified against Mojang's own server.
 - Do **not** propose or do repo cleanup (README refresh, sanitizer/fuzz runs, etc.) unless the owner asks. Testing against live Mojang/Microsoft login is deferred until everything else exists.
-- Commits: one-line conventional style `type(scope): message`, **no Co-Authored-By or any AI attribution lines**. Never push unless asked.
+- Commits: one-line conventional style `type(scope): message`, **no Co-Authored-By or any AI attribution lines**. The owner asked (2026-10-15) to **push `main` to origin at the end of each session** so no work is lost.
 - Never call paid or metered APIs. Keep working without asking questions; if a session limit hits, wait for the reset and continue.
 
 ## Environment you need (all free, local)
@@ -32,6 +32,17 @@ Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~
   - Fixes found by this verification worth knowing: mansion 1x1 rooms need template size 6 in `getZeroPositionWithTransform`; a chunk's starts of one structure are visited in fastutil `LongOpenHashSet` order (`reference_order` in structure.cpp); `canHangChainBelow` needs the center-sturdy block fact (blockflags bit 19, rerun `DumpBlocks.java` / `tools/fetch_worldgen.sh` to get it); surface rule `noise_threshold` has `is_3d` (sulfur caves); height providers use the generator's depth (`env.gen_min_y/gen_height`, nether fossil).
   - Entities created by structures (witch, drowned, elder guardian, chest minecart, ...) are saved as minimal NBT in `ChunkBlocks::entities`; block entities (chests with LootTable + LootTableSeed, spawners, ...) in `ChunkBlocks::block_entities`. Block entities are now copied into `Chunk::extra["block_entities"]` (sent to clients by jchunk.cpp, saved with the chunk); entities go to `Chunk::gen_entities`, which nothing consumes yet (no entity system).
   - Structure starts are not saved in chunk NBT (`structures.starts` / `References`) yet; `/locate` does not use them.
+
+## Gameplay core (new, `src/sim/`, namespace `pn::sim`)
+Protocol independent rules, ported from Mojang's classes, tested without a server by `painite_simtest` (`tests/sim/simtest.cpp`, needs `data/game/26.2`: run `tools/fetch_gamedata.sh 26.2` with JDK 25 on PATH).
+- `item.*`: `Items` registry (from the data generator's item component reports), `Registries` (protocol ids of every registry from `registries.json`; dynamic ones like enchantments come from the recorded config packets via `set_dynamic`), `ItemStack` (a stack keeps its component patch as the network encodings of the changed components, so stacks round trip byte for byte), wire read/write.
+- `components.*`: typed access to enchantments, potion, text components (JSON to network NBT), damage.
+- `inventory.*`: `Container`, `Slot`s, `PlayerInventory` (36 + equipment, container indexes 36..42), `Menu` (AbstractContainerMenu: click modes, quick craft/drag, quick move, broadcast with a `ContainerSynchronizer`), `InventoryMenu`, crafting result slot (needs a `CraftingProvider`, recipes not ported yet).
+- `player.*`: `PlayerSim` (inventory, open menu, game mode; `handle_container_click` etc. as ServerGamePacketListenerImpl).
+- `loot.*`: data driven loot tables (pools, entries, conditions, functions) rolled with Mojang's random call order; `fill()` for seeded containers. Not yet: enchant_randomly/enchant_with_levels, furnace_smelt, copy_components (block entities), exploration_map, entity predicates beyond type/flags/variants. Unverified against Mojang yet: compare by opening the same structure chests on a reference world and on Painite with a bot.
+- `data.*`: `Tags`, `BlockTable` (hardness, resistance, requires tool, ...), `EntityTable` (size, tracking range, default attributes).
+- Server wiring: `Game` owns a `PlayerSim` per player (`inv_*` methods), container events go to the worker as `GEvent::Container*`; player inventories are saved in `Inventory` (stacks with components keep Painite's `painite_patch` byte array until persistent component codecs exist).
+- Next: digging (port `ServerPlayerGameMode`: progress, tool speed, drops via block loot tables), item entities and a real entity system (needs block collision shapes from an oracle dump), pickup, placing consuming items, then health/hunger/damage, mobs, fluids, random ticks, redstone, recipes.
 
 ## Verification workflow (needs JDK 25 on PATH, see Environment)
 - Locate structures in Mojang's server: `build/painite_refgen --version 26.2 --seed 12345 --structures --out DIR --locate stronghold --locate monument ...` (prints `LOCATE name x z`).
