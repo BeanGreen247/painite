@@ -165,7 +165,56 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = tget("world.tick_threads")) c.tick_threads = to_int(*v, c.tick_threads);
     if (auto v = tget("world.autosave_s")) c.autosave_s = to_int(*v, c.autosave_s);
     if (auto v = get("spawn-protection")) c.spawn_protection = to_int(*v, 0);
+    if (auto v = tget("server.spawn_protection")) c.spawn_protection = to_int(*v, c.spawn_protection);
     if (auto v = tget("paths.data_dir")) c.data_dir = *v;
+
+    // All-in-one TOML settings overrides (allowing painite.toml to configure everything)
+    if (auto v = tget("server.port")) c.java_port = to_int(*v, c.java_port);
+    if (auto v = tget("server.ip")) c.server_ip = *v;
+    if (auto v = tget("server.motd")) c.motd = *v;
+    if (auto v = tget("server.max_players")) c.max_players = to_int(*v, c.max_players);
+    if (auto v = tget("server.online_mode")) c.online_mode = to_bool(*v, c.online_mode);
+    if (auto v = tget("server.prevent_proxy")) c.prevent_proxy = to_bool(*v, c.prevent_proxy);
+    if (auto v = tget("server.white_list")) c.white_list = to_bool(*v, c.white_list);
+    if (auto v = tget("server.view_distance")) c.view_distance = to_int(*v, c.view_distance);
+    if (auto v = tget("server.simulation_distance")) c.simulation_distance = to_int(*v, c.simulation_distance);
+    if (auto v = tget("server.gamemode")) {
+        std::string g = lower(*v);
+        c.gamemode = g == "creative" ? 1 : g == "adventure" ? 2 : g == "spectator" ? 3 : g == "survival" ? 0 : to_int(g, 0);
+    }
+    if (auto v = tget("server.difficulty")) {
+        std::string d = lower(*v);
+        c.difficulty = d == "peaceful" ? 0 : d == "easy" ? 1 : d == "normal" ? 2 : d == "hard" ? 3 : to_int(d, -1);
+    }
+    if (auto v = tget("server.hardcore")) c.hardcore = to_bool(*v, c.hardcore);
+    if (auto v = tget("world.name")) c.level_name = *v;
+    if (auto v = tget("world.level_type")) {
+        c.level_type = lower(*v);
+        c.level_type.erase(std::remove(c.level_type.begin(), c.level_type.end(), '\\'), c.level_type.end());
+        if (c.level_type.rfind("minecraft:", 0) == 0) c.level_type = c.level_type.substr(10);
+    }
+    if (auto v = tget("world.seed")) c.level_seed = *v;
+
+    // Server Info block
+    if (auto v = tget("info.server_type")) c.server_type = *v;
+    if (auto v = tget("info.version")) c.version_str = *v;
+    if (auto v = tget("info.github")) c.github_url = *v;
+
+    // Startup commands list: startup.commands = ["...", "..."]
+    if (auto v = tget("startup.commands")) {
+        std::string s = *v;
+        if (!s.empty() && s.front() == '[') s = s.substr(1);
+        if (!s.empty() && s.back() == ']') s.pop_back();
+        std::stringstream ss(s);
+        std::string cmd;
+        while (std::getline(ss, cmd, ',')) {
+            cmd = trim(cmd);
+            if (cmd.size() >= 2 && cmd.front() == '"' && cmd.back() == '"') cmd = cmd.substr(1, cmd.size() - 2);
+            cmd = trim(cmd);
+            if (!cmd.empty()) c.startup_commands.push_back(cmd);
+        }
+    }
+
     if (c.profile == "lan") c.compression_threshold = -1;
     return true;
 }

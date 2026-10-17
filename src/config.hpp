@@ -23,7 +23,7 @@ struct Config {
     int gamemode = 0;  // 0 survival, 1 creative, 2 adventure, 3 spectator
     int compression_threshold = 256;
     std::string level_name = "world";
-    std::string level_type = "normal";   // normal | flat | void ...: only flat and void exist (no terrain generator)
+    std::string level_type = "normal";   // normal | flat | void | large_biomes | amplified
     std::string level_seed;
     int difficulty = -1;                  // -1 = whatever level.dat says
     bool hardcore = false;
@@ -48,11 +48,17 @@ struct Config {
     int memory_cap_mb = 1024;  // total pool cap (connection buffers + chunk cache)
     int spawn_busy_pct = 70;
     int retire_idle_s = 60;
-    std::string generator = "auto";  // chunks that are not on disk: auto (flat for a new world, void for an existing one) | flat | void
+    std::string generator = "auto";  // chunks that are not on disk: auto (terrain for a new world, void for an existing one) | terrain | flat | void | vanilla
     int autosave_s = 300;
     int tick_threads = 0;   // threads that tick regions in parallel (0 = automatic)
     int spawn_protection = 0;
     std::string data_dir;      // where vanilla-<ver>.bin/.ids live; empty = search
+
+    // Server Info metadata
+    std::string server_type = "Painite";
+    std::string version_str = "0.1.0";
+    std::string github_url = "https://github.com/BeanGreen247/painite";
+    std::vector<std::string> startup_commands;
 
     int bedrock_port_effective() const { return bedrock_port < 0 ? java_port : bedrock_port; }
 };

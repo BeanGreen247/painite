@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # First-time setup: builds Painite if needed, creates a ready-to-run server folder and (optionally) registers it in CreeperCrest.
 #
-#   ./setup.sh                                  server folder ~/painite-server, new flat world, offline mode off
+#   ./setup.sh                                  server folder ~/painite-server, new normal world, offline mode off
 #   ./setup.sh --dir ~/mc/painite --world ~/mc/paper/world --offline --gamemode creative
 #   ./setup.sh --creepercrest ~/creepercrest    also add the server to that CreeperCrest (restart it afterwards)
 #
@@ -19,7 +19,7 @@
 #   --no-build           fail instead of building when the binary or data are missing
 set -euo pipefail
 ROOT=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
-DIR="$HOME/painite-server" WORLD="" NAME="Painite" ID="painite" OFFLINE=0 GM=survival PORT=25565 JAVA="26.2,26.3" CC="" NOCC=0 BUILD=1
+DIR="$HOME/painite-server" WORLD="" NAME="Painite" ID="painite" OFFLINE=0 GM=survival PORT=25565 JAVA="26.2,26.3" CC="" NOCC=0 BUILD=1 LEVELTYPE=normal SEED=""
 [ -f "$HOME/creepercrest/config.json" ] && CC="$HOME/creepercrest"
 while [ $# -gt 0 ]; do
   case "$1" in

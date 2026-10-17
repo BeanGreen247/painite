@@ -67,9 +67,9 @@ def main():
         sys.exit("nothing changed")
     print(f"\n{B}World and gameplay{R}  (these go into server.properties; entries marked * are stored but Painite does not act on them yet)")
     level = ask("World folder name", "world")
-    wtype = choice("World type (Painite has no terrain generator: only flat and void are real, normal/large_biomes/amplified fall back to flat for new chunks)",
-                   ["flat", "void", "normal", "large_biomes", "amplified"], "flat")
-    seed = ask("World seed *", "", hint="blank = none")
+    wtype = choice("World type",
+                   ["normal", "flat", "void", "large_biomes", "amplified"], "normal")
+    seed = ask("World seed", "", hint="blank = random")
     gm = choice("Default game mode", ["survival", "creative", "adventure", "spectator"], "survival")
     diff = choice("Difficulty", ["peaceful", "easy", "normal", "hard"], "easy")
     maxp = ask("Max players", "20", num(1, 1000))

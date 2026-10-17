@@ -159,21 +159,24 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         std::string o = "There are " + std::to_string(ids.size()) + " of a max of " + std::to_string(s_.cfg.max_players) + " players online:";
         for (size_t i = 0; i < ids.size(); i++) o += (i ? ", " : " ") + ids[i]->name;
         reply(o);
-    } else if (cmd == "players") {
+    } else if (cmd == "players" || cmd == "whois" || cmd == "playerinfo") {
         auto ids = identities();
         if (ids.empty()) { reply("Nobody is online"); return; }
         int64_t now = now_ms();
         char b[240];
-        reply("name              edition  ping    ticks online  tps   gamemode  position");
+        reply("Player            Edition  Ping     Coords (X, Y, Z)          Gamemode  Ticks Online");
         for (auto& id : ids) {
             GPos p = position(id->gid);
             int ping = id->ping_ms.load();
-            snprintf(b, sizeof b, "%-17s %-7s  %4d ms  %12lld  %4.1f  %-8d  %.0f %.0f %.0f", id->name.c_str(), id->bedrock ? "Bedrock" : "Java", ping < 0 ? 0 : ping,
-                     static_cast<long long>((now - id->joined_ms) / 50), tps_, gamemode_of(id->gid), p.x, p.y, p.z);
+            char coords[64];
+            snprintf(coords, sizeof coords, "%.1f, %.1f, %.1f", p.x, p.y, p.z);
+            snprintf(b, sizeof b, "%-17s %-8s %4d ms  %-24s %-9d %lld", id->name.c_str(), id->bedrock ? "Bedrock" : "Java",
+                     ping < 0 ? 0 : ping, coords, gamemode_of(id->gid), static_cast<long long>((now - id->joined_ms) / 50));
             reply(b);
         }
-    } else if (cmd == "version" || cmd == "ver" || cmd == "about") {
-        reply("Painite 0.1.0, Minecraft Java + Bedrock server");
+    } else if (cmd == "version" || cmd == "ver" || cmd == "about" || cmd == "info") {
+        reply(s_.cfg.server_type + " " + s_.cfg.version_str + " (Minecraft Java + Bedrock native server)");
+        reply("GitHub: " + s_.cfg.github_url);
     } else if (cmd == "plugins" || cmd == "pl") {
         reply("Plugins (0): Painite does not load Java plugins");
     } else if (cmd == "tps" || cmd == "status") {

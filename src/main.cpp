@@ -95,13 +95,38 @@ int main(int argc, char** argv) {
     if (mem_cap > 0) server.cfg.memory_cap_mb = mem_cap;
     if (no_bedrock) server.cfg.bedrock = false;
 
-    mkdir(server.cfg.level_name.c_str(), 0755);
+    // Server info block
+    info("=== " + server.cfg.server_type + " " + server.cfg.version_str + " ===");
+    info("Server Info: " + server.cfg.server_type + " (" + server.cfg.github_url + ")");
+
+    int jars = 0;
+    std::vector<std::string> jar_names;
     if (DIR* d = opendir("plugins")) {
-        int jars = 0;
-        while (auto* e = readdir(d)) { std::string n = e->d_name; if (n.size() > 4 && n.substr(n.size() - 4) == ".jar") jars++; }
+        while (auto* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.size() > 4 && n.substr(n.size() - 4) == ".jar") {
+                jars++;
+                jar_names.push_back(n);
+            }
+        }
         closedir(d);
-        if (jars) warn("plugins/ contains " + std::to_string(jars) + " jar(s); Painite cannot load Java plugins and ignores them");
     }
+    if (jars) {
+        std::string list;
+        for (size_t i = 0; i < jar_names.size(); i++) list += (i ? ", " : "") + jar_names[i];
+        warn("Loaded plugins (0 enabled, " + std::to_string(jars) + " detected in plugins/: " + list + "): Native C++ server ignores JVM jar plugins");
+    } else {
+        info("Loaded plugins (0): Native server running builtin modules");
+    }
+
+    // Enabled features list
+    std::string features = "Bedrock crossplay: " + std::string(server.cfg.bedrock ? "enabled" : "disabled") +
+                           ", Online auth: " + std::string(server.cfg.online_mode ? "enabled" : "disabled") +
+                           ", Generator: " + server.cfg.generator +
+                           ", World: " + server.cfg.level_type +
+                           ", View distance: " + std::to_string(server.cfg.view_distance);
+    info("Enabled features: [" + features + "]");
+
     if (online_flag >= 0) server.cfg.online_mode = online_flag == 1;
     if (!server.cfg.online_mode) warn("online-mode=false: offline/cracked clients can join and players are not verified with Mojang");
 
@@ -111,15 +136,25 @@ int main(int argc, char** argv) {
 
     int64_t t0 = now_ms();
     if (!server.start(err)) { error(err); return 1; }
+    double load_s = (now_ms() - t0) / 1000.0;
     std::string ip = server.cfg.server_ip.empty() ? "*" : server.cfg.server_ip;
     info("Starting Minecraft server on " + ip + ":" + std::to_string(server.cfg.java_port));
     if (server.cfg.bedrock) info("Bedrock (RakNet) listening on UDP port " + std::to_string(server.cfg.bedrock_port_effective()));
     std::string vers;
     for (auto& d : server.data) vers += (vers.empty() ? "" : ", ") + d.version;
     info("Supported Java versions: " + vers + "; " + std::to_string(server.cores.size()) + " core(s), memory cap " + std::to_string(server.cfg.memory_cap_mb) + " MiB");
-    char done[96];
-    snprintf(done, sizeof done, "Done (%.3fs)! For help, type \"help\"", (now_ms() - t0) / 1000.0);
+    char done[128];
+    snprintf(done, sizeof done, "Done in %.3fs (load took %.3fs)! For help, type \"help\"", (now_ms() - t0) / 1000.0, load_s);
     info(done);
+
+    // Run startup commands from config
+    if (!server.cfg.startup_commands.empty()) {
+        info("Running " + std::to_string(server.cfg.startup_commands.size()) + " startup command(s)...");
+        for (auto& scmd : server.cfg.startup_commands) {
+            info("> " + scmd);
+            server.game.command(0, scmd);
+        }
+    }
 
     console(server);
     info("Stopping server");
