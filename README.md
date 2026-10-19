@@ -12,11 +12,9 @@ and friends to cover client versions. That stack needs a lot of memory, starts s
 things that are not the game. Painite asks what the same job looks like when it is written for the machine from the start:
 
 - **One native process for both editions.** Java and Bedrock players share one world, one block state and one entity model. No proxy translating between them.
-- **Fast and small on purpose.** One epoll loop per core for the network, chunks encoded once and shared, block updates ticked per region in parallel, no heap
-  to collect. An idle server is about 40 MB; 60 moving bots cost about a third of one core (numbers and how to measure them in `docs/WHY.md`).
+- **Fast and small on purpose.** One epoll loop per core for the network, chunks encoded once and shared, block updates ticked per region in parallel, no heap to collect. An idle server is about 40 MB; 60 moving bots cost about a third of one core (numbers and how to measure them in `docs/WHY.md`).
 - **Understandable.** About ten thousand lines of C++ you can read in an evening, with a test suite that checks packets and world files against Mojang's own servers.
-- **A base to build on**, not a finished product: it reads and writes real Paper/vanilla worlds, so you can try it on a copy of your world, but plugins, mobs and
-  survival gameplay are not there yet (see "What does not work yet").
+- **A base to build on**, not a finished product: it reads and writes real Paper/vanilla worlds, so you can try it on a copy of your world, but plugins, mobs and survival gameplay are not there yet (see "What does not work yet").
 
 Keep running Paper for anything that needs plugins. Painite is for people who want to see how far a small native server can go, and for hosts where memory and CPU matter.
 
