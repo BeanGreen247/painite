@@ -120,11 +120,19 @@ std::vector<uint8_t> Bedrock::patched_respawn(const BSession& b, const std::vect
 std::vector<uint8_t> Bedrock::player_list_for(const BedrockData& data, const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid,
                                               const std::vector<uint8_t>* skin) const {
     const auto& in = data.player_list_raw;
-    const uint8_t* p = in.data() + 1;
+    const uint8_t* p = in.data();
     const uint8_t* e = in.data() + in.size();
     uint64_t v;
-    if (!rd_varuint(p, e, v) || e - p < 16) return in;       // count
-    std::vector<uint8_t> out(in.data(), p);                  // action, count
+    // before 2168: action byte, count; from 2168: count, then per entry a varint (1 = add) and the action byte (PlayerListSerializer_v2168)
+    if (data.protocol >= 2168) {
+        if (!rd_varuint(p, e, v) || !rd_varuint(p, e, v) || p >= e) return in;
+        p++;
+    } else {
+        p++;
+        if (!rd_varuint(p, e, v)) return in;
+    }
+    if (e - p < 16) return in;
+    std::vector<uint8_t> out(in.data(), p);                  // the header
     out.insert(out.end(), uuid, uuid + 16);
     p += 16;
     if (!rd_varuint(p, e, v)) return in;                      // recorded unique id
@@ -150,8 +158,14 @@ std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const { ret
 std::vector<uint8_t> Bedrock::player_list_entry(const BedrockData& data, const GIdentity& id, bool add) const {
     if (add) return player_list_for(data, id.uuid, id.eid, id.name, id.xuid, &id.bedrock_skin);
     std::vector<uint8_t> o;
-    o.push_back(1);
-    put_varuint(o, 1);
+    if (data.protocol >= 2168) {
+        put_varuint(o, 1);   // one entry
+        put_varuint(o, 0);   // not an add
+        o.push_back(1);      // action: remove
+    } else {
+        o.push_back(1);      // action: remove
+        put_varuint(o, 1);   // one entry
+    }
     o.insert(o.end(), id.uuid, id.uuid + 16);
     return o;
 }
@@ -300,7 +314,7 @@ void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
                     pl.push_back(2);      // teleport
                     pl.push_back(1);
                     put_varuint(pl, 0);
-                    pl.push_back(1);      // teleport data follows
+                    if (b->proto >= 2168) pl.push_back(1);      // teleport data follows (before 2168 it is implied by the mode)
                     put_i32(pl, 3);       // cause: command
                     put_i32(pl, 0);
                     put_varuint(pl, 0);   // tick
@@ -317,7 +331,8 @@ void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
             pl.push_back(ev.kind == GEvent::Teleport ? 2 : 0);
             pl.push_back(ev.pos.ground ? 1 : 0);
             put_varuint(pl, 0);
-            if (ev.kind == GEvent::Teleport) { pl.push_back(1); put_i32(pl, 0); put_i32(pl, 0); } else pl.push_back(0);
+            if (ev.kind == GEvent::Teleport) { if (b->proto >= 2168) pl.push_back(1); put_i32(pl, 0); put_i32(pl, 0); }
+            else if (b->proto >= 2168) pl.push_back(0);
             put_varuint(pl, 0);
             out.emplace_back(19, std::move(pl));
             break;
