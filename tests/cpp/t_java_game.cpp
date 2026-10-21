@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher"};
     return o;
 }
 
@@ -519,7 +519,26 @@ void perf_mobs(Ctx& t, Env& e) {
     B.pump(500);
     std::string rep;
     for (auto& en : B.log) if (en.first == "system_chat") rep += printable(en.second) + "\n";
+    B.log.clear();
+    B.command("cache");
+    B.pump(500);
+    for (auto& en : B.log) if (en.first == "system_chat") rep += printable(en.second) + "\n";
     t.note("RSS before " + std::to_string(before) + " kB, after " + std::to_string(rss_kb(e.srv->dir)) + " kB\n" + rep);
+}
+
+// the cache command lists the caches with their hits and misses
+void cache_stats_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Cacher");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    B.log.clear();
+    B.command("cache");
+    B.pump(500);
+    std::string all;
+    for (auto& en : B.log) if (en.first == "system_chat") all += printable(en.second) + "\n";
+    for (const char* name : {"world chunks", "java chunk packets", "path cells", "tags", "loot tables", "memory pool", "block collision shapes", "hit%"})
+        t.check(all.find(name) != std::string::npos, std::string("`cache` lists ") + name);
 }
 
 }  // namespace
@@ -554,6 +573,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
     d.tests.push_back({"perf-mobs", perf_mobs});
+    d.tests.push_back({"cache-command", cache_stats_test});
     d.tests.push_back({"bow-and-snowball", ranged});
     d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));

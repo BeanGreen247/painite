@@ -1,5 +1,6 @@
 // Java Edition protocol: framing, handshake, status, login, configuration replay and a flat-world play loop.
 #include "server.hpp"
+#include "cachestats.hpp"
 #include "dimension.hpp"
 #include "worldgen.hpp"
 #include "log.hpp"
@@ -578,14 +579,18 @@ void Worker::send_chunk(JConn& c, int x, int z) {
     auto ch = s_.dim(c.dim).chunk(x, z);
     uint32_t ver = ch->version.load();
     int64_t key = pack_chunk(x, z) ^ (static_cast<int64_t>(c.dim) << 49) ^ (static_cast<int64_t>(c.vd->protocol) << 52) ^ (c.threshold < 0 ? (1ll << 51) : 0);
+    static CacheStat& st = cache_stat("java chunk packets");
     auto it = chunk_cache_.find(key);
     if (it != chunk_cache_.end() && it->second.ver != ver) {
         chunk_cache_bytes_ -= it->second.f.size();
         s_.mem_sub(static_cast<int64_t>(it->second.f.size()));
+        st.add(-1, -int64_t(it->second.f.size()));
         chunk_cache_.erase(it);
         it = chunk_cache_.end();
     }
+    if (it != chunk_cache_.end()) st.hit();
     if (it == chunk_cache_.end()) {
+        st.miss();
         Wr w;
         w.varint(id.pl_chunk);
         { PN_PERF("chunk.encode_java"); encode_java_chunk(*ch, *c.vd, s_.world.biome_names, w, c.dim); }
@@ -594,12 +599,14 @@ void Worker::send_chunk(JConn& c, int x, int z) {
         frame_into(f, w.b.data(), w.b.size(), c.threshold, s_.cfg.compression_level);
         size_t cap = static_cast<size_t>(s_.cfg.chunk_cache_mb) * 1024 * 1024;
         if (chunk_cache_bytes_ + f.size() > cap) {
-            for (auto& kv : chunk_cache_) s_.mem_sub(static_cast<int64_t>(kv.second.f.size()));
+            for (auto& kv : chunk_cache_) { s_.mem_sub(static_cast<int64_t>(kv.second.f.size())); st.add(-1, -int64_t(kv.second.f.size())); }
             chunk_cache_.clear();
             chunk_cache_bytes_ = 0;
         }
         if (s_.mem_add(static_cast<int64_t>(f.size()))) {
             chunk_cache_bytes_ += f.size();
+            st.add(1, int64_t(f.size()));
+            st.limit_bytes = int64_t(cap);
             it = chunk_cache_.emplace(key, CachedChunk{ver, std::move(f)}).first;
         } else {
             append_out(c, f.data(), f.size());

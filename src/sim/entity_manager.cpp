@@ -1,6 +1,7 @@
 #include "entity_manager.hpp"
 #include "data.hpp"
 #include "loot.hpp"
+#include "../cachestats.hpp"
 #include "mob.hpp"
 #include <array>
 #include <set>
@@ -296,6 +297,12 @@ Entity* EntityManager::add_entity(std::unique_ptr<Entity> entity) {
 }
 
 void EntityManager::tick() {
+    {   // what the path searches of the last tick kept, for the `cache` command; then start over
+        static CacheStat& st = cache_stat("path cells (per tick)");
+        int64_t n = 0;
+        for (auto& kv : cell_caches_) n += int64_t(kv.second.clear.size() + kv.second.stand.size());
+        if (n) { st.entries.store(n, std::memory_order_relaxed); st.bytes.store(n * 48, std::memory_order_relaxed); }
+    }
     for (auto& kv : cell_caches_) { kv.second.clear.clear(); kv.second.stand.clear(); }   // blocks may have changed since the last tick
     const size_t tick_count = entities_.size();
     for (size_t i = 0; i < tick_count; ++i) {

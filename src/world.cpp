@@ -1,4 +1,5 @@
 #include "world.hpp"
+#include "cachestats.hpp"
 #include "vg/gen.hpp"
 #include "perf.hpp"
 #include "dimension.hpp"
@@ -394,12 +395,14 @@ std::shared_ptr<Chunk> World::load_chunk(int cx, int cz) {
 }
 
 std::shared_ptr<Chunk> World::chunk(int cx, int cz) {
+    static CacheStat& st = cache_stat("world chunks");
     int64_t key = ckey(cx, cz);
     std::unique_lock<std::mutex> l(mu_);
     for (;;) {
         auto it = chunks_.find(key);
-        if (it != chunks_.end()) { it->second->last_used_ms = now_ms(); return it->second; }
+        if (it != chunks_.end()) { it->second->last_used_ms = now_ms(); st.hit(); return it->second; }
         if (loading_.count(key)) { loaded_cv_.wait(l); continue; }
+        st.miss();   // read from disk or generated
         loading_.insert(key);
         l.unlock();
         std::shared_ptr<Chunk> c;
@@ -414,11 +417,24 @@ std::shared_ptr<Chunk> World::chunk(int cx, int cz) {
 }
 
 std::shared_ptr<Chunk> World::chunk_if_loaded(int cx, int cz) {
+    static CacheStat& st = cache_stat("world chunks");
     std::lock_guard<std::mutex> l(mu_);
     auto it = chunks_.find(ckey(cx, cz));
-    if (it == chunks_.end()) return nullptr;
+    if (it == chunks_.end()) { st.miss(); return nullptr; }
+    st.hit();
     it->second->last_used_ms = now_ms();
     return it->second;
+}
+
+// the chunks in memory and what their sections take
+void World::memory_use(int64_t& chunks, int64_t& bytes) {
+    std::lock_guard<std::mutex> l(mu_);
+    chunks = int64_t(chunks_.size());
+    bytes = 0;
+    for (auto& kv : chunks_) {
+        bytes += int64_t(sizeof(Chunk));
+        for (int s = 0; s < kSections; s++) if (kv.second->sec[s]) bytes += int64_t(sizeof(Section));
+    }
 }
 
 int World::loaded() { std::lock_guard<std::mutex> l(mu_); return static_cast<int>(chunks_.size()); }

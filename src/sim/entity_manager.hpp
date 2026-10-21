@@ -15,6 +15,8 @@ public:
     bool load(const std::string& states_path, const std::string& shapes_path, std::string& err);
     const std::vector<AABB>& boxes(uint16_t state) const { return state < flat_.size() && flat_[state] ? *flat_[state] : empty_; }
     bool is_full_block(uint16_t state) const { return state < flat_full_.size() && flat_full_[state]; }
+    size_t states() const { return state_shapes_.size(); }
+    size_t memory_bytes() const { return flat_.size() * sizeof(void*) + flat_full_.size() + state_shapes_.size() * 24 + shapes_.size() * 64; }
 
 private:
     std::unordered_map<uint16_t, int> state_shapes_;

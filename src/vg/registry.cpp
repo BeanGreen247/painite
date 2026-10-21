@@ -1,4 +1,6 @@
 #include "registry.hpp"
+#include "../cachestats.hpp"
+#include <sys/stat.h>
 #include <algorithm>
 #include <dirent.h>
 #include <sys/stat.h>
@@ -31,8 +33,15 @@ bool Registry::exists(const std::string& kind, const std::string& id) const {
 const Json& Registry::get(const std::string& kind, const std::string& id) const {
     std::string path = path_of(kind, id);
     std::lock_guard<std::mutex> l(mu_);
+    static CacheStat& st = cache_stat("worldgen json");
     auto it = cache_.find(path);
-    if (it != cache_.end()) return *it->second;
+    if (it != cache_.end()) { st.hit(); return *it->second; }
+    st.miss();
+    st.bytes_are_source = true;
+    {
+        struct stat sb;
+        st.add(1, stat(path.c_str(), &sb) == 0 ? int64_t(sb.st_size) : 0);
+    }
     auto j = std::make_unique<Json>(Json::parse_file(path));
     if (dir_.find("26.3") != std::string::npos) normalize_263(kind, *j, dir_);
     const Json& ref = *j;

@@ -1,4 +1,5 @@
 #include "path.hpp"
+#include "../cachestats.hpp"
 #include <algorithm>
 #include <cmath>
 #include <queue>
@@ -27,18 +28,22 @@ struct Search {
 
     // the mob's body fits with its feet on the floor of this cell
     bool clear(int x, int y, int z) {
+        static CacheStat& st = cache_stat("path cells (per tick)");
         uint64_t k = key(x, y, z);
         auto it = clear_cache.find(k);
-        if (it != clear_cache.end()) return it->second;
+        if (it != clear_cache.end()) { st.hit(); return it->second; }
+        st.miss();
         bool ok = w.no_collision(AABB(x + 0.5 - hw, y + 0.0001, z + 0.5 - hw, x + 0.5 + hw, y + height, z + 0.5 + hw));
         clear_cache[k] = ok;
         return ok;
     }
     // clear, with something to stand on right below, and not standing in a fluid
     bool stand(int x, int y, int z) {
+        static CacheStat& st = cache_stat("path cells (per tick)");
         uint64_t k = key(x, y, z);
         auto it = stand_cache.find(k);
-        if (it != stand_cache.end()) return it->second;
+        if (it != stand_cache.end()) { st.hit(); return it->second; }
+        st.miss();
         bool ok = clear(x, y, z);
         if (ok) {
             thread_local std::vector<AABB> below;

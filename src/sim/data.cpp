@@ -1,4 +1,5 @@
 #include "data.hpp"
+#include "../cachestats.hpp"
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -31,10 +32,14 @@ const std::set<std::string>& Tags::members(const std::string& registry, const st
     std::string n = name;
     if (!n.empty() && n[0] == '#') n = n.substr(1);
     std::string key = registry + "/" + with_ns(n);
+    static CacheStat& st = cache_stat("tags");
     auto it = cache_.find(key);
-    if (it != cache_.end()) return it->second;
+    if (it != cache_.end()) { st.hit(); return it->second; }
+    st.miss();
     std::set<std::string> out;
     load(registry, n, out, 0);
+    int64_t members = int64_t(out.size());
+    st.add(1, 64 + members * 64);   // a rough size: the set nodes and their strings
     return cache_.emplace(key, std::move(out)).first->second;
 }
 

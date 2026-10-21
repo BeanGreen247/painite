@@ -2,6 +2,7 @@
 #include "bchunk.hpp"
 #include "skin.hpp"
 #include "bedrock.hpp"
+#include "cachestats.hpp"
 #include "dimension.hpp"
 #include "game.hpp"
 #include "log.hpp"
@@ -494,7 +495,12 @@ const std::vector<uint8_t>& Bedrock::level_chunk_tail(int dim, int x, int z, boo
     int64_t key = ((static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z)) ^ (static_cast<int64_t>(dim) << 58) ^ (legacy ? 1ll << 57 : 0);
     auto ch = s_.dim(dim).chunk(x, z);
     uint32_t ver = ch->version.load();
+    static CacheStat& st = cache_stat("bedrock chunk tails");
     auto& slot = tail_cache_[key];
+    st.limit_bytes = 16ll * 1024 * 1024;
+    if (slot.ver == ver && !slot.tail.empty()) st.hit(); else st.miss();
+    st.entries.store(int64_t(tail_cache_.size()), std::memory_order_relaxed);
+    st.bytes.store(int64_t(tail_cache_bytes_), std::memory_order_relaxed);
     if (slot.ver != ver || slot.tail.empty()) {
         tail_cache_bytes_ -= slot.tail.size();
         encode_bedrock_levelchunk(*ch, slot.tail, dim, legacy);

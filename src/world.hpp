@@ -61,6 +61,7 @@ public:
     int top_y(int x, int z);                                 // y of the highest solid block, or kMinY - 1
     void save(bool unload_idle, int64_t now_ms);
     int loaded() ;
+    void memory_use(int64_t& chunks, int64_t& bytes);   // loaded chunks and the bytes of their sections
     std::vector<std::string> biome_names;
     int spawn_x = 0, spawn_y = -60, spawn_z = 0;
     int64_t game_time = 0, day_time = 0;

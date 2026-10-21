@@ -1,5 +1,9 @@
 // Console and player commands. Permission levels follow vanilla: 0 everyone, 2 gamemaster, 3 admin, 4 owner/console.
 #include "game.hpp"
+#include "cachestats.hpp"
+#include "sim/entity_manager.hpp"
+#include <algorithm>
+#include <cstdio>
 #include "dimension.hpp"
 #include "structures.hpp"
 #include "vg/gen.hpp"
@@ -155,7 +159,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
 
     if (cmd == "help" || cmd == "?") {
         std::string o = "Commands: help, list, players, tps, me, tell/msg, version";
-        if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kill, summon, kick";
+        if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kill, summon, cache, perf, kick";
         if (level >= 3) o += ", ban, ban-ip, pardon, pardon-ip, banlist, whitelist, op, deop";
         if (level >= 4) o += ", save-all, save-on, save-off, stop";
         if (list_commands) o += ". Every command also works as 'painite <command>', e.g. 'painite tps'";
@@ -190,6 +194,61 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         snprintf(b, sizeof b, "TPS %.1f, tick %.2f ms, players %d, loaded chunks %d, block updates %lld (%lld changed, %zu queued, %d region threads), ", tps_, mspt_, players(), s_.world.loaded() + s_.other_dims[0]->loaded() + s_.other_dims[1]->loaded(),
                  static_cast<long long>(ticker_.processed.load()), static_cast<long long>(ticker_.changed.load()), ticker_.pending(), ticker_.threads() + 1);
         reply(std::string(b) + s_.console_status());
+    } else if (cmd == "cache") {
+        if (!need(2)) return;
+        // every cache of the runtime: what is in it, what it takes, how often it answered (hits) and how often it had to do the work (misses)
+        auto human = [](int64_t b) {
+            char t[32];
+            if (b < 1024) snprintf(t, sizeof t, "%lld B", (long long)b);
+            else if (b < 1024 * 1024) snprintf(t, sizeof t, "%.1f KiB", double(b) / 1024.0);
+            else snprintf(t, sizeof t, "%.1f MiB", double(b) / (1024.0 * 1024.0));
+            return std::string(t);
+        };
+        for (const char* n : {"world chunks", "java chunk packets", "bedrock chunk tails", "path cells (per tick)", "tags", "loot tables", "biome spawn lists", "worldgen json"})
+            cache_stat(n);   // listed even before they were used
+        {   // caches that are measured on demand
+            int64_t chunks = 0, bytes = 0;
+            for (int d = 0; d < 3; d++) { int64_t c1, b1; s_.dim(d).memory_use(c1, b1); chunks += c1; bytes += b1; }
+            CacheStat& wc = cache_stat("world chunks");
+            wc.entries.store(chunks); wc.bytes.store(bytes);
+            CacheStat& et = cache_stat("entity tracking");
+            et.counts_lookups = false; et.entries.store(int64_t(entity_tracks_.size())); et.bytes.store(int64_t(entity_tracks_.size() * 240));
+            CacheStat& bs = cache_stat("block collision shapes");
+            bs.counts_lookups = false; bs.entries.store(int64_t(sim::BlockCollisionShapes::get().states())); bs.bytes.store(int64_t(sim::BlockCollisionShapes::get().memory_bytes()));
+            CacheStat& bl = cache_stat("block state table");
+            bl.counts_lookups = false; bl.entries.store(int64_t(Blocks::get().count())); bl.bytes.store(int64_t(Blocks::get().count() * sizeof(BlockInfo)));
+            CacheStat& mp = cache_stat("memory pool (chunk packets, connections)");
+            mp.counts_lookups = false; mp.bytes.store(s_.mem_used.load()); mp.limit_bytes = s_.mem_cap;
+        }
+        auto rows = cache_stats();
+        std::sort(rows.begin(), rows.end(), [](CacheStat* a, CacheStat* b) { return a->name < b->name; });
+        char line[256];
+        snprintf(line, sizeof line, "%-40s %9s %11s %11s %11s %11s %6s", "cache", "entries", "size", "limit", "hits", "misses", "hit%");
+        reply(line);
+        int64_t total_bytes = 0;
+        for (CacheStat* s : rows) {
+            int64_t entries = s->entries.load(), bytes = s->bytes.load();
+            if (s->sampler) s->sampler(entries, bytes);
+            uint64_t h = s->hits.load(), m = s->misses.load();
+            total_bytes += bytes;
+            std::string size = human(bytes) + (s->bytes_are_source ? "*" : ""), limit = s->limit_bytes ? human(s->limit_bytes) : "-";
+            char hitc[24] = "-", missc[24] = "-", pct[16] = "-";
+            if (s->counts_lookups) {
+                snprintf(hitc, sizeof hitc, "%llu", (unsigned long long)h);
+                snprintf(missc, sizeof missc, "%llu", (unsigned long long)m);
+                if (h + m) snprintf(pct, sizeof pct, "%.1f", 100.0 * double(h) / double(h + m));
+            }
+            snprintf(line, sizeof line, "%-40s %9lld %11s %11s %11s %11s %6s", s->name.c_str(), (long long)entries, size.c_str(), limit.c_str(), hitc, missc, pct);
+            reply(line);
+        }
+        long rss_kb = 0;
+        if (FILE* f = fopen("/proc/self/status", "r")) {
+            char l2[128];
+            while (fgets(l2, sizeof l2, f)) if (!strncmp(l2, "VmRSS:", 6)) rss_kb = atol(l2 + 6);
+            fclose(f);
+        }
+        snprintf(line, sizeof line, "cached data listed: %s; process resident memory: %.1f MiB (* = size of the source files, the parsed form is larger)", human(total_bytes).c_str(), double(rss_kb) / 1024.0);
+        reply(line);
     } else if (cmd == "perf") {
         for (auto& l : s_.perf_report()) reply(l);
     } else if (cmd == "me") {

@@ -1,4 +1,6 @@
 #include "loot.hpp"
+#include "../cachestats.hpp"
+#include <sys/stat.h>
 #include "components.hpp"
 #include "data.hpp"
 #include <cmath>
@@ -822,17 +824,24 @@ std::string g_dir;
 std::map<std::string, std::unique_ptr<LootTable>> g_cache;
 }
 
-void LootTables::set_dir(const std::string& d) { std::lock_guard<std::mutex> l(g_mu); g_dir = d; g_cache.clear(); }
+void LootTables::set_dir(const std::string& d) { std::lock_guard<std::mutex> l(g_mu); g_dir = d; g_cache.clear(); cache_stat("loot tables").entries.store(0); cache_stat("loot tables").bytes.store(0); }
 const LootTable* LootTables::get(const std::string& id) {
     std::lock_guard<std::mutex> l(g_mu);
     std::string key = with_ns(id);
+    static CacheStat& st = cache_stat("loot tables");
     auto it = g_cache.find(key);
-    if (it != g_cache.end()) return it->second.get();
+    if (it != g_cache.end()) { st.hit(); return it->second.get(); }
+    st.miss();
+    st.bytes_are_source = true;
     std::unique_ptr<LootTable> t;
     try {
-        Json j = Json::parse_file(g_dir + "/data/minecraft/loot_table/" + key.substr(10) + ".json");
+        std::string path = g_dir + "/data/minecraft/loot_table/" + key.substr(10) + ".json";
+        Json j = Json::parse_file(path);
         t = LootTable::parse(j);
+        struct stat sb;
+        if (stat(path.c_str(), &sb) == 0) st.add(0, int64_t(sb.st_size));
     } catch (const std::exception&) {}
+    st.add(1, 0);
     return g_cache.emplace(key, std::move(t)).first->second.get();
 }
 

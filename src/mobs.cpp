@@ -1,5 +1,6 @@
 // Mobs in the game: refreshing what they can see of the players, player attacks, /summon, natural spawning and despawning.
 #include "game.hpp"
+#include "cachestats.hpp"
 #include "anvil.hpp"
 #include "dimension.hpp"
 #include "log.hpp"
@@ -86,9 +87,12 @@ struct SpawnEntry { std::string type; int weight, min_count, max_count; };
 static const std::vector<SpawnEntry>& biome_spawns(const std::string& data_dir, const std::string& version, const std::string& biome, const std::string& category) {
     static std::map<std::string, std::vector<SpawnEntry>> cache;
     std::string key = version + "/" + biome + "/" + category;
+    static CacheStat& st = cache_stat("biome spawn lists");
     auto it = cache.find(key);
-    if (it != cache.end()) return it->second;
+    if (it != cache.end()) { st.hit(); return it->second; }
+    st.miss();
     std::vector<SpawnEntry>& out = cache[key];
+    st.add(1, 64);
     std::string name = biome.substr(biome.find(':') + 1);
     std::string exe_dir;
     {
