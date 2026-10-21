@@ -10,6 +10,7 @@ namespace {
 ServerOpts dim_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=creative\nlevel-seed=777\n";
+    o.toml = "[world]\ngenerator = \"terrain\"\n";   // these tests are about portals and travel; Mojang's generator has its own tests
     o.ops = {"Dimmy"};
     return o;
 }
