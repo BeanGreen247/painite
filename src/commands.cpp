@@ -135,6 +135,11 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
     if (a.empty()) return;
     std::string cmd = lower(a[0]);
     if (cmd.rfind("minecraft:", 0) == 0) cmd = cmd.substr(10);
+    bool list_commands = false;
+    if (cmd == "painite" || cmd == "pn") {   // "painite <command> ..." runs any server command; "painite" alone, "painite help" or "painite commands" lists them
+        if (a.size() == 1 || lower(a[1]) == "commands" || lower(a[1]) == "help" || lower(a[1]) == "?") { cmd = "help"; list_commands = true; }
+        else { a.erase(a.begin()); cmd = lower(a[0]); }
+    }
     int level = op_level(gid);
     std::string who = gid == 0 ? "Server" : (identity(gid) ? identity(gid)->name : "?");
     auto need = [&](int l) {
@@ -153,6 +158,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kick";
         if (level >= 3) o += ", ban, ban-ip, pardon, pardon-ip, banlist, whitelist, op, deop";
         if (level >= 4) o += ", save-all, save-on, save-off, stop";
+        if (list_commands) o += ". Every command also works as 'painite <command>', e.g. 'painite tps'";
         reply(o);
     } else if (cmd == "list") {
         auto ids = identities();

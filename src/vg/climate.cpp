@@ -1,3 +1,4 @@
+#include <stdexcept>
 #include "climate.hpp"
 #include <algorithm>
 #include <cmath>
@@ -168,6 +169,7 @@ int ParameterList::find_value_brute_force(const TargetPoint& t) const {
 ClimateData load_climate_dump(const std::string& path, const std::string& preset, int children_per_node) {
     ClimateData out;
     std::ifstream f(path);
+    if (!f) throw std::runtime_error("missing " + path + " (rerun tools/fetch_worldgen.sh with Java 25 on PATH)");
     std::string line;
     std::vector<ParameterPoint> points;
     std::vector<int> values;
@@ -187,6 +189,7 @@ ClimateData load_climate_dump(const std::string& path, const std::string& preset
         points.push_back(pt);
         values.push_back(it->second);
     }
+    if (points.empty()) throw std::runtime_error("no \"" + preset + "\" climate entries in " + path);
     out.list = std::make_unique<ParameterList>(points, values, children_per_node);
     return out;
 }
