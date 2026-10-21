@@ -12,6 +12,7 @@ P point(float v) { return span(v, v); }
 using Name = const char*;
 
 struct Builder {
+    bool with_sulfur = true;
     std::vector<ParameterPoint> points;
     std::vector<std::string> names;
 
@@ -247,7 +248,7 @@ struct Builder {
     void underground_all() {
         underground(full, full, span(0.8f, 1.0f), full, full, 0.0f, "dripstone_caves");
         underground(full, span(0.7f, 1.0f), full, full, full, 0.0f, "lush_caves");
-        underground(full, full, span(coast, inland), span(erosions[5], erosions[6]), span(-1.1f, -0.85f), 0.0f, "sulfur_caves");
+        if (with_sulfur) underground(full, full, span(coast, inland), span(erosions[5], erosions[6]), span(-1.1f, -0.85f), 0.0f, "sulfur_caves");
         bottom(full, full, full, span(erosions[0], erosions[1]), full, 0.0f, "deep_dark");
     }
 
@@ -267,8 +268,9 @@ struct Builder {
 
 }  // namespace
 
-ClimateData overworld_climate() {
+ClimateData overworld_climate(bool with_sulfur_caves) {
     Builder b;
+    b.with_sulfur = with_sulfur_caves;
     b.off_coast();
     b.inland_all();
     b.underground_all();

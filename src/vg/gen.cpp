@@ -108,7 +108,7 @@ struct VanillaGen::Impl {
         w = sampler_comp->compile(r.at("ridges"));
         if (o.dim == 2) climate.biomes = {"the_end", "end_highlands", "end_midlands", "small_end_islands", "end_barrens"};
         else if (!o.climate_dump.empty()) climate = load_climate_dump(o.climate_dump, o.dim == 1 ? "nether" : "overworld");
-        else climate = o.dim == 1 ? nether_climate() : overworld_climate();
+        else climate = o.dim == 1 ? nether_climate() : overworld_climate(o.version != "26.1");
         for (auto& name : climate.biomes) {
             uint8_t idx = plains;
             for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:" + name) idx = uint8_t(i);
@@ -346,6 +346,7 @@ struct VanillaGen::Impl {
         FeatureEnv env{level, reg, feature_shared, [this](int biome, const std::string& id) { return decorator->biome_has_feature(biome, id); }};
         env.biomes = &biome_infos;
         env.templates = feature_templates.get();
+        env.pre_262 = opt.version == "26.1";
         env.sea_level = ns.sea_level;
         env.seed = opt.seed;
         std::vector<std::shared_ptr<const StructureStart>> touching;

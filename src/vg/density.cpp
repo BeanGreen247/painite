@@ -136,6 +136,20 @@ struct RangeChoice : Node {
     }
 };
 
+// 26.1's weird_scaled_sampler (26.2 spells the same caves out with interval_select): the input picks a rarity that scales the noise lookup
+struct WeirdScaledSampler : Node {
+    NodeP input;
+    const NormalNoise* noise;
+    bool type2;
+    double compute(const Ctx& c) const override {
+        double v = input->compute(c);
+        double rarity;
+        if (type2) rarity = v < -0.75 ? 0.5 : v < -0.5 ? 0.75 : v < 0.5 ? 1.0 : v < 0.75 ? 2.0 : 3.0;
+        else rarity = v < -0.5 ? 0.75 : v < 0.0 ? 1.0 : v < 0.5 ? 1.5 : 2.0;
+        return rarity * std::abs(noise ? noise->get_value(c.x / rarity, c.y / rarity, c.z / rarity) : 0.0);
+    }
+};
+
 struct IntervalSelect : Node {
     NodeP input;
     std::vector<double> thresholds;
@@ -432,6 +446,13 @@ NodeP Compiler::object(const Json& j) {
         n->hi = j.at("max_exclusive").number();
         n->in_range = arg("when_in_range");
         n->out_range = arg("when_out_of_range");
+        return n;
+    }
+    if (type == "weird_scaled_sampler") {
+        auto n = std::make_shared<WeirdScaledSampler>();
+        n->input = arg("input");
+        n->noise = noise_of("noise");
+        n->type2 = j.at("rarity_value_mapper").str == "type_2";
         return n;
     }
     if (type == "interval_select") {

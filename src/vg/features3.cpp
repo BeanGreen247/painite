@@ -13,6 +13,16 @@ namespace pn::vg {
 
 namespace {
 
+// 26.2 made the lake's three block tests settings; 26.1 had them built in, which these defaults reproduce
+const Json& lake_pred(const Json& config, const char* key) {
+    if (const Json* j = config.find(key)) return *j;
+    static const Json always = Json::parse("{\"type\":\"minecraft:true\"}");
+    static const Json not_features = Json::parse("{\"type\":\"minecraft:not\",\"predicate\":{\"type\":\"minecraft:matching_block_tag\",\"tag\":\"minecraft:features_cannot_replace\"}}");
+    static const Json not_lava_pool = Json::parse("{\"type\":\"minecraft:not\",\"predicate\":{\"type\":\"minecraft:matching_block_tag\",\"tag\":\"minecraft:lava_pool_stone_cannot_replace\"}}");
+    const std::string k = key;
+    return k == "can_place_feature" ? always : k == "can_replace_with_air_or_fluid" ? not_features : not_lava_pool;
+}
+
 bool place_lake(FeatureEnv& env, const Json& config, Rng& random, BlockPos origin) {
     Level& lv = env.level;
     const BlockData& bd = env.bd();
@@ -49,14 +59,14 @@ bool place_lake(FeatureEnv& env, const Json& config, Rng& random, BlockPos origi
                 uint16_t s = lv.get(p);
                 if (yy >= 4 && (bd.flags(s) & BF_LIQUID)) return false;
                 if (yy < 4 && !(bd.flags(s) & BF_SOLID) && s != fluid) return false;
-                if (!test_predicate(env, config.at("can_place_feature"), p)) return false;
+                if (!test_predicate(env, lake_pred(config, "can_place_feature"), p)) return false;
             }
     for (int xx = 0; xx < 16; xx++)
         for (int zz = 0; zz < 16; zz++)
             for (int yy = 0; yy < 8; yy++) {
                 if (!grid[size_t((xx * 16 + zz) * 8 + yy)]) continue;
                 BlockPos p = origin.offset(xx, yy, zz);
-                if (test_predicate(env, config.at("can_replace_with_air_or_fluid"), p)) lv.set(p, yy >= 4 ? cave_air : fluid);
+                if (test_predicate(env, lake_pred(config, "can_replace_with_air_or_fluid"), p)) lv.set(p, yy >= 4 ? cave_air : fluid);
             }
     uint16_t barrier = provide_state(env, config.at("barrier"), random, origin);
     if (!bd.air(barrier)) {
@@ -66,7 +76,7 @@ bool place_lake(FeatureEnv& env, const Json& config, Rng& random, BlockPos origi
                     if (!edge(xx, zz, yy)) continue;
                     if (yy < 4 || random.next_int(2) != 0) {
                         BlockPos p = origin.offset(xx, yy, zz);
-                        if ((bd.flags(lv.get(p)) & BF_SOLID) && test_predicate(env, config.at("can_replace_with_barrier"), p)) lv.set(p, barrier);
+                        if ((bd.flags(lv.get(p)) & BF_SOLID) && test_predicate(env, lake_pred(config, "can_replace_with_barrier"), p)) lv.set(p, barrier);
                     }
                 }
     }
@@ -78,7 +88,7 @@ bool place_lake(FeatureEnv& env, const Json& config, Rng& random, BlockPos origi
                 // Biome.shouldFreeze(level, p, false)
                 if (!biome_warm_enough_to_rain(bi, p.x, p.y, p.z, env.sea_level) && !lv.outside_build_height(p.y)) {
                     uint16_t s = lv.get(p);
-                    if (bd.name(s) == "minecraft:water" && test_predicate(env, config.at("can_replace_with_air_or_fluid"), p)) lv.set(p, bd.default_state("minecraft:ice"));
+                    if (bd.name(s) == "minecraft:water" && test_predicate(env, lake_pred(config, "can_replace_with_air_or_fluid"), p)) lv.set(p, bd.default_state("minecraft:ice"));
                 }
             }
     }
@@ -470,14 +480,14 @@ bool place_root_system(FeatureEnv& env, const Json& config, Rng& random, const B
     const BlockData& bd = env.bd();
     if (!bd.air(lv.get(origin))) return false;
     int required_space = int(config.at("required_vertical_space_for_tree").int_value());
-    int level_test = int(config.at("level_test_distance").int_value()), max_dev = int(config.at("max_level_deviation").int_value());
+    int level_test = int(config.get_int("level_test_distance", 0)), max_dev = int(config.get_int("max_level_deviation", 0));   // 26.2 settings; 26.1 had no such test
     int allowed_water = int(config.at("allowed_vertical_water_for_tree").int_value());
     int root_max_height = int(config.at("root_column_max_height").int_value());
     BlockPos working = origin;
     bool tree_ok = false;
     for (int y = 0; y < root_max_height; y++) {
         working = working.above();
-        if (lv.height(WORLD_SURFACE, working.x, working.z) < working.y) break;
+        if (!env.pre_262 && lv.height(WORLD_SURFACE, working.x, working.z) < working.y) break;   // added in 26.2
         if (!test_predicate(env, config.at("allowed_tree_position"), working)) continue;
         // spaceForTree
         bool space = true;
@@ -772,7 +782,8 @@ bool place_large_dripstone(FeatureEnv& env, const Json& config, Rng& random, con
     const BlockData& bd = env.bd();
     if (!sp_empty_or_water(bd, lv.get(origin))) return false;
     int search = int(config.get_int("floor_to_ceiling_search_range", 30));
-    const Json& replaceable = config.at("replaceable_blocks");
+    static const Json default_replaceable = Json::parse("\"#minecraft:dripstone_replaceable_blocks\"");   // 26.1 had it built in
+    const Json& replaceable = config.has("replaceable_blocks") ? config.at("replaceable_blocks") : default_replaceable;
     auto edge_ok = [&](uint16_t s) { return bd.name(s) == "minecraft:dripstone_block" || state_in_set(env, s, replaceable) || bd.name(s) == "minecraft:lava"; };
     int ceiling = 0, floor = 0;
     bool has_c = false, has_f = false;
@@ -805,7 +816,7 @@ bool place_large_dripstone(FeatureEnv& env, const Json& config, Rng& random, con
     if (suitable(stalactite) && suitable(stalagmite)) {
         wind.on = true;
         wind.origin_y = origin.y;
-        wind.max_offset = 16 - radius;
+        wind.max_offset = env.pre_262 ? 1 << 20 : 16 - radius;   // 26.2 keeps the wind from carrying a column out of its chunk area
         float speed = sample_float(config.at("wind_speed"), random);
         float lo = 0.0f, hi = kPiF;
         float dir = random.next_float() * (hi - lo) + lo;

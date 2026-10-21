@@ -96,7 +96,10 @@ def build(out, rec, protocol):
 def main():
     host, port, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     secs = float(sys.argv[4]) if len(sys.argv) > 4 else 12
-    c = b.BedrockClient(host, port)
+    info = b.ping_server(host, port)
+    if info:
+        print("server:", info["version"], "protocol", info["protocol"])
+    c = b.BedrockClient(host, port, **({"protocol": info["protocol"], "game_version": info["version"]} if info else {}))
     c.connect()
     c.request_settings()
     c.login("PainiteCapture", f"{host}:{port}")
@@ -136,7 +139,7 @@ def main():
     # second player: what the first one is sent when someone else joins (AddPlayer), recorded as a template for other players
     add_player = None
     try:
-        o = b.BedrockClient(host, port)
+        o = b.BedrockClient(host, port, **({"protocol": info["protocol"], "game_version": info["version"]} if info else {}))
         o.connect()
         o.request_settings()
         o.login("PainiteOther", f"{host}:{port}")

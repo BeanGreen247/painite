@@ -4,7 +4,8 @@
 
 namespace pn::vg {
 
-ClimateData overworld_climate();
+// sulfur_caves came with 26.2: with_sulfur_caves=false reproduces 26.1
+ClimateData overworld_climate(bool with_sulfur_caves = true);
 ClimateData nether_climate();
 
 }  // namespace pn::vg

@@ -252,10 +252,33 @@ class RakClient:
         return True
 
 
+def ping_server(host, port, timeout=5.0):
+    """RakNet unconnected ping: {"motd", "protocol", "version"} of a Bedrock server, or None. Used to speak the server's own protocol."""
+    import socket, os
+    magic = bytes.fromhex("00ffff00fefefefefdfdfdfd12345678")
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(timeout)
+    try:
+        s.sendto(b"\x01" + struct.pack(">q", 0) + magic + os.urandom(8), (host, port))
+        d, _ = s.recvfrom(4096)
+    except OSError:
+        return None
+    finally:
+        s.close()
+    if not d or d[0] != 0x1c:
+        return None
+    n = struct.unpack(">H", d[33:35])[0]
+    f = d[35:35 + n].decode("utf-8", "replace").split(";")
+    if len(f) < 4:
+        return None
+    return {"motd": f[1], "protocol": int(f[2]), "version": f[3]}
+
+
 class BedrockClient(RakClient):
-    def __init__(self, host, port, protocol=2193, **kw):
+    def __init__(self, host, port, protocol=2193, game_version="1.26.51", **kw):
         super().__init__(host, port, **kw)
         self.protocol = protocol
+        self.game_version = game_version
         self.compress = False
         self.threshold = 0
         self.algo = 0
@@ -367,7 +390,7 @@ class BedrockClient(RakClient):
                      "aud": "api://auth-minecraft-services/multiplayer", "nbf": now, "iat": now, "exp": now + 3600})
         client = jwt({**default_skin(),
                       "ClientRandomId": int(time.time() * 1000), "CurrentInputMode": 1, "DefaultInputMode": 1, "DeviceId": str(uuid.uuid4()),
-                      "DeviceModel": "PainiteBot", "DeviceOS": 12, "FilterProfanity": False, "GameVersion": "1.26.51", "GuiScale": -1,
+                      "DeviceModel": "PainiteBot", "DeviceOS": 12, "FilterProfanity": False, "GameVersion": self.game_version, "GuiScale": -1,
                       "LanguageCode": "en_GB", "GraphicsMode": 1, "PlatformOfflineId": "", "PlatformOnlineId": "",
                       "PlayFabId": uuid.uuid4().hex[:16], "SelfSignedId": str(uuid.uuid4()), "ServerAddress": server, "ThirdPartyName": name,
                       "UIProfile": 0, "IsEditorMode": False, "ClientIsEditorCapable": False, "ClientEditorConnectionIntent": 0,
