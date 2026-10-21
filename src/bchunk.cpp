@@ -97,7 +97,7 @@ void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim) {
     tail.insert(tail.end(), biomes.begin(), biomes.end());
 }
 
-void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out) {
+void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, int proto) {
     std::lock_guard<std::mutex> l(c.mu);
     const Blocks& B = Blocks::get();
     out.clear();
@@ -106,13 +106,13 @@ void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out) {
     if (sec) for (int i = 0; i < 4096; i++) if (sec->b[i]) { any = true; break; }
     if (!any) { out = {6, 0, 3, 0, 3, 0, 0}; return; }   // success, all air
     std::vector<int32_t> l0(4096), l1(4096);
-    int32_t air = B.bedrock_id(0);
+    int32_t air = B.bedrock_id(proto, 0);
     bool water_layer = false;
-    int32_t water = B.bedrock_id(B.find("minecraft:water", "level=0"));
+    int32_t water = B.bedrock_id(proto, B.find("minecraft:water", "level=0"));
     for (int x = 0; x < 16; x++) for (int z = 0; z < 16; z++) for (int y = 0; y < 16; y++) {
         uint16_t b = sec->b[(y << 8) | (z << 4) | x];
         size_t o = static_cast<size_t>(x * 256 + z * 16 + y);
-        l0[o] = B.bedrock_id(b);
+        l0[o] = B.bedrock_id(proto, b);
         l1[o] = air;
         if (b && B.info(b).props.find("waterlogged=true") != std::string::npos) { l1[o] = water; water_layer = true; }
         // blocks that are fluids in Java hold the fluid in the first layer already

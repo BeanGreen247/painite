@@ -4,7 +4,7 @@
 Downloads the current Linux BDS, runs it offline on a flat world, joins it with tools/bedrock_capture.py and writes
 data/bedrock-<version>.bin. Nothing from Mojang is stored in the repository; the file is git-ignored.
 
-usage: tools/fetch_bedrock_data.py [--out data] [--port 19199] [--preview]
+usage: tools/fetch_bedrock_data.py [--out data] [--port 19199] [--preview] [--bds-version 1.26.23.1]
 """
 import argparse, json, os, re, shutil, subprocess, sys, tempfile, time, urllib.request, zipfile
 
@@ -16,11 +16,15 @@ def main():
     ap.add_argument("--out", default="data")
     ap.add_argument("--port", type=int, default=19199)
     ap.add_argument("--preview", action="store_true")
+    ap.add_argument("--bds-version", help="an older release, e.g. 1.26.23.1: its download address is built from the number instead of asking for the current one")
     a = ap.parse_args()
-    req = urllib.request.Request(LINKS, headers={"User-Agent": "painite-data-tool"})
-    links = json.load(urllib.request.urlopen(req, timeout=60))["result"]["links"]
-    kind = "serverBedrockPreviewLinux" if a.preview else "serverBedrockLinux"
-    url = next(l["downloadUrl"] for l in links if l["downloadType"] == kind)
+    if a.bds_version:
+        url = f"https://www.minecraft.net/bedrockdedicatedserver/bin-linux/bedrock-server-{a.bds_version}.zip"
+    else:
+        req = urllib.request.Request(LINKS, headers={"User-Agent": "painite-data-tool"})
+        links = json.load(urllib.request.urlopen(req, timeout=60))["result"]["links"]
+        kind = "serverBedrockPreviewLinux" if a.preview else "serverBedrockLinux"
+        url = next(l["downloadUrl"] for l in links if l["downloadType"] == kind)
     version = re.search(r"bedrock-server-([\d.]+)\.zip", url).group(1)
     work = tempfile.mkdtemp(prefix="painite-bds-")
     try:

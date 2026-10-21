@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include "server.hpp"
 #include "sim/item.hpp"
 #include "sim/data.hpp"
@@ -254,15 +255,30 @@ bool Server::start(std::string& err) {
             if (!sim::BlockCollisionShapes::get().load(shape_states, shape_boxes, shape_error))
                 warn("block collision shapes: " + shape_error);
         }
+        world.gen_version = cfg.worldgen_version;
         if (!world.open(cfg.level_name, cfg.generator, cfg.level_type, cfg.level_seed, data.back(), err)) return false;
         for (int d = 1; d <= 2; d++) {   // the nether and the end share the overworld's folder, seed and biome list
             other_dims[d - 1] = std::make_unique<World>();
             if (!other_dims[d - 1]->open_dimension(world, d, err)) return false;
         }
         if (cfg.bedrock) {
-            std::string bb = find_data_file(cfg.data_dir, exe_dir, "blocks-bedrock.bin"), berr;
-            if (bb.empty() || !Blocks::get().load_bedrock(bb, berr)) {
-                warn("Bedrock world data missing" + (berr.empty() ? std::string(" (data/blocks-bedrock.bin)") : ": " + berr) + ": run tools/fetch_bedrock_blocks.py; Bedrock players will see wrong blocks");
+            // block palettes of every Bedrock version that has game data: blocks-bedrock-<protocol>.bin (the unnumbered file is the newest)
+            bool any = false;
+            std::string berr;
+            for (const std::string& dir : {cfg.data_dir, std::string("data"), exe_dir + "/data", exe_dir + "/../data"}) {
+                DIR* dp = dir.empty() ? nullptr : opendir(dir.c_str());
+                if (!dp) continue;
+                while (auto* e = readdir(dp)) {
+                    std::string n = e->d_name;
+                    if (n.rfind("blocks-bedrock-", 0) != 0 || n.size() < 20 || n.substr(n.size() - 4) != ".bin") continue;
+                    int proto = atoi(n.c_str() + 15);
+                    if (proto > 0 && Blocks::get().load_bedrock(dir + "/" + n, proto, berr)) any = true;
+                }
+                closedir(dp);
+                if (any) break;
+            }
+            if (!any) {
+                warn("Bedrock world data missing" + (berr.empty() ? std::string(" (data/blocks-bedrock-<protocol>.bin)") : ": " + berr) + ": run tools/fetch_bedrock_blocks.py; Bedrock players will see wrong blocks");
             } else {
                 std::string bio = find_data_file(cfg.data_dir, exe_dir, "biomes-bedrock.txt");
                 bedrock_set_biomes(world.biome_names, bio);

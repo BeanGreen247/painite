@@ -85,11 +85,11 @@ bool Worker::open_udp(std::string& err) {
     ev.events = EPOLLIN;
     ev.data.fd = udp_;
     epoll_ctl(ep_, EPOLL_CTL_ADD, udp_, &ev);
-    BedrockData bd;
+    std::map<int, BedrockData> bd;
     std::string derr;
     bool ok = load_bedrock_data(s_.cfg.data_dir, s_.exe_dir, s_.cfg.compression_level, bd, derr);
     if (!ok) warn("Bedrock: " + derr + " (only the server-list ping is answered)");
-    else s_.cfg.bedrock_protocol = bd.protocol;
+    else s_.cfg.bedrock_protocol = bd.rbegin()->first;   // the server list shows the newest version
     bedrock_ = std::make_unique<Bedrock>(s_, udp_, std::move(bd), ok);
     return true;
 }

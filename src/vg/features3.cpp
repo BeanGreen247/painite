@@ -5,6 +5,9 @@
 #include "mathutil.hpp"
 #include "multiface.hpp"
 #include <stdexcept>
+#include <mutex>
+#include <memory>
+#include <map>
 
 namespace pn::vg {
 
@@ -602,6 +605,32 @@ bool place_speleothem(FeatureEnv& env, const Json& config, Rng& random, const Bl
 
 struct Col { bool has_floor = false, has_ceiling = false; int floor = 0, ceiling = 0; };
 
+// 26.1 has dripstone_cluster and pointed_dripstone; 26.2 generalised them into speleothem (same algorithm, the blocks became settings).
+// The 26.1 settings are rewritten into the 26.2 shape once and kept.
+const Json& dripstone_as_speleothem(const Json& config, bool cluster) {
+    static std::mutex mu;
+    static std::map<const Json*, std::unique_ptr<Json>> cache;
+    std::lock_guard<std::mutex> l(mu);
+    auto& slot = cache[&config];
+    if (slot) return *slot;
+    auto j = std::make_unique<Json>(config);
+    static const std::pair<const char*, const char*> renames[] = {
+        {"chance_of_dripstone_column_at_max_distance_from_center", "chance_of_speleothem_at_max_distance_from_center"},
+        {"dripstone_block_layer_thickness", "speleothem_block_layer_thickness"},
+        {"max_distance_from_edge_affecting_chance_of_dripstone_column", "max_distance_from_edge_affecting_chance_of_speleothem"},
+        {"chance_of_taller_dripstone", "chance_of_taller_generation"}};
+    for (auto& kv : j->obj)
+        for (auto& r : renames) if (kv.first == r.first) kv.first = r.second;
+    auto name_obj = [](const char* n) { Json o; o.type = Json::Object; Json s; s.type = Json::String; s.str = n; o.obj.emplace_back("Name", s); return o; };
+    j->obj.emplace_back("base_block", name_obj("minecraft:dripstone_block"));
+    j->obj.emplace_back("pointed_block", name_obj("minecraft:pointed_dripstone"));
+    Json rep; rep.type = Json::String; rep.str = "#minecraft:dripstone_replaceable_blocks";
+    j->obj.emplace_back("replaceable_blocks", rep);
+    (void)cluster;
+    slot = std::move(j);
+    return *slot;
+}
+
 bool place_speleothem_cluster(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
     Level& lv = env.level;
     const BlockData& bd = env.bd();
@@ -853,6 +882,8 @@ bool place_feature_type3(FeatureEnv& env, const std::string& type, const Json& c
     if (type == "sculk_patch") return place_sculk_patch(env, config, random, origin);
     if (type == "speleothem") return place_speleothem(env, config, random, origin);
     if (type == "speleothem_cluster") return place_speleothem_cluster(env, config, random, origin);
+    if (type == "dripstone_cluster") return place_speleothem_cluster(env, dripstone_as_speleothem(config, true), random, origin);
+    if (type == "pointed_dripstone") return place_speleothem(env, dripstone_as_speleothem(config, false), random, origin);
     if (type == "large_dripstone") return place_large_dripstone(env, config, random, origin);
     if (type == "geode") return place_geode(env, config, random, origin);
     if (type == "monster_room") return place_monster_room(env, config, random, origin);

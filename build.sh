@@ -147,7 +147,7 @@ fi
 if [ -n "$PREFIX" ]; then
   say "installing to $PREFIX"
   cmake --install "$BUILD" >/dev/null
-  if ls "$ROOT"/data/* >/dev/null 2>&1; then mkdir -p "$PREFIX/data"; cp -f "$ROOT"/data/vanilla-* "$ROOT"/data/bedrock-* "$ROOT"/data/blocks-bedrock.bin "$ROOT"/data/biomes-bedrock.txt "$ROOT"/data/steve-skin.json "$PREFIX/data/" 2>/dev/null || true; fi
+  if ls "$ROOT"/data/* >/dev/null 2>&1; then mkdir -p "$PREFIX/data"; cp -f "$ROOT"/data/vanilla-* "$ROOT"/data/bedrock-* "$ROOT"/data/blocks-bedrock-*.bin "$ROOT"/data/biomes-bedrock.txt "$ROOT"/data/steve-skin.json "$PREFIX/data/" 2>/dev/null || true; fi
   BIN="$PREFIX/bin/painite"
 else
   BIN="$BUILD/painite"

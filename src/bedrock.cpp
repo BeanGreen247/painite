@@ -174,21 +174,33 @@ static bool parse_uuid(const std::string& s, uint8_t out[16]) {
 
 // ---------------------------------------------------------------- data file
 
-bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, BedrockData& d, std::string& err) {
-    std::string path;
+static bool load_bedrock_file(const std::string& path, int level, BedrockData& d, std::string& err);
+
+bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, std::map<int, BedrockData>& out, std::string& err) {
     for (auto& dir : {cfg_dir, std::string("data"), exe_dir + "/data", exe_dir + "/../data"}) {
         if (dir.empty()) continue;
         DIR* dp = opendir(dir.c_str());
         if (!dp) continue;
-        std::string best;
+        std::vector<std::string> names;
         while (auto* e = readdir(dp)) {
             std::string n = e->d_name;
-            if (n.rfind("bedrock-", 0) == 0 && n.size() > 12 && n.substr(n.size() - 4) == ".bin" && n > best) best = n;
+            if (n.rfind("bedrock-", 0) == 0 && n.size() > 12 && n.substr(n.size() - 4) == ".bin" && n.rfind("bedrock-blocks", 0) != 0) names.push_back(n);
         }
         closedir(dp);
-        if (!best.empty()) { path = dir + "/" + best; break; }
+        std::sort(names.begin(), names.end());   // a later file for the same protocol wins
+        for (auto& n : names) {
+            BedrockData d;
+            std::string ferr;
+            if (!load_bedrock_file(dir + "/" + n, level, d, ferr)) { warn("Bedrock data " + n + " skipped: " + ferr); continue; }
+            out[d.protocol] = std::move(d);
+        }
+        if (!out.empty()) return true;
     }
-    if (path.empty()) { err = "no Bedrock data found (data/bedrock-*.bin). Run: python3 tools/bedrock_capture.py <bds-host> <port> data/bedrock-<version>.bin"; return false; }
+    err = "no Bedrock data found (data/bedrock-*.bin). Run: python3 tools/fetch_bedrock_data.py";
+    return false;
+}
+
+static bool load_bedrock_file(const std::string& path, int level, BedrockData& d, std::string& err) {
     std::ifstream f(path, std::ios::binary);
     std::vector<uint8_t> raw((std::istreambuf_iterator<char>(f)), {});
     if (raw.size() < 16 || memcmp(raw.data(), "PNBE", 4) != 0) { err = "bad Bedrock data file " + path; return false; }
@@ -259,7 +271,7 @@ BSession::~BSession() {
     if (dec) EVP_CIPHER_CTX_free(dec);
 }
 
-Bedrock::Bedrock(Server& s, int fd, BedrockData&& data, bool has_data) : s_(s), d_(std::move(data)), has_data_(has_data) {
+Bedrock::Bedrock(Server& s, int fd, std::map<int, BedrockData>&& data, bool has_data) : s_(s), data_(std::move(data)), has_data_(has_data) {
     default_skin_ = bedrock_classic_skin(default_skin_rgba(false), false, "painite-steve");
     server_key_ = EVP_EC_gen("P-384");
     if (server_key_) {
@@ -495,14 +507,15 @@ void Bedrock::on_login(BSession& b, const uint8_t* p, size_t n) {
     uint32_t cl = le32(r);
     if (r.bad || cl > r.left()) { rak_->close(*b.rak, false); return; }
     std::string client(reinterpret_cast<const char*>(r.p), cl);
-    if (proto != s_.cfg.bedrock_protocol) {
+    if (!data_.count(proto)) {
         std::vector<uint8_t> pl(4);
-        uint32_t st = proto < s_.cfg.bedrock_protocol ? 1 : 2;
+        uint32_t st = data_.empty() || proto < data_.begin()->first ? 1 : 2;
         for (int i = 0; i < 4; i++) pl[i] = static_cast<uint8_t>(st >> (24 - 8 * i));
         send_packets(b, {{2, pl}});
         rak_->close(*b.rak, true);
         return;
     }
+    b.proto = proto;
     // identity: {"Certificate":"{\"chain\":[...]}","AuthenticationType":n,"Token":"..."} (protocol >= 818)
     std::string name, uuid_s, xuid;
     JP ip{identity.data(), identity.data() + identity.size()};
@@ -628,7 +641,7 @@ void Bedrock::continue_login(BSession& b, const std::string& name, const std::st
 void Bedrock::after_handshake(BSession& b) {
     std::vector<uint8_t> ok(4, 0);
     b.st = BSession::St::Packs;
-    send_packets(b, {{2, ok}, {6, d_.info}});
+    send_packets(b, {{2, ok}, {6, dat(b).info}});
 }
 
 void Bedrock::on_pack_response(BSession& b, const uint8_t* p, size_t n) {
@@ -638,7 +651,7 @@ void Bedrock::on_pack_response(BSession& b, const uint8_t* p, size_t n) {
     if (st == 0) { rak_->close(*b.rak, true); return; }
     if (st == 2 && b.st == BSession::St::Packs) {
         b.st = BSession::St::Stack;
-        send_packets(b, {{7, d_.stack}});
+        send_packets(b, {{7, dat(b).stack}});
     } else if (st == 3 && b.st == BSession::St::Stack) {
         b.st = BSession::St::Start;
         send_start(b);
@@ -646,7 +659,7 @@ void Bedrock::on_pack_response(BSession& b, const uint8_t* p, size_t n) {
 }
 
 void Bedrock::send_start(BSession& b) {
-    for (auto& seg : d_.start) {
+    for (auto& seg : dat(b).start) {
         if (seg.patch_player_list) send_packets(b, {{63, patched_player_list(b)}});
         else if (seg.patch == 2) send_packets(b, {{11, patched_start_game(b, seg.raw)}});
         else if (seg.patch == 3) send_packets(b, {{45, patched_respawn(b, seg.raw)}});
@@ -732,11 +745,12 @@ void Bedrock::pump_chunks(BSession& b) {
 void Bedrock::finish_spawn(BSession& b) {
     b.spawn_sent = true;
     std::vector<std::pair<uint16_t, std::vector<uint8_t>>> pk;
-    for (auto& ex : d_.extras) {
+    const BedrockData& d = dat(b);
+    for (auto& ex : d.extras) {
         if (ex.first == 42) continue;
-        pk.emplace_back(ex.first, ex.first == 39 ? replace_string_bytes(ex.second, d_.capture_name, b.name) : ex.second);
+        pk.emplace_back(ex.first, ex.first == 39 ? replace_string_bytes(ex.second, d.capture_name, b.name) : ex.second);
     }
-    for (auto& ex : d_.extras) if (ex.first == 42) pk.emplace_back(42, ex.second);
+    for (auto& ex : d.extras) if (ex.first == 42) pk.emplace_back(42, ex.second);
     pk.emplace_back(2, std::vector<uint8_t>{0, 0, 0, 3});   // PlayStatus: player spawn
     send_packets(b, pk);
 }
@@ -763,7 +777,7 @@ void Bedrock::on_subchunk_request(BSession& b, const uint8_t* p, size_t n) {
         int kmin = dim == 0 ? 0 : 4, kmax = dim == 0 ? kSections : dim == 1 ? 12 : 20;
         if (dim < kDimensions && k >= kmin && k < kmax) {
             auto ch = s_.dim(static_cast<int>(dim)).chunk(cx, cz);
-            encode_bedrock_subchunk(*ch, k, entry);
+            encode_bedrock_subchunk(*ch, k, entry, b.proto);
             pl.insert(pl.end(), entry.begin(), entry.end());
         } else pl.insert(pl.end(), {5, 0, 0, 0, 0, 0, 0, 0});   // Y_INDEX_OUT_OF_BOUNDS, no data
     }
@@ -824,14 +838,15 @@ void Bedrock::on_packet(BSession& b, uint16_t id, const uint8_t* p, size_t n) {
         case 193: {  // RequestNetworkSettings
             if (b.st != BSession::St::Raw || n < 4) { rak_->close(*b.rak, false); return; }
             int proto = static_cast<int32_t>((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]);
-            if (proto != s_.cfg.bedrock_protocol) {
+            if (!data_.count(proto)) {
                 std::vector<uint8_t> pl(4);
-                uint32_t st = proto < s_.cfg.bedrock_protocol ? 1 : 2;
+                uint32_t st = data_.empty() || proto < data_.begin()->first ? 1 : 2;
                 for (int i = 0; i < 4; i++) pl[i] = static_cast<uint8_t>(st >> (24 - 8 * i));
                 send_packets(b, {{2, pl}});
                 rak_->close(*b.rak, true);
                 return;
             }
+            b.proto = proto;
             std::vector<uint8_t> pl;
             pl.push_back(static_cast<uint8_t>(b.threshold));
             pl.push_back(static_cast<uint8_t>(b.threshold >> 8));

@@ -91,7 +91,7 @@ void bedrock_dimensions(Ctx& t, Env& e) {
 
 // the Bedrock runtime ids for every Java state id
 std::vector<int32_t> bedrock_table(const std::string& data_dir) {
-    std::ifstream f(data_dir + "/blocks-bedrock.bin", std::ios::binary);
+    std::ifstream f(data_dir + "/blocks-bedrock-2193.bin", std::ios::binary);
     std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
     if (raw.size() < 8) return {};
     uint32_t n;

@@ -57,7 +57,7 @@ Without the script: `cmake -S . -B build && cmake --build build -j`, then `pytho
 
 `tools/fetch_vanilla_data.py` writes `data/vanilla-<version>.bin/.ids` (packet IDs, registries, a flat chunk) and
 `tools/fetch_bedrock_data.py` writes `data/bedrock-<version>.bin` (the packet sequence a Bedrock client needs to join) and
-`tools/fetch_bedrock_blocks.py` writes `data/blocks-bedrock.bin` (Java block state to Bedrock runtime id, from Geyser's MIT-licensed block palette).
+`tools/fetch_bedrock_blocks.py` writes `data/blocks-bedrock-<protocol>.bin` (Java block state to Bedrock runtime id for one Bedrock version, from Geyser's MIT-licensed block palette).
 Use `./build.sh --data --java 26.2,26.3` to generate several Java versions.
 Nothing from Mojang is committed; the files are generated locally. Painite serves every Java version it finds data for.
 

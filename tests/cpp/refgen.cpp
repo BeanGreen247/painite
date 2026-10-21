@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
     }
     std::string idsfile = data + "/vanilla-" + version + ".ids";
     auto ids = Ids::load(idsfile);
-    int proto = version == "26.2" ? 776 : 777;
+    int proto = version == "26.1" ? 775 : version == "26.2" ? 776 : 777;
     {
         JBot bot(port, proto, ids, "Ref");
         bot.pump(1500);

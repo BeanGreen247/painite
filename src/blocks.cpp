@@ -143,7 +143,7 @@ uint16_t Blocks::default_state(const std::string& name) const {
     return d != defaults_.end() ? d->second : 0;
 }
 
-bool Blocks::load_bedrock(const std::string& path, std::string& err) {
+bool Blocks::load_bedrock(const std::string& path, int bedrock_protocol, std::string& err) {
     std::ifstream f(path, std::ios::binary);
     if (!f) { err = "cannot open " + path; return false; }
     char magic[4];
@@ -151,27 +151,36 @@ bool Blocks::load_bedrock(const std::string& path, std::string& err) {
     f.read(magic, 4);
     f.read(reinterpret_cast<char*>(&n), 4);
     if (!f || memcmp(magic, "PNBB", 4) != 0 || n == 0 || n > 200000) { err = "bad Bedrock block file " + path; return false; }
-    bedrock_.resize(n);
-    f.read(reinterpret_cast<char*>(bedrock_.data()), static_cast<std::streamsize>(n) * 4);
-    if (!f) { err = "truncated " + path; bedrock_.clear(); return false; }
-    bedrock_air_ = bedrock_[0];
-    from_bedrock_.clear();
+    BedrockPalette pal;
+    pal.ids.resize(n);
+    f.read(reinterpret_cast<char*>(pal.ids.data()), static_cast<std::streamsize>(n) * 4);
+    if (!f) { err = "truncated " + path; return false; }
+    pal.air = pal.ids[0];
     // reverse map: the first (lowest state id, i.e. default-ish) Java state wins, but never prefer waterlogged variants
-    for (size_t i = 0; i < bedrock_.size() && i < info_.size(); i++) {
-        auto it = from_bedrock_.find(bedrock_[i]);
+    for (size_t i = 0; i < pal.ids.size() && i < info_.size(); i++) {
+        auto it = pal.from.find(pal.ids[i]);
         auto d = defaults_.find(info_[i].name);
         bool is_default = d != defaults_.end() && d->second == i;
-        bool cur_default = it != from_bedrock_.end() && defaults_.count(info_[it->second].name) && defaults_[info_[it->second].name] == it->second;
-        if (it == from_bedrock_.end() || (is_default && !cur_default) ||
+        bool cur_default = it != pal.from.end() && defaults_.count(info_[it->second].name) && defaults_[info_[it->second].name] == it->second;
+        if (it == pal.from.end() || (is_default && !cur_default) ||
             (!cur_default && info_[it->second].props.find("waterlogged=true") != std::string::npos && info_[i].props.find("waterlogged=true") == std::string::npos))
-            from_bedrock_[bedrock_[i]] = static_cast<uint16_t>(i);
+            pal.from[pal.ids[i]] = static_cast<uint16_t>(i);
     }
+    bedrock_[bedrock_protocol] = std::move(pal);
     return true;
 }
 
-uint16_t Blocks::from_bedrock(int32_t rid) const {
-    auto it = from_bedrock_.find(rid);
-    return it == from_bedrock_.end() ? 0 : it->second;
+int32_t Blocks::bedrock_id(int bedrock_protocol, uint16_t id) const {
+    auto p = bedrock_.find(bedrock_protocol);
+    if (p == bedrock_.end()) return 0;
+    return id < p->second.ids.size() ? p->second.ids[id] : p->second.air;
+}
+
+uint16_t Blocks::from_bedrock(int bedrock_protocol, int32_t rid) const {
+    auto p = bedrock_.find(bedrock_protocol);
+    if (p == bedrock_.end()) return 0;
+    auto it = p->second.from.find(rid);
+    return it == p->second.from.end() ? 0 : it->second;
 }
 
 int Blocks::proto_state(int protocol, uint16_t id) const {

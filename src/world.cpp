@@ -36,7 +36,7 @@ void Chunk::set(int lx, int y, int lz, uint16_t id) {
 
 
 // Mojang's generator (src/vg) needs the extracted worldgen data; null when it is missing or the dimension is not supported
-static std::unique_ptr<vg::VanillaGen> make_vanilla_gen(int dim, uint64_t seed, const std::string& level_type, const std::vector<std::string>& biome_names) {
+static std::unique_ptr<vg::VanillaGen> make_vanilla_gen(const std::string& version, int dim, uint64_t seed, const std::string& level_type, const std::vector<std::string>& biome_names) {
     std::string exe_dir;
     {
         char buf[4096];
@@ -44,11 +44,11 @@ static std::unique_ptr<vg::VanillaGen> make_vanilla_gen(int dim, uint64_t seed, 
         if (n > 0) { buf[n] = 0; exe_dir = buf; exe_dir = exe_dir.substr(0, exe_dir.rfind('/')); }
     }
     for (std::string d : {std::string("data"), std::string("../data"), exe_dir + "/data", exe_dir + "/../data"}) {
-        std::string root = d + "/worldgen/26.2";
+        std::string root = d + "/worldgen/" + version;
         if (access((root + "/.done").c_str(), R_OK) != 0 || access((root + "/blockflags.txt").c_str(), R_OK) != 0) continue;
         try {
             vg::GenOptions o;
-            o.version = "26.2";
+            o.version = version;
             o.dim = dim;
             o.seed = int64_t(seed);
             o.level_type = level_type;
@@ -125,7 +125,7 @@ bool World::open(const std::string& d, const std::string& generator, const std::
     seed = stored_seed.empty() ? seed_from_string(seed_str) : static_cast<uint64_t>(strtoll(stored_seed.c_str(), nullptr, 10));
     gen = std::make_unique<WorldGen>(gk, seed, biome_names);
     if (generator == "vanilla" && (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified))
-        vgen = make_vanilla_gen(0, seed, lt, biome_names);
+        vgen = make_vanilla_gen(gen_version, 0, seed, lt, biome_names);
     gen_name = gk == GenKind::Void ? "void" : gk == GenKind::Flat ? "flat" : gk == GenKind::LargeBiomes ? "large_biomes" : gk == GenKind::Amplified ? "amplified" : "normal";
     if (!existing && gk != GenKind::Void) {
         std::ofstream pj(dir + "/painite.json");
@@ -207,7 +207,8 @@ bool World::open_dimension(const World& ow, int d, std::string& err) {
     }
     mkdir(region_dir.c_str(), 0755);
     gen = std::make_unique<WorldGen>(d == 1 ? GenKind::Nether : GenKind::End, seed, biome_names);
-    if (ow.vgen) vgen = make_vanilla_gen(d, seed, "normal", biome_names);
+    gen_version = ow.gen_version;
+    if (ow.vgen) vgen = make_vanilla_gen(gen_version, d, seed, "normal", biome_names);
     gen_name = d == 1 ? "nether" : "end";
     (void)err;
     return true;

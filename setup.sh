@@ -43,7 +43,7 @@ DIR="${DIR/#\~/$HOME}"; [ -n "$CC" ] && CC="${CC/#\~/$HOME}"
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
 BIN="$ROOT/build/painite"
-if [ ! -x "$BIN" ] || ! ls "$ROOT"/data/vanilla-*.bin >/dev/null 2>&1 || [ ! -f "$ROOT/data/blocks-bedrock.bin" ]; then
+if [ ! -x "$BIN" ] || ! ls "$ROOT"/data/vanilla-*.bin >/dev/null 2>&1 || ! ls "$ROOT"/data/blocks-bedrock-*.bin >/dev/null 2>&1; then
   [ "$BUILD" = 1 ] || { echo "binary or protocol data missing; run ./build.sh --data --java $JAVA first" >&2; exit 1; }
   say "building Painite and generating protocol data (downloads Mojang's servers, a few minutes)"
   "$ROOT/build.sh" --data --java "$JAVA"

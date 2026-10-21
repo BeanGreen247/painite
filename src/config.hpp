@@ -49,6 +49,7 @@ struct Config {
     int memory_cap_mb = 1024;  // total pool cap (connection buffers + chunk cache)
     int spawn_busy_pct = 70;
     int retire_idle_s = 60;
+    std::string worldgen_version = "26.2";   // Mojang version whose world generation the vanilla generator reproduces (data/worldgen/<version>): 26.1 | 26.2
     std::string generator = "auto";  // chunks that are not on disk: auto (terrain for a new world, void for an existing one) | terrain | flat | void | vanilla
     int autosave_s = 300;
     int tick_threads = 0;   // threads that tick regions in parallel (0 = automatic)

@@ -67,6 +67,7 @@ public:
     int difficulty = 2;                  // 0 peaceful .. 3 hard, from level.dat
     int data_version = 0;
     std::string dir, region_dir;
+    std::string gen_version = "26.2";     // data/worldgen/<version> the vanilla generator uses
     std::unique_ptr<vg::VanillaGen> vgen;  // Mojang's generator ported (generator=vanilla); wins over gen when set
     std::unique_ptr<class WorldGen> gen;   // fills chunks that are not on disk; null = leave them empty
     uint64_t seed = 0;

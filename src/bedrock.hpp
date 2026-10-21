@@ -1,6 +1,7 @@
 // Bedrock Edition server side: batch/compression/encryption, login, the recorded join sequence and chunk streaming.
 #pragma once
 #include "rak.hpp"
+#include <map>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -35,13 +36,15 @@ struct BedrockData {
 // replaces a length-prefixed string inside a packet
 std::vector<uint8_t> replace_string_bytes(const std::vector<uint8_t>& in, const std::string& from, const std::string& to);
 
-bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, BedrockData& out, std::string& err);
+// Every data/bedrock-<version>.bin that can be found, by Bedrock protocol number
+bool load_bedrock_data(const std::string& cfg_dir, const std::string& exe_dir, int level, std::map<int, BedrockData>& out, std::string& err);
 
 struct BSession {
     enum class St { Raw, Settings, LoginWait, Authing, Handshake, Packs, Stack, Start, Spawning, Playing } st = St::Raw;
     RakSession* rak = nullptr;
     bool compress = false;
     int threshold = 256;
+    int proto = 0;           // the client's Bedrock protocol (one of the loaded data files)
     std::string name, xuid, pending_pub;
     std::vector<uint8_t> skin;   // Bedrock Skin structure from the client's login data
     uint8_t uuid[16] = {};
@@ -72,7 +75,7 @@ struct BSession {
 
 class Bedrock {
 public:
-    Bedrock(Server& s, int fd, BedrockData&& data, bool has_data);
+    Bedrock(Server& s, int fd, std::map<int, BedrockData>&& data, bool has_data);
     ~Bedrock();
     void on_datagram(const sockaddr_storage& from, socklen_t fl, const uint8_t* p, size_t n, int64_t now);
     void tick(int64_t now);
@@ -103,7 +106,7 @@ private:
     BSession* by_id(uint64_t id);
     std::vector<uint8_t> patched_start_game(const BSession& b, const std::vector<uint8_t>& raw) const;
     std::vector<uint8_t> patched_respawn(const BSession& b, const std::vector<uint8_t>& raw) const;
-    std::vector<uint8_t> player_list_entry(const GIdentity& id, bool add) const;
+    std::vector<uint8_t> player_list_entry(const BedrockData& data, const GIdentity& id, bool add) const;
     void send_time_to(BSession& b, int64_t day_time);
     void send_game_mode(BSession& b, int mode);
     const std::vector<uint8_t>& level_chunk_tail(int dim, int x, int z);
@@ -126,10 +129,13 @@ private:
     void disconnect(BSession& b, const std::string& msg);
     bool start_encryption(BSession& b, const std::string& client_pub_b64, std::string& jwt);
     std::vector<uint8_t> patched_player_list(const BSession& b) const;
-    std::vector<uint8_t> player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid, const std::vector<uint8_t>* skin) const;
+    std::vector<uint8_t> player_list_for(const BedrockData& data, const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid, const std::vector<uint8_t>* skin) const;
     std::vector<uint8_t> default_skin_;
     Server& s_;
-    BedrockData d_;
+    std::map<int, BedrockData> data_;   // by Bedrock protocol
+    BedrockData none_;
+    const BedrockData& dat(int proto) const { auto it = data_.find(proto); return it == data_.end() ? none_ : it->second; }
+    const BedrockData& dat(const BSession& b) const { return dat(b.proto); }
     std::unique_ptr<Rak> rak_;
     EVP_PKEY* server_key_ = nullptr;
     std::string server_pub_b64_;

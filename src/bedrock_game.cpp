@@ -117,9 +117,9 @@ std::vector<uint8_t> Bedrock::patched_respawn(const BSession& b, const std::vect
 }
 
 // PlayerList "add" entry: header, name and ids for this player, the given skin (or the default classic one), and the recorded tail.
-std::vector<uint8_t> Bedrock::player_list_for(const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid,
+std::vector<uint8_t> Bedrock::player_list_for(const BedrockData& data, const uint8_t uuid[16], int64_t unique_id, const std::string& name, const std::string& xuid,
                                               const std::vector<uint8_t>* skin) const {
-    const auto& in = d_.player_list_raw;
+    const auto& in = data.player_list_raw;
     const uint8_t* p = in.data() + 1;
     const uint8_t* e = in.data() + in.size();
     uint64_t v;
@@ -145,10 +145,10 @@ std::vector<uint8_t> Bedrock::player_list_for(const uint8_t uuid[16], int64_t un
     return out;
 }
 
-std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const { return player_list_for(b.uuid, b.eid, b.name, b.xuid, &b.skin); }
+std::vector<uint8_t> Bedrock::patched_player_list(const BSession& b) const { return player_list_for(dat(b), b.uuid, b.eid, b.name, b.xuid, &b.skin); }
 
-std::vector<uint8_t> Bedrock::player_list_entry(const GIdentity& id, bool add) const {
-    if (add) return player_list_for(id.uuid, id.eid, id.name, id.xuid, &id.bedrock_skin);
+std::vector<uint8_t> Bedrock::player_list_entry(const BedrockData& data, const GIdentity& id, bool add) const {
+    if (add) return player_list_for(data, id.uuid, id.eid, id.name, id.xuid, &id.bedrock_skin);
     std::vector<uint8_t> o;
     o.push_back(1);
     put_varuint(o, 1);
@@ -205,7 +205,7 @@ void Bedrock::block_event(uint64_t conn, int x, int y, int z, uint16_t block) {
     put_zz(pl, x);
     put_zz(pl, y);
     put_zz(pl, z);
-    put_varuint(pl, static_cast<uint32_t>(Blocks::get().bedrock_id(block)));
+    put_varuint(pl, static_cast<uint32_t>(Blocks::get().bedrock_id(b->proto, block)));
     put_varuint(pl, 3);   // neighbours + network
     put_varuint(pl, 0);   // layer
     send_packets(*b, {{21, pl}});
@@ -232,15 +232,15 @@ void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
     switch (ev.kind) {
         case GEvent::AddTab:
             if (ev.id->gid == b->gid) break;
-            out.emplace_back(63, player_list_entry(*ev.id, true));
+            out.emplace_back(63, player_list_entry(dat(*b), *ev.id, true));
             break;
         case GEvent::RemoveTab:
-            out.emplace_back(63, player_list_entry(*ev.id, false));
+            out.emplace_back(63, player_list_entry(dat(*b), *ev.id, false));
             break;
         case GEvent::Spawn: {
             if (ev.id->gid == b->gid) break;
-            if (d_.add_player_tpl.empty()) { static bool warned = false; if (!warned) { warned = true; warn("Bedrock data has no AddPlayer template (regenerate with tools/fetch_bedrock_data.py): other players are invisible to Bedrock clients"); } break; }
-            const auto& t = d_.add_player_tpl;
+            if (dat(*b).add_player_tpl.empty()) { static bool warned = false; if (!warned) { warned = true; warn("Bedrock data has no AddPlayer template (regenerate with tools/fetch_bedrock_data.py): other players are invisible to Bedrock clients"); } break; }
+            const auto& t = dat(*b).add_player_tpl;
             const uint8_t* p = t.data() + 16;
             const uint8_t* e = t.data() + t.size();
             uint64_t v;
