@@ -4,6 +4,7 @@
 #include "json.hpp"
 #include "noise3.hpp"
 #include "registry.hpp"
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -48,7 +49,7 @@ struct SamplerCtx {
         std::vector<float> buf;
         bool has_key = false;
         int64_t key = 0;
-        float value = 0;
+        float value = std::numeric_limits<float>::quiet_NaN();   // CacheCell.value starts as NaN: nothing is cached yet
     };
     std::vector<Cell> cells;
     bool caches = false;

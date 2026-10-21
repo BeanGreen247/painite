@@ -76,7 +76,10 @@ static v3::NoiseParams noise_params(const Registry& reg, const std::string& name
 int main(int argc, char** argv) {
     std::string settings = "overworld", what = "all";
     int64_t seed = 12345;
-    int count = 100, range = 3000;
+    int count = 100, range = 3000, only_cx = 0, only_cz = 0;
+    bool has_chunk = false;
+    std::vector<int> fixed_vol;
+    std::string fn_only;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         auto val = [&]() { return i + 1 < argc ? std::string(argv[++i]) : std::string(); };
@@ -85,6 +88,9 @@ int main(int argc, char** argv) {
         else if (a == "--what") what = val();
         else if (a == "--count") count = std::stoi(val());
         else if (a == "--range") range = std::stoi(val());
+        else if (a == "--fn") fn_only = val();
+        else if (a == "--vol") { for (int k = 0; k < 9; k++) fixed_vol.push_back(std::stoi(val())); }
+        else if (a == "--chunk") { only_cx = std::stoi(val()); only_cz = std::stoi(val()); has_chunk = true; }
     }
     Registry reg("data/worldgen/26.3");
     OracleProc oracle(seed, settings);
@@ -183,6 +189,36 @@ int main(int argc, char** argv) {
         }
         printf("density functions checked\n");
     }
+    if (what == "svol") {
+        v3::RandomState3 rs(reg, seed, false);
+        v3::DfCompiler comp(rs);
+        const Json& router = reg.get("noise_settings", settings).at("noise_router");
+        v3::SamplerCtx cached;
+        cached.caches = true;
+        for (const char* name : {"chunk_surface_level", "erosion", "depth", "final_density", "temperature", "vegetation", "continents", "ridges"}) {
+            if (!fn_only.empty() && fn_only != name) continue;
+            const v3::Sampler* sm = comp.sampler(router.at(name));
+            for (int i = 0; i < count; i++) {
+                v3::Volume vol;
+                vol.minx = rnd(-200, 200) & ~3; vol.miny = i % 2 ? 0 : -64; vol.minz = rnd(-200, 200) & ~3;
+                vol.sx = rnd(1, 12); vol.sz = rnd(1, 12); vol.sy = i % 2 ? 1 : rnd(1, 20);
+                vol.stepx = 4; vol.stepy = i % 2 ? 1 : 4; vol.stepz = 4;
+                if (!fixed_vol.empty()) { vol.minx = fixed_vol[0]; vol.miny = fixed_vol[1]; vol.minz = fixed_vol[2]; vol.sx = fixed_vol[3]; vol.sy = fixed_vol[4]; vol.sz = fixed_vol[5]; vol.stepx = fixed_vol[6]; vol.stepy = fixed_vol[7]; vol.stepz = fixed_vol[8]; }
+                char q[200];
+                snprintf(q, sizeof q, "svol %s %d %d %d %d %d %d %d %d %d", name, vol.minx, vol.miny, vol.minz, vol.sx, vol.sy, vol.sz, vol.stepx, vol.stepy, vol.stepz);
+                std::istringstream is(oracle.ask(q));
+                std::string tok, nm;
+                is >> tok >> nm;
+                std::vector<float> buf(size_t(vol.size()), 0.0f);
+                sm->volume(cached, buf.data(), vol);
+                for (int k = 0; k < vol.size(); k++) {
+                    std::string h;
+                    is >> h;
+                    report(std::string("svol ") + name, std::string(q) + " #" + std::to_string(k), bits_of(buf[size_t(k)]), uint32_t(std::stoul(h, nullptr, 16)));
+                }
+            }
+        }
+    }
     if (what == "fill") {
         VanillaData vd;
         std::string err;
@@ -194,6 +230,7 @@ int main(int argc, char** argv) {
         const Blocks& B = Blocks::get();
         for (int c = 0; c < count; c++) {
             int cx = rnd(-30, 30), cz = rnd(-30, 30);
+            if (has_chunk) { cx = only_cx; cz = only_cz; }
             char q[100];
             snprintf(q, sizeof q, "fill %d %d", cx, cz);
             std::string ans = oracle.ask(q);
@@ -206,7 +243,8 @@ int main(int argc, char** argv) {
             is >> tok;
             std::string run;
             int mism = 0;
-            int zi = 0, xi = 0, yi = blocks.height - 1;
+            const int ny = terrain.settings().height, ny_min = terrain.settings().min_y;
+            int zi = 0, xi = 0, yi = ny - 1;
             long compared = 0;
             while (is >> run) {
                 size_t colon = run.rfind(':');
@@ -215,13 +253,13 @@ int main(int argc, char** argv) {
                 bool mark = !name.empty() && name.back() == '*';
                 if (mark) name.pop_back();
                 for (int k = 0; k < n; k++, compared++) {
-                    uint16_t id = blocks.get(cx * 16 + xi, blocks.min_y + yi, cz * 16 + zi);
+                    uint16_t id = blocks.get(cx * 16 + xi, ny_min + yi, cz * 16 + zi);
                     std::string ours = B.info(id).name;
                     if (ours.rfind("minecraft:", 0) == 0) ours = ours.substr(10);
-                    bool ours_mark = blocks.marks[blocks.index(xi, blocks.min_y + yi, zi)] != 0;
+                    bool ours_mark = blocks.marks[blocks.index(xi, ny_min + yi, zi)] != 0;
                     total++;
-                    if (ours != name || ours_mark != mark) { if (mism++ < 5) printf("MISMATCH chunk %d,%d (%d,%d,%d): ours %s%s oracle %s%s\n", cx, cz, xi, blocks.min_y + yi, zi, ours.c_str(), ours_mark ? "*" : "", name.c_str(), mark ? "*" : ""); }
-                    if (--yi < 0) { yi = blocks.height - 1; if (++xi == 16) { xi = 0; zi++; } }
+                    if (ours != name || ours_mark != mark) { if (mism++ < 5) printf("MISMATCH chunk %d,%d (%d,%d,%d): ours %s%s oracle %s%s\n", cx, cz, xi, ny_min + yi, zi, ours.c_str(), ours_mark ? "*" : "", name.c_str(), mark ? "*" : ""); }
+                    if (--yi < 0) { yi = ny - 1; if (++xi == 16) { xi = 0; zi++; } }
                 }
             }
             bad += mism;

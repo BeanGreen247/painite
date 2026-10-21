@@ -3,9 +3,11 @@
 // queries, one per line (floats are printed as their raw bits in hex, then as decimal):
 //   df NAME X Y Z                  a noise router function (temperature vegetation continents erosion depth ridges chunk_surface_level final_density) at one block, uncached
 //   vol NAME X Y Z SX SY SZ        the same over a volume (x fastest-varying outermost: index = y + (x + z * SX) * SY), printed as bits
+//   svol NAME X Y Z SX SY SZ STX STY STZ   the same over a volume with block steps (chunk_surface_level etc.), through a fresh caching context
 //   noise NAME X Y Z               a named noise (temperature, continentalness, nether/...) at a point; NAME without the namespace
 //   noisevol NAME X Y Z SX SY SZ XZSCALE YSCALE AMPLITUDE   Noise.addToVolume into a zeroed buffer, printed as bits
 //   fill CX CZ                     doFill of one chunk (density, aquifer, default block) as run lengths of block names, z then x outermost, y from the top; '*' marks a scheduled fluid update
+//   aq NAME X Y Z                  an aquifer function (barrier floodedness spread lava exclusion surface_level) at one block, through the caching samplers of a noise chunk covering it
 //   climate X Y Z                  the six quantised climate values at a block (quart cell) and the biome
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -81,6 +83,15 @@ public class Oracle3 {
                         System.out.println(sb);
                     }
                 }
+                case "svol" -> {
+                    DensityVolume vol = new DensityVolume(Integer.parseInt(t[5]), Integer.parseInt(t[6]), Integer.parseInt(t[7]), Integer.parseInt(t[2]), Integer.parseInt(t[3]), Integer.parseInt(t[4]), Integer.parseInt(t[8]), Integer.parseInt(t[9]), Integer.parseInt(t[10]));
+                    DensitySampler.Bound b = samplers.get(pick(router, t[1]));
+                    try (ScopedDensityBuffer buf = b.sampleVolume(vol)) {
+                        StringBuilder sb = new StringBuilder("svol " + t[1]);
+                        for (int i = 0; i < vol.size(); i++) sb.append(String.format(" %08x", Float.floatToRawIntBits(buf.get(i))));
+                        System.out.println(sb);
+                    }
+                }
                 case "noise" -> {
                     net.minecraft.world.level.levelgen.synth.Noise n = state.getOrCreateNoise(ResourceKey.create(Registries.NOISE, Identifier.withDefaultNamespace(t[1])));
                     float v = n.get(Double.parseDouble(t[2]), Double.parseDouble(t[3]), Double.parseDouble(t[4]));
@@ -127,6 +138,21 @@ public class Oracle3 {
                         sb.append(' ').append(last).append(':').append(run);
                         System.out.println(sb);
                     }
+                }
+                case "aq" -> {
+                    NoiseGeneratorSettings gs = settings.value();
+                    int x = Integer.parseInt(t[2]), y = Integer.parseInt(t[3]), z = Integer.parseInt(t[4]);
+                    Aquifer.Config cfg = gs.aquifers().get();
+                    DensityFunction f = switch (t[1]) {
+                        case "barrier" -> cfg.barrierNoise();
+                        case "floodedness" -> cfg.fluidLevelFloodednessNoise();
+                        case "spread" -> cfg.fluidLevelSpreadNoise();
+                        case "lava" -> cfg.lavaNoise();
+                        case "exclusion" -> cfg.exclusion();
+                        default -> cfg.surfaceLevel();
+                    };
+                    float v = state.sampleBlockValueUncached(f, x, y, z);
+                    System.out.println(String.format("aq %s %d %d %d = %08x %s", t[1], x, y, z, Float.floatToRawIntBits(v), v));
                 }
                 default -> System.out.println("? " + line);
             }

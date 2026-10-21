@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -188,6 +190,10 @@ struct NoiseChunk3 {
     }
 
     FluidStatus compute_fluid(int x, int y, int z) {
+        FluidStatus r = compute_fluid_impl(x, y, z);
+        return r;
+    }
+    FluidStatus compute_fluid_impl(int x, int y, int z) {
         FluidStatus global = picker(x, y, z);
         int lowest = INT_MAX;
         int top = y + 12, bottom = y - 12;
