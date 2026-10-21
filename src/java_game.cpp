@@ -637,6 +637,7 @@ void Worker::on_dig(JConn& c, Rd& r) {
         const BlockInfo& bi = Blocks::get().info(cur);
         if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && W.set_block(x, y, z, 0)) {
             s_.game.block_changed(c.dim, x, y, z, 0);
+            if (c.gamemode == 0 && c.gid) s_.game.player_broke_block(c.gid, c.dim, x, y, z, cur);
         } else if (status == 0 || status == 2) {
             send_block_update(c, x, y, z, W.get_block(x, y, z));
         }
@@ -663,13 +664,19 @@ void Worker::on_place(JConn& c, Rd& r) {
     int z = static_cast<int>(static_cast<int64_t>(p << 26) >> 38);
     Blocks& B = Blocks::get();
     uint16_t item_block = hand == 0 ? c.hotbar[c.held] : 0;
+    std::string held_name = hand == 0 ? c.hotbar_name[c.held] : std::string();
+    if (hand == 0 && c.gid && c.gamemode != 1) {   // survival: what the player really holds (container clicks and pickups never touch the mirror)
+        sim::ItemStack held = s_.game.inv_held(c.gid);
+        item_block = held.is_empty() ? 0 : Blocks::get().default_state(held.item()->name);
+        held_name = held.is_empty() ? std::string() : held.item()->name;
+    }
     World& W = s_.dim(c.dim);
     uint16_t target = W.get_block(x, y, z);
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }
     const DimInfo& di = dim_info(c.dim);
     if (hand == 0 && c.gamemode != 3 && c.gamemode != 2) {
-        const std::string& held = c.hotbar_name[c.held];
+        const std::string& held = held_name;
         if (held == "minecraft:ender_eye" && s_.game.put_ender_eye(c.dim, x, y, z)) { send_block_ack(c, seq); return; }
         if (held == "minecraft:flint_and_steel" || held == "minecraft:fire_charge") {
             // lighting a nether portal: fire inside an obsidian frame turns the frame's inside into portal
@@ -689,8 +696,10 @@ void Worker::on_place(JConn& c, Rd& r) {
     }
     if (ok) {
         uint16_t state = placed_state(item_block, face, c.yaw, cy);
-        if (W.set_block(tx, ty, tz, state)) s_.game.block_changed(c.dim, tx, ty, tz, state);
-        else send_block_update(c, tx, ty, tz, W.get_block(tx, ty, tz));
+        if (W.set_block(tx, ty, tz, state)) {
+            s_.game.block_changed(c.dim, tx, ty, tz, state);
+            if (c.gid) s_.game.inv_consume_held(c.gid, 1);   // not in creative
+        } else send_block_update(c, tx, ty, tz, W.get_block(tx, ty, tz));
     } else {
         send_block_update(c, x, y, z, target);
         if (tx != x || ty != y || tz != z) send_block_update(c, tx, ty, tz, W.get_block(tx, ty, tz));

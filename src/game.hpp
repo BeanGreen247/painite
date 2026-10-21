@@ -105,6 +105,8 @@ public:
     void inv_creative_slot(uint64_t gid, int slot, const sim::ItemStack& stack);
     sim::ItemStack inv_held(uint64_t gid);                  // a copy of the stack in the selected hotbar slot
     bool inv_consume_held(uint64_t gid, int n);             // remove n from the selected stack (not in creative); false when it holds fewer
+    // a survival player broke a block (any thread): the game thread rolls its loot table, damages the tool and drops the items
+    void player_broke_block(uint64_t gid, int dim, int x, int y, int z, uint16_t state);
     void inv_sync(uint64_t gid);                            // send the whole inventory again (join, dimension change)
 
     // world clock
@@ -154,6 +156,7 @@ private:
     void queue_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);   // tick only: batched per worker
     void flush_events();
     void broadcast_time();
+    void pickup_items();   // tick, players_ locked: players collect the item entities they touch
     void spawn_for(PState& viewer, PState& p);
     void despawn_for(PState& viewer, PState& p);
     void run_command(uint64_t gid, const std::string& line);   // commands.cpp

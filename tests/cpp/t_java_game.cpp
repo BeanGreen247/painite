@@ -209,6 +209,32 @@ void region(Ctx& t, Env& e) {
     cmd("fill " + fmt(x, y0 + 1, z, x, y0 + 12, z) + " air");
 }
 
+// ---- survival: breaking a block drops its item, the player picks it up ------------------------------------
+
+ServerOpts survival_opts(const Env&) {
+    ServerOpts o;
+    o.properties = "gamemode=survival\nlevel-type=flat\n";
+    o.ops = {"Digger"};
+    return o;
+}
+
+void survival(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Digger");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    int x = int(std::floor(B.pos[0])) + 1, y = int(std::floor(B.pos[1])), z = int(std::floor(B.pos[2]));
+    B.command("setblock " + std::to_string(x) + " " + std::to_string(y) + " " + std::to_string(z) + " dirt");
+    B.pump(200);
+    B.drop("add_entity");
+    B.send("player_action", Wr().varint(0).be64(block_pos(x, y, z)).u8(1).varint(1).b);
+    B.send("player_action", Wr().varint(2).be64(block_pos(x, y, z)).u8(1).varint(2).b);
+    B.until([&] { return B.count("add_entity") >= 1; }, 3000);
+    t.check(B.count("add_entity") >= 1, "breaking dirt in survival spawns the dropped item");
+    B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
+    t.check(B.count("take_item_entity") >= 1, "the player picks the item up (take_item_entity)");
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -232,6 +258,11 @@ void reg_java_game(Registry& reg) {
     c.opts = game_opts;
     c.tests.push_back({"block-updates", region});
     reg.push_back(std::move(c));
+    Group d;
+    d.name = "survival";
+    d.opts = survival_opts;
+    d.tests.push_back({"dig-and-pickup", survival});
+    reg.push_back(std::move(d));
 }
 
 }  // namespace pt

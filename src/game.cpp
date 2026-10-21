@@ -5,6 +5,8 @@
 #include "log.hpp"
 #include "server.hpp"
 #include "sim/data.hpp"
+#include "sim/entity_manager.hpp"
+#include "sim/loot.hpp"
 #include "sim/item_nbt.hpp"
 #include <algorithm>
 #include <chrono>
@@ -141,6 +143,106 @@ bool Game::inv_consume_held(uint64_t gid, int n) {
     sm.inventory_menu->broadcast_changes();
     return true;
 }
+// ServerPlayerGameMode.destroyBlock + Block.playerDestroy: the drops only come when the tool is right for the block (Player.hasCorrectToolForDrops)
+static bool correct_tool_for_drops(const sim::ItemStack& tool, const std::string& block) {
+    const sim::BlockProps* props = sim::BlockTable::get().find(block);
+    if (!props || !props->requires_tool) return true;
+    if (tool.is_empty()) return false;
+    for (const sim::ToolRule& r : tool.item()->tool_rules)
+        if (r.has_correct && sim::Tags::get().matches("block", r.blocks, block)) return r.correct_for_drops;
+    return false;
+}
+
+void Game::player_broke_block(uint64_t gid, int dim, int x, int y, int z, uint16_t state) {
+    post_task([this, gid, dim, x, y, z, state] {
+        if (dim < 0 || dim > 2 || !entity_managers_[dim] || sim::Items::get().size() == 0) return;
+        sim::ItemStack tool;
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            auto it = players_.find(gid);
+            if (it == players_.end() || !it->second.sim || it->second.sim->gamemode == 1 || it->second.sim->gamemode == 3) return;
+            sim::ItemStack& held = it->second.sim->held_item();
+            tool = held;
+            // ItemStack.mineBlock: a tool with durability loses one point per block that has hardness
+            const sim::BlockProps* bp = sim::BlockTable::get().find(Blocks::get().info(state).name);
+            if (!held.is_empty() && held.damageable() && bp && bp->destroy_time != 0.0f) {
+                int d = held.damage_value() + held.item()->tool_damage_per_block;
+                if (d >= held.item()->max_damage) held.shrink(held.count());
+                else held.set_damage_value(d);
+                it->second.sim->inventory_menu->broadcast_changes();
+            }
+        }
+        const BlockInfo& bi = Blocks::get().info(state);
+        if (!correct_tool_for_drops(tool, bi.name)) return;
+        const sim::LootTable* table = sim::LootTables::get("minecraft:blocks/" + bi.name.substr(bi.name.find(':') + 1));
+        if (!table) return;
+        sim::LootBlockState bs;
+        bs.name = bi.name;
+        for (size_t p = 0; p < bi.props.size();) {   // "a=b,c=d"
+            size_t end = bi.props.find(',', p);
+            if (end == std::string::npos) end = bi.props.size();
+            size_t eq = bi.props.find('=', p);
+            if (eq != std::string::npos && eq < end) bs.props[bi.props.substr(p, eq - p)] = bi.props.substr(eq + 1, end - eq - 1);
+            p = end + 1;
+        }
+        sim::LootParams lp;
+        lp.tool = &tool;
+        lp.block_state = &bs;
+        lp.has_origin = true;
+        lp.ox = x + 0.5; lp.oy = y + 0.5; lp.oz = z + 0.5;
+        sim::EntityManager& mgr = *entity_managers_[dim];
+        std::vector<sim::ItemStack> out;
+        table->get_random_items(lp, mgr.random().next_long(), out);
+        for (sim::ItemStack& st : out) {   // Block.popResource
+            if (st.is_empty()) continue;
+            double h = 0.25 / 2.0;
+            double px = x + 0.5 + mgr.random().next_double() * 0.5 - 0.25, py = y + 0.5 + mgr.random().next_double() * 0.5 - 0.25 - h, pz = z + 0.5 + mgr.random().next_double() * 0.5 - 0.25;
+            auto item = std::make_unique<sim::ItemEntity>(&mgr, px, py, pz, st);
+            item->set_default_pickup_delay();
+            mgr.add_entity(std::move(item));
+        }
+    });
+}
+
+void Game::pickup_items() {
+    for (auto& kv : players_) {
+        PState& p = kv.second;
+        if (!p.sim || p.gamemode == 3 || p.sim->gamemode == 3 || p.pos.dim < 0 || p.pos.dim > 2 || !entity_managers_[p.pos.dim]) continue;
+        sim::EntityManager& mgr = *entity_managers_[p.pos.dim];
+        sim::AABB body(p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + 1.8, p.pos.z + 0.3);
+        std::vector<sim::Entity*> near;
+        mgr.entities_in_box(body.inflate(1.0, 0.5, 1.0), nullptr, near);
+        for (sim::Entity* e : near) {
+            auto* item = dynamic_cast<sim::ItemEntity*>(e);
+            if (!item || item->removed || item->pickup_delay != 0 || item->item.is_empty()) continue;   // ItemEntity.playerTouch
+            if (item->has_target && memcmp(item->target, p.id->uuid, 16) != 0) continue;
+            int before = item->item.count();
+            sim::ItemStack stack = item->item;
+            if (!p.sim->inv.add(stack)) { if (stack.count() == before) continue; }
+            int taken = before - stack.count();
+            if (taken <= 0) continue;
+            item->item = stack;
+            if (stack.is_empty()) item->discard();
+            auto tr = entity_tracks_.find(item->id);
+            auto send_take = [&](const std::shared_ptr<const GIdentity>& to) {
+                GEvent ev;
+                ev.kind = GEvent::EntityTake;
+                ev.entity_id = item->id;
+                ev.other_entity_id = p.id->eid;
+                ev.value = taken;
+                queue_event(to, std::move(ev));
+            };
+            send_take(p.id);
+            if (tr != entity_tracks_.end())
+                for (uint64_t gid : tr->second.viewers) {
+                    auto v = players_.find(gid);
+                    if (v != players_.end() && gid != kv.first) send_take(v->second.id);
+                }
+            p.sim->inventory_menu->broadcast_changes();
+        }
+    }
+}
+
 void Game::inv_sync(uint64_t gid) {
     std::lock_guard<std::mutex> l(mu_);
     auto it = players_.find(gid);
@@ -717,6 +819,7 @@ void Game::tick() {
             }
         }
     }
+    pickup_items();
     for (auto it = entity_tracks_.begin(); it != entity_tracks_.end();) {
         if (live_entities.count(it->first)) { ++it; continue; }
         for (uint64_t gid : it->second.viewers) {
