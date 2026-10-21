@@ -4,6 +4,7 @@
 #include "sim/entity_manager.hpp"
 #include <algorithm>
 #include <cstdio>
+#include <unistd.h>
 #include "dimension.hpp"
 #include "structures.hpp"
 #include "vg/gen.hpp"
@@ -220,6 +221,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
             CacheStat& mp = cache_stat("memory pool (chunk packets, connections)");
             mp.counts_lookups = false; mp.bytes.store(s_.mem_used.load()); mp.limit_bytes = s_.mem_cap;
         }
+        bool colour = gid == 0 && isatty(STDOUT_FILENO);   // the terminal console; in game and in the run.sh dashboard the percentages are coloured by the viewer
         auto rows = cache_stats();
         std::sort(rows.begin(), rows.end(), [](CacheStat* a, CacheStat* b) { return a->name < b->name; });
         char line[256];
@@ -238,8 +240,16 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
                 snprintf(missc, sizeof missc, "%llu", (unsigned long long)m);
                 if (h + m) snprintf(pct, sizeof pct, "%.1f", 100.0 * double(h) / double(h + m));
             }
-            snprintf(line, sizeof line, "%-40s %9lld %11s %11s %11s %11s %6s", s->name.c_str(), (long long)entries, size.c_str(), limit.c_str(), hitc, missc, pct);
-            reply(line);
+            snprintf(line, sizeof line, "%-40s %9lld %11s %11s %11s %11s ", s->name.c_str(), (long long)entries, size.c_str(), limit.c_str(), hitc, missc);
+            std::string out = line;
+            if (colour && s->counts_lookups && h + m) {   // green from 90 %, then yellow-green, yellow, orange, red, dark red
+                double p = 100.0 * double(h) / double(h + m);
+                int code = p >= 90 ? 46 : p >= 75 ? 154 : p >= 60 ? 226 : p >= 40 ? 208 : p >= 20 ? 196 : 124;
+                char col[32];
+                snprintf(col, sizeof col, "\x1b[38;5;%dm", code);
+                out += std::string(col) + pct + "\x1b[0m";
+            } else out += pct;
+            reply(out);
         }
         long rss_kb = 0;
         if (FILE* f = fopen("/proc/self/status", "r")) {

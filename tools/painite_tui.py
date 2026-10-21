@@ -98,6 +98,14 @@ class Running:
                 self.proc.terminate()
 
 
+CACHE_ROW = re.compile(r"\s\d+\s+\d+\s+(\d+\.\d)$")   # ... hits misses hit%
+
+
+def hit_pair(pct):
+    # green from 90, then yellow-green, yellow, orange, red, dark red (curses pairs 4 to 9)
+    return 4 if pct >= 90 else 5 if pct >= 75 else 6 if pct >= 60 else 7 if pct >= 40 else 8 if pct >= 20 else 9
+
+
 def color_for(line):
     if "ERROR" in line:
         return 3
@@ -238,7 +246,12 @@ def draw_run(win, r, props, inp, scroll):
         lines = r.lines
         end = len(lines) - scroll
         for i, line in enumerate(lines[max(0, end - logh): end]):
-            put(win, row + i, 0, line, curses.color_pair(color_for(line)))
+            m = CACHE_ROW.search(line)
+            if m:   # a row of the `cache` table: the hit rate gets its own colour
+                put(win, row + i, 0, line[: m.start(1)], curses.color_pair(color_for(line)))
+                put(win, row + i, m.start(1), line[m.start(1):], curses.color_pair(hit_pair(float(m.group(1)))))
+            else:
+                put(win, row + i, 0, line, curses.color_pair(color_for(line)))
     status = "" if r.alive() else "  [server stopped, press Enter for the menu]"
     put(win, h - 2, 0, ("scrolled up " + str(scroll) + " lines  " if scroll else "") + "PgUp/PgDn scroll  F2 why a rewrite  Ctrl-C stops the server" + status, curses.A_DIM)
     put(win, h - 1, 0, "> " + inp, curses.A_BOLD)
@@ -361,6 +374,12 @@ def main(stdscr):
     curses.init_pair(1, curses.COLOR_GREEN, -1)
     curses.init_pair(2, curses.COLOR_YELLOW, -1)
     curses.init_pair(3, curses.COLOR_RED, -1)
+    if curses.COLORS >= 256:
+        for pair, col in ((4, 46), (5, 154), (6, 226), (7, 208), (8, 196), (9, 124)):
+            curses.init_pair(pair, col, -1)
+    else:
+        for pair, col in ((4, curses.COLOR_GREEN), (5, curses.COLOR_GREEN), (6, curses.COLOR_YELLOW), (7, curses.COLOR_YELLOW), (8, curses.COLOR_RED), (9, curses.COLOR_RED)):
+            curses.init_pair(pair, col, -1)
     signal.signal(signal.SIGINT, signal.default_int_handler)
     menu(stdscr)
 
