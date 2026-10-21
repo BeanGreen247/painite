@@ -19,6 +19,7 @@ public:
     std::shared_ptr<Noise> noise(const std::string& name);                   // "minecraft:temperature"
     std::unique_ptr<Rng> random_from_hash(const std::string& id);             // random.fromHashOf(id)
     PosFactory& random_factory(const std::string& name);                      // getOrCreateRandomFactory
+    const PosFactory& root() const { return *random_; }                       // RandomState.random
     NoiseParams noise_params(const std::string& name) const;
     const Registry& reg;
     int64_t seed;

@@ -1,6 +1,10 @@
 // Compares Painite's port of the 26.3 world generation with Mojang's own code bit by bit (the oracle is tools/oracle/Oracle3.java on the 26.3 server jar).
 //   painite_v3check --seed 12345 [--settings overworld] [--what noise|noisevol|all] [--count 100]
+#include "blocks.hpp"
+#include "data.hpp"
+#include "vg/blockdata.hpp"
 #include "vg/df3.hpp"
+#include "vg/terrain3.hpp"
 #include "vg/noise3.hpp"
 #include "vg/registry.hpp"
 #include <cmath>
@@ -13,6 +17,7 @@
 #include <sstream>
 #include <unistd.h>
 
+using namespace pn;
 using namespace pn::vg;
 namespace v3 = pn::vg::v3;
 
@@ -177,6 +182,51 @@ int main(int argc, char** argv) {
             }
         }
         printf("density functions checked\n");
+    }
+    if (what == "fill") {
+        VanillaData vd;
+        std::string err;
+        if (!load_vanilla_file("data/vanilla-26.3.bin", vd, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        if (!Blocks::get().load({{vd.protocol, vd.blocks_path}}, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
+        BlockData bd("data/worldgen/26.3/blockflags.txt", "data/worldgen/26.3/blockclasses.txt", reg);
+        int dim_min = settings == "overworld" ? -64 : 0, dim_h = settings == "overworld" ? 384 : 256;
+        v3::Terrain3 terrain(reg, bd, seed, settings, {}, dim_min, dim_h);
+        const Blocks& B = Blocks::get();
+        for (int c = 0; c < count; c++) {
+            int cx = rnd(-30, 30), cz = rnd(-30, 30);
+            char q[100];
+            snprintf(q, sizeof q, "fill %d %d", cx, cz);
+            std::string ans = oracle.ask(q);
+            auto nc = terrain.make_chunk(cx, cz, nullptr);
+            ChunkBlocks blocks;
+            terrain.do_fill(*nc, blocks);
+            // the oracle's run lengths in the order z, x, y from the top
+            std::istringstream is(ans);
+            std::string tok;
+            is >> tok;
+            std::string run;
+            int mism = 0;
+            int zi = 0, xi = 0, yi = blocks.height - 1;
+            long compared = 0;
+            while (is >> run) {
+                size_t colon = run.rfind(':');
+                std::string name = run.substr(0, colon);
+                int n = std::stoi(run.substr(colon + 1));
+                bool mark = !name.empty() && name.back() == '*';
+                if (mark) name.pop_back();
+                for (int k = 0; k < n; k++, compared++) {
+                    uint16_t id = blocks.get(cx * 16 + xi, blocks.min_y + yi, cz * 16 + zi);
+                    std::string ours = B.info(id).name;
+                    if (ours.rfind("minecraft:", 0) == 0) ours = ours.substr(10);
+                    bool ours_mark = blocks.marks[blocks.index(xi, blocks.min_y + yi, zi)] != 0;
+                    total++;
+                    if (ours != name || ours_mark != mark) { if (mism++ < 5) printf("MISMATCH chunk %d,%d (%d,%d,%d): ours %s%s oracle %s%s\n", cx, cz, xi, blocks.min_y + yi, zi, ours.c_str(), ours_mark ? "*" : "", name.c_str(), mark ? "*" : ""); }
+                    if (--yi < 0) { yi = blocks.height - 1; if (++xi == 16) { xi = 0; zi++; } }
+                }
+            }
+            bad += mism;
+            printf("chunk %d,%d: %ld blocks compared, %d mismatches\n", cx, cz, compared, mism);
+        }
     }
     printf("%d values compared, %d mismatches\n", total, bad);
     return bad ? 1 : 0;

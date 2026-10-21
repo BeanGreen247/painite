@@ -5,6 +5,7 @@
 //   vol NAME X Y Z SX SY SZ        the same over a volume (x fastest-varying outermost: index = y + (x + z * SX) * SY), printed as bits
 //   noise NAME X Y Z               a named noise (temperature, continentalness, nether/...) at a point; NAME without the namespace
 //   noisevol NAME X Y Z SX SY SZ XZSCALE YSCALE AMPLITUDE   Noise.addToVolume into a zeroed buffer, printed as bits
+//   fill CX CZ                     doFill of one chunk (density, aquifer, default block) as run lengths of block names, z then x outermost, y from the top; '*' marks a scheduled fluid update
 //   climate X Y Z                  the six quantised climate values at a block (quart cell) and the biome
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -17,7 +18,13 @@ import net.minecraft.data.registries.VanillaRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.Bootstrap;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.Aquifer;
+import net.minecraft.world.level.levelgen.NoiseChunk;
+import net.minecraft.world.level.levelgen.blending.Blender;
 import net.minecraft.world.level.levelgen.NoiseGeneratorSettings;
 import net.minecraft.world.level.levelgen.NoiseRouter;
 import net.minecraft.world.level.levelgen.RandomState;
@@ -95,6 +102,31 @@ public class Oracle3 {
                     Climate.Sampler sampler = state.createClimateSampler(ctx);
                     Climate.TargetPoint p = sampler.sample(QuartPos.fromBlock(x), QuartPos.fromBlock(y), QuartPos.fromBlock(z));
                     System.out.println("climate " + p.temperature() + " " + p.humidity() + " " + p.continentalness() + " " + p.erosion() + " " + p.depth() + " " + p.weirdness());
+                }
+                case "fill" -> {
+                    int cx = Integer.parseInt(t[1]), cz = Integer.parseInt(t[2]);
+                    NoiseGeneratorSettings gs = settings.value();
+                    int sea = gs.seaLevel();
+                    Aquifer.FluidStatus lava = new Aquifer.FluidStatus(-54, Blocks.LAVA.defaultBlockState());
+                    Aquifer.FluidStatus seaStatus = new Aquifer.FluidStatus(sea, gs.defaultFluid());
+                    Aquifer.FluidPicker picker = (x, y, z) -> y < Math.min(-54, sea) ? lava : seaStatus;
+                    DensityVolume vol = new DensityVolume(16, gs.noiseSettings().height(), 16, cx * 16, gs.noiseSettings().minY(), cz * 16);
+                    try (NoiseChunk nc = new NoiseChunk(state, null, gs, picker, Blender.empty(), vol)) {
+                        DensitySampler.Bound fd = nc.cachingSamplers().get(router.finalDensity());
+                        StringBuilder sb = new StringBuilder("fill");
+                        String last = null; int run = 0;
+                        try (ScopedDensityBuffer buf = fd.sampleVolume(vol)) {
+                            for (int z = 0; z < vol.sizeZ(); z++) for (int x = 0; x < vol.sizeX(); x++) for (int y = vol.sizeY() - 1; y >= 0; y--) {
+                                float d = buf.get(vol.indexUnchecked(x, y, z));
+                                BlockState s = nc.aquifer().computeSubstance(vol.blockX(x), vol.blockY(y), vol.blockZ(z), d);
+                                if (s == null) s = gs.defaultBlock();
+                                String n = BuiltInRegistries.BLOCK.getKey(s.getBlock()).getPath() + (nc.aquifer().shouldScheduleFluidUpdate() && !s.getFluidState().isEmpty() ? "*" : "");
+                                if (n.equals(last)) run++; else { if (last != null) sb.append(' ').append(last).append(':').append(run); last = n; run = 1; }
+                            }
+                        }
+                        sb.append(' ').append(last).append(':').append(run);
+                        System.out.println(sb);
+                    }
                 }
                 default -> System.out.println("? " + line);
             }

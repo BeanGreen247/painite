@@ -80,10 +80,10 @@ target_include_directories(painite_vgcheck PRIVATE src)
 target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
 target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
 
-set(PAINITE_V3_CORE src/vg/noise3.cpp src/vg/df3.cpp src/vg/random.cpp src/vg/registry.cpp src/vg/json.cpp)
+set(PAINITE_V3_CORE src/vg/noise3.cpp src/vg/df3.cpp src/vg/terrain3.cpp src/vg/blockdata.cpp src/vg/random.cpp src/vg/registry.cpp src/vg/json.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
 add_executable(painite_v3check EXCLUDE_FROM_ALL tests/cpp/v3check.cpp ${PAINITE_V3_CORE})
 target_include_directories(painite_v3check PRIVATE src)
-target_link_libraries(painite_v3check PRIVATE OpenSSL::Crypto)
+target_link_libraries(painite_v3check PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
 target_compile_options(painite_v3check PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
 
 add_executable(painite_gencmp EXCLUDE_FROM_ALL tests/cpp/gencmp.cpp ${PAINITE_VG_SOURCES} src/world.cpp src/worldgen.cpp src/worldgen_dims.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp
