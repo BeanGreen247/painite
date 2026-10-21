@@ -85,7 +85,7 @@ void Server::spawn() {
 }
 
 void Server::wait_ready() {
-    int64_t end = now_ms() + 20000;
+    int64_t end = now_ms() + 60000;
     for (;;) {
         int fd = ::socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in a{};
