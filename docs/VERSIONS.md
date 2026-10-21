@@ -66,7 +66,9 @@ Checked against Mojang's own code or server (seed 12345, `build/painite_v3check`
 | Structures (starts and pieces) | all starts and about 1,700 pieces match: mineshaft, shipwreck, ruined portal, ocean ruin, ancient city, village, trial chambers; block level 0.012 % |
 | Features (all), inside the area | overworld 0.52 %, nether 0.12 % (without the lava Mojang's server settles), end 0 % in the central chunks; ore, grass and cave features each match when run alone, the rest is the decoration order family (neighbouring features overlap and Mojang's server decorates in its own order) and `MossyCarpetBlock.placeAt`, which Mojang seeds from the level's own random |
 
-Not checked: the nether and end beyond the fill, Bedrock translation of 26.3 chunks, large biomes and amplified, the End island noise in features.
+Also checked: large biomes (features stage 0.07 %, biomes exact) and amplified (0.39 %, biomes exact), the End island chunks around x = 900 (0 of 1,605,632 blocks). Bedrock translation: every Java state has a Bedrock runtime id in `blocks-bedrock-2193.bin` and the Bedrock tests run on Mojang-generated chunks, but no real Bedrock client was available.
+
+`worldgen_version` defaults to `"26.3"` and `generator = "auto"` now means Mojang's generator for a new world (the built-in approximation, `generator = "terrain"`, is only used when `data/worldgen/<version>` is missing). `./build.sh --data` extracts that data (Java 25 on PATH).
 Gotchas found on the way: density cache cells start empty (`NaN`), the climate sampler of structures is built with caches on, `blocktransforms.txt` and
 `blockentities.txt` must exist for 26.3 (`tools/fetch_worldgen.sh 26.3`), pool aliases and `fallback` keys must not go through the state normaliser.
 
