@@ -293,6 +293,7 @@ bool StructureState::try_generate(const std::string& sid, int cx, int cz, std::v
     random.set_large_feature_seed(env_.seed, cx, cz);
     StructureContext ctx{env_, random, {cx, cz}, [&s](int b) { return s.biomes.count(b) != 0; }};
     std::optional<GenerationStub> stub = s.find_generation_point(ctx);
+    if (std::getenv("DBGST")) fprintf(stderr, "try %s at %d %d: stub %d\n", sid.c_str(), cx, cz, int(bool(stub)));
     if (!stub) return false;
     // Structure.findValidGenerationPoint: the biome at the start position must be allowed
     if (!s.biomes.count(env_.biome_at(stub->position.x >> 2, stub->position.y >> 2, stub->position.z >> 2))) return false;

@@ -334,6 +334,7 @@ struct VanillaGen::Impl {
     // Climate.Sampler.sample + findValue for one quart cell (structures and the other point lookups; chunks use chunk_biomes3)
     int biome_point3(int qx, int qy, int qz) const {
         v3::SamplerCtx ctx;
+        ctx.caches = true;   // the climate sampler is built with caches enabled: flat caches sample on their own grid
         const auto& cs = t3->climate_samplers();
         int bx = qx * 4, by = qy * 4, bz = qz * 4;
         if (opt.dim == 2) {

@@ -293,6 +293,33 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
         }
         return false;
     }
+    if (type == "overlay") {   // 26.3: every feature is tried, the result is whether one placed
+        bool any = false;
+        for (auto& f : config.at("features").arr) any |= place_placed_ref(env, f, random, origin);
+        return any;
+    }
+    if (type == "random_neighbor_spread") {
+        Level& lv = env.level;
+        const BlockData& bd = env.bd();
+        lv.set(origin, provide_state(env, config.at("block"), random, origin));
+        int attempts = sample_int(config.at("attempts"), random);
+        for (int i = 0; i < attempts; i++) {
+            int dx = sample_int(config.at("xz_offset"), random);
+            int dy = sample_int(config.at("y_offset"), random);
+            int dz = sample_int(config.at("xz_offset"), random);
+            BlockPos place = origin.offset(dx, dy, dz);
+            if (!test_predicate(env, config.at("can_replace"), place)) continue;
+            int neighbours = 0;
+            for (int d = 0; d < 6; d++) {
+                if (state_in_set(env, lv.get(place + Dir(d)), config.at("accepted_neighbors"))) neighbours++;
+                if (neighbours > 1) break;
+            }
+            if (neighbours != 1) continue;
+            lv.set(place, provide_state(env, config.at("block"), random, place));
+        }
+        (void)bd;
+        return true;
+    }
     if (type == "sequence") {
         for (auto& f : config.at("features").arr)
             if (!place_placed_ref(env, f, random, origin)) return false;

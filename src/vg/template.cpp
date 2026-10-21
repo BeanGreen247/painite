@@ -560,8 +560,10 @@ bool StructureTemplate::load(const std::string& path, const BlockData& bd) {
     auto read_palette = [&](const pn::Nbt& plist, const pn::Nbt& blocks) {
         std::vector<uint16_t> states;
         for (auto& e : plist.list) {
-            std::string name = e.gets("Name"), props;
-            if (const pn::Nbt* pr = e.get("Properties")) {
+            // 26.3 writes palette entries as {id, properties}
+            std::string name = e.get("Name") ? e.gets("Name") : e.gets("id"), props;
+            const pn::Nbt* pr = e.get("Properties") ? e.get("Properties") : e.get("properties");
+            if (pr) {
                 std::vector<std::pair<std::string, std::string>> kv;
                 for (auto& m : pr->map) kv.emplace_back(m.first, m.second.s);
                 std::sort(kv.begin(), kv.end());

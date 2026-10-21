@@ -467,6 +467,7 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
     }
     auto lookup = [&aliases](const std::string& id) { auto it = aliases.find(id); return it == aliases.end() ? id : it->second; };
     Pool* center_pool = tm.pool(lookup(p.start_pool));
+    if (std::getenv("DBGST")) fprintf(stderr, "jigsaw pool %s: %p %zu\n", p.start_pool.c_str(), (void*)center_pool, center_pool ? center_pool->templates.size() : size_t(0));
     if (!center_pool || center_pool->templates.empty()) return std::nullopt;
     PoolElementP center_element = center_pool->templates[size_t(random.next_int(int(center_pool->templates.size())))];
     if (center_element->type == PoolElement::EMPTY) return std::nullopt;
@@ -475,6 +476,7 @@ std::optional<GenerationStub> add_pieces(const StructureContext& ctx, const Jigs
         std::vector<JigsawInfo> js = element_jigsaws(tm, *center_element, position, center_rotation, random);
         bool found = false;
         for (auto& j : js) if (j.name == p.start_jigsaw) { anchored = j.info.pos; found = true; break; }
+        if (std::getenv("DBGST")) fprintf(stderr, "jigsaw start %s found %d of %zu\n", p.start_jigsaw.c_str(), int(found), js.size());
         if (!found) return std::nullopt;
     }
     BlockPos local_anchor(anchored.x - position.x, anchored.y - position.y, anchored.z - position.z);
