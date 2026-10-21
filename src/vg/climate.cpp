@@ -9,10 +9,6 @@ namespace pn::vg {
 
 int64_t quantize_coord(float v) { return int64_t(v * 10000.0f); }
 
-namespace {
-constexpr int kChildren = 6;
-}
-
 struct ParameterList::Node {
     std::array<Parameter, 7> space;
     std::vector<Node*> children;   // empty for leaves
@@ -26,6 +22,7 @@ struct ParameterList::Node {
 
 struct Builder {
     ParameterList& L;
+    int kChildren = 6;   // children per R-tree node (6 until 26.2, 19 from 26.3)
     using Node = ParameterList::Node;
 
     static int64_t cost(const std::array<Parameter, 7>& s) { int64_t r = 0; for (auto& p : s) r += std::llabs(p.max - p.min); return r; }
@@ -104,7 +101,7 @@ struct Builder {
     }
 };
 
-ParameterList::ParameterList(const std::vector<ParameterPoint>& points, const std::vector<int>& values) : points_(points), values_(values) {
+ParameterList::ParameterList(const std::vector<ParameterPoint>& points, const std::vector<int>& values, int children_per_node) : points_(points), values_(values) {
     std::vector<Node*> leaves;
     for (size_t i = 0; i < points.size(); i++) {
         auto n = std::make_unique<Node>();
@@ -113,7 +110,7 @@ ParameterList::ParameterList(const std::vector<ParameterPoint>& points, const st
         leaves.push_back(n.get());
         pool_.push_back(std::move(n));
     }
-    Builder b{*this};
+    Builder b{*this, children_per_node};
     root_ = b.build(7, leaves);
 }
 
@@ -154,7 +151,7 @@ int ParameterList::find_value_brute_force(const TargetPoint& t) const {
     return best;
 }
 
-ClimateData load_climate_dump(const std::string& path, const std::string& preset) {
+ClimateData load_climate_dump(const std::string& path, const std::string& preset, int children_per_node) {
     ClimateData out;
     std::ifstream f(path);
     std::string line;
@@ -176,7 +173,7 @@ ClimateData load_climate_dump(const std::string& path, const std::string& preset
         points.push_back(pt);
         values.push_back(it->second);
     }
-    out.list = std::make_unique<ParameterList>(points, values);
+    out.list = std::make_unique<ParameterList>(points, values, children_per_node);
     return out;
 }
 

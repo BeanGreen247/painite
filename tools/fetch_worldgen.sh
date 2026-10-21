@@ -32,6 +32,8 @@ for v in "${versions[@]}"; do
     (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlocks.java "../../$out/blockflags.txt" "../../$out/blockclasses.txt" >/dev/null 2>&1) || echo "$v: could not dump the block facts" >&2
     # how rotating and mirroring a block state changes it (structure templates)
     (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpTransforms.java "../../$out/blocktransforms.txt" >/dev/null 2>&1) || echo "$v: could not dump the state transforms" >&2
+    # the climate parameter lists of the biome sources (26.3 builds them in code the port reads from this dump)
+    (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpClimate.java "../../$out/climate.txt" >/dev/null 2>&1) || echo "$v: could not dump the climate lists" >&2
     # block entity type per block and which of them hold a loot table seed (structure templates)
     (cd build/mojang && java -Xshare:auto -XX:TieredStopAtLevel=1 -cp "$(cat "cp-$v.txt")" ../../tools/oracle/DumpBlockEntities.java "../../$out/blockentities.txt" >/dev/null 2>&1) || echo "$v: could not dump the block entity types" >&2
   fi

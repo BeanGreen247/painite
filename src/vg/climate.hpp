@@ -29,7 +29,7 @@ int64_t quantize_coord(float v);
 
 class ParameterList {
 public:
-    ParameterList(const std::vector<ParameterPoint>& points, const std::vector<int>& values);   // value = index into the caller's biome table
+    ParameterList(const std::vector<ParameterPoint>& points, const std::vector<int>& values, int children_per_node = 6);   // value = index into the caller's biome table
     ~ParameterList();
     struct Node;
     int find_value(const TargetPoint& t) const;
@@ -52,6 +52,6 @@ struct ClimateData {
     std::vector<std::string> biomes;
     std::unique_ptr<ParameterList> list;
 };
-ClimateData load_climate_dump(const std::string& path, const std::string& preset);
+ClimateData load_climate_dump(const std::string& path, const std::string& preset, int children_per_node = 6);
 
 }  // namespace pn::vg
