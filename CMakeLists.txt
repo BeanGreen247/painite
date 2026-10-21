@@ -80,7 +80,7 @@ target_include_directories(painite_vgcheck PRIVATE src)
 target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
 target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
 
-set(PAINITE_V3_CORE src/vg/noise3.cpp src/vg/df3.cpp src/vg/terrain3.cpp src/vg/blockdata.cpp src/vg/random.cpp src/vg/registry.cpp src/vg/json.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
+set(PAINITE_V3_CORE src/vg/noise3.cpp src/vg/df3.cpp src/vg/terrain3.cpp src/vg/blockdata.cpp src/vg/random.cpp src/vg/climate.cpp src/vg/registry.cpp src/vg/norm263.cpp src/vg/json.cpp src/blocks.cpp src/data.cpp src/nbt.cpp src/log.cpp src/hash.cpp)
 add_executable(painite_v3check EXCLUDE_FROM_ALL tests/cpp/v3check.cpp ${PAINITE_V3_CORE})
 target_include_directories(painite_v3check PRIVATE src)
 target_link_libraries(painite_v3check PRIVATE OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)

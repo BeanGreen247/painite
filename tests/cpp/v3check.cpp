@@ -3,6 +3,7 @@
 #include "blocks.hpp"
 #include "data.hpp"
 #include "vg/blockdata.hpp"
+#include "vg/climate.hpp"
 #include "vg/df3.hpp"
 #include "vg/terrain3.hpp"
 #include "vg/noise3.hpp"
@@ -188,6 +189,40 @@ int main(int argc, char** argv) {
             }
         }
         printf("density functions checked\n");
+    }
+    if (what == "climate") {
+        // --vol X Y Z (block) : the quantised climate of that quart cell by point and by the chunk volume, against Mojang's
+        v3::RandomState3 rs(reg, seed, false);
+        v3::DfCompiler comp(rs);
+        const Json& router = reg.get("noise_settings", settings).at("noise_router");
+        const char* names[6] = {"temperature", "vegetation", "continents", "erosion", "depth", "ridges"};
+        int bx = fixed_vol[0], by = fixed_vol[1], bz = fixed_vol[2];
+        std::string ans = oracle.ask("climate " + std::to_string(bx) + " " + std::to_string(by) + " " + std::to_string(bz));
+        printf("oracle %s\n", ans.c_str());
+        v3::SamplerCtx plain, cached;
+        cached.caches = true;
+        v3::Volume vol;
+        int cx = bx >> 4, cz = bz >> 4;
+        vol.sx = 4; vol.sy = 96; vol.sz = 4; vol.minx = cx * 16; vol.miny = -64; vol.minz = cz * 16; vol.stepx = vol.stepy = vol.stepz = 4;
+        int idx = vol.index((bx - cx * 16) / 4, (by + 64) / 4, (bz - cz * 16) / 4);
+        printf("ours point:");
+        std::vector<float> pv, vv;
+        for (int k = 0; k < 6; k++) {
+            const v3::Sampler* sm = comp.sampler(router.at(names[k]));
+            float p = sm->value(plain, bx, by, bz);
+            std::vector<float> buf(size_t(vol.size()));
+            sm->volume(cached, buf.data(), vol);
+            pv.push_back(p); vv.push_back(buf[size_t(idx)]);
+        }
+        for (float f : pv) printf(" %lld", (long long)(f * 10000.0f));
+        printf("\nours volume:");
+        for (float f : vv) printf(" %lld", (long long)(f * 10000.0f));
+        printf("\n");
+        auto cd = load_climate_dump("data/worldgen/26.3/climate.txt", "overworld", 19);
+        auto cd6 = load_climate_dump("data/worldgen/26.3/climate.txt", "overworld", 6);
+        TargetPoint tp{int64_t(pv[0] * 10000.0f), int64_t(pv[1] * 10000.0f), int64_t(pv[2] * 10000.0f), int64_t(pv[3] * 10000.0f), int64_t(pv[4] * 10000.0f), int64_t(pv[5] * 10000.0f)};
+        printf("tree19 %s, brute force %s, tree6 %s\n", cd.biomes[size_t(cd.list->find_value(tp))].c_str(), cd.biomes[size_t(cd.list->find_value_brute_force(tp))].c_str(), cd6.biomes[size_t(cd6.list->find_value(tp))].c_str());
+        return 0;
     }
     if (what == "svol") {
         v3::RandomState3 rs(reg, seed, false);

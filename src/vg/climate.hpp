@@ -1,5 +1,8 @@
 // Mojang's multi-noise biome search: climate parameter points kept in an R-tree, queried with quantised climate samples.
 #pragma once
+#include <map>
+#include <mutex>
+#include <thread>
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -34,6 +37,8 @@ public:
     struct Node;
     int find_value(const TargetPoint& t) const;
     int find_value_brute_force(const TargetPoint& t) const;
+    // Climate.RTree keeps the last result per thread and only replaces it on a strictly smaller distance, so exact ties go to what the thread found before (26.3 parity)
+    void set_remember_last(bool on) { remember_last_ = on; }
     size_t size() const { return points_.size(); }
     const ParameterPoint& point(size_t i) const { return points_[i]; }
     int value(size_t i) const { return values_[i]; }
@@ -42,6 +47,9 @@ private:
     std::vector<int> values_;
     std::vector<std::unique_ptr<Node>> pool_;
     Node* root_ = nullptr;
+    bool remember_last_ = false;
+    mutable std::mutex last_mu_;
+    mutable std::map<std::thread::id, const Node*> last_;
     Node* build(std::vector<Node*>& children);
     Node* make_subtree(std::vector<Node*> children);
     friend struct Builder;

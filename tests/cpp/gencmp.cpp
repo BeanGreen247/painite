@@ -276,7 +276,7 @@ int main(int argc, char** argv) {
             const uint8_t* rb = ref->sec[s] ? ref->sec[s]->biome : ref->air_biomes[s];
             for (int i = 0; i < 64; i++) {
                 biome_total++;
-                if (mb[i] != rb[i]) { biome_diff++; biome_pairs[{vd.biomes[mb[i]], vd.biomes[rb[i]]}]++; }
+                if (mb[i] != rb[i]) { if (verbose > 1) printf("  biome cell chunk %d %d section %d cell %d: ours %s vanilla %s\n", cx, cz, s, i, vd.biomes[mb[i]].c_str(), vd.biomes[rb[i]].c_str()); biome_diff++; biome_pairs[{vd.biomes[mb[i]], vd.biomes[rb[i]]}]++; }
             }
         }
         if (cd) bad_chunks++;

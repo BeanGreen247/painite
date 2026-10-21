@@ -134,7 +134,21 @@ static const ParameterList::Node* search_node(const ParameterList::Node* n, cons
 
 int ParameterList::find_value(const TargetPoint& t) const {
     auto target = t.params();
-    const Node* leaf = search_node(root_, target, nullptr);
+    if (!remember_last_) {
+        const Node* leaf = search_node(root_, target, nullptr);
+        return values_[size_t(leaf->leaf_index)];
+    }
+    const Node* candidate = nullptr;
+    {
+        std::lock_guard<std::mutex> l(last_mu_);
+        auto it = last_.find(std::this_thread::get_id());
+        if (it != last_.end()) candidate = it->second;
+    }
+    const Node* leaf = search_node(root_, target, candidate);
+    {
+        std::lock_guard<std::mutex> l(last_mu_);
+        last_[std::this_thread::get_id()] = leaf;
+    }
     return values_[size_t(leaf->leaf_index)];
 }
 

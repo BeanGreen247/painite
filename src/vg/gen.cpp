@@ -166,6 +166,7 @@ struct VanillaGen::Impl {
         else {
             std::string dump = o.climate_dump.empty() ? data_dir + "/worldgen/" + o.version + "/climate.txt" : o.climate_dump;
             climate = load_climate_dump(dump, o.dim == 1 ? "nether" : "overworld", 19);
+            climate.list->set_remember_last(true);
         }
         for (auto& name : climate.biomes) {
             uint8_t idx = plains;
@@ -244,13 +245,16 @@ struct VanillaGen::Impl {
             std::vector<float> b[6];
             const v3::Sampler* fns[6] = {cs.temperature, cs.vegetation, cs.continents, cs.erosion, cs.depth, cs.ridges};
             for (int k = 0; k < 6; k++) { b[k].resize(size_t(vol.size())); fns[k]->volume(ctx, b[k].data(), vol); }
-            for (int qy = 0; qy < vol.sy; qy++)
-                for (int qz = 0; qz < 4; qz++)
-                    for (int qx = 0; qx < 4; qx++) {
-                        size_t i = size_t(vol.index(qx, qy, qz));
-                        TargetPoint tp{quantize_coord(b[0][i]), quantize_coord(b[1][i]), quantize_coord(b[2][i]), quantize_coord(b[3][i]), quantize_coord(b[4][i]), quantize_coord(b[5][i])};
-                        (*out)[(size_t(qy) * 4 + size_t(qz)) * 4 + size_t(qx)] = uint8_t(climate.list->find_value(tp));
-                    }
+            // LevelChunkSection.fillBiomesFromNoise order: sections from the bottom, x then y then z inside each (the search keeps its last result, so the order decides ties)
+            for (int sec = 0; sec * 4 < vol.sy; sec++)
+                for (int qx = 0; qx < 4; qx++)
+                    for (int qyl = 0; qyl < 4 && sec * 4 + qyl < vol.sy; qyl++)
+                        for (int qz = 0; qz < 4; qz++) {
+                            int qy = sec * 4 + qyl;
+                            size_t i = size_t(vol.index(qx, qy, qz));
+                            TargetPoint tp{quantize_coord(b[0][i]), quantize_coord(b[1][i]), quantize_coord(b[2][i]), quantize_coord(b[3][i]), quantize_coord(b[4][i]), quantize_coord(b[5][i])};
+                            (*out)[(size_t(qy) * 4 + size_t(qz)) * 4 + size_t(qx)] = uint8_t(climate.list->find_value(tp));
+                        }
         }
         std::lock_guard<std::mutex> l(bc_mu);
         if (bc_cache.size() > 4096) bc_cache.clear();
