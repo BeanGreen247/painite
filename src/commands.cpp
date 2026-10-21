@@ -262,21 +262,28 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
     } else if (cmd == "whitelist") {
         if (!need(3)) return;
         std::string sub = a.size() > 1 ? lower(a[1]) : "";
-        if (sub == "on") { s_.cfg.white_list = true; set_property_line("white-list", "true"); reply("Whitelist is now turned on"); }
+        auto enforce = [&] {   // enforce-whitelist: whoever is online and no longer listed goes
+            if (!s_.cfg.white_list || !s_.cfg.enforce_whitelist) return;
+            for (auto& id : identities()) {
+                std::string u = uuid_string(id->uuid);
+                if (!s_.whitelisted(id->name, u)) s_.kick_player(id->name, "You are not white-listed on this server!");
+            }
+        };
+        if (sub == "on") { s_.cfg.white_list = true; set_property_line("white-list", "true"); reply("Whitelist is now turned on"); enforce(); }
         else if (sub == "off") { s_.cfg.white_list = false; set_property_line("white-list", "false"); reply("Whitelist is now turned off"); }
         else if (sub == "list") {
             auto n = s_.lists.whitelist_names();
             std::string o;
             for (size_t i = 0; i < n.size(); i++) o += (i ? ", " : " ") + n[i];
             reply("There are " + std::to_string(n.size()) + " whitelisted players:" + o);
-        } else if (sub == "reload") { s_.lists.load_all(); reply("Reloaded the whitelist"); }
+        } else if (sub == "reload") { s_.lists.load_all(); reply("Reloaded the whitelist"); enforce(); }
         else if ((sub == "add" || sub == "remove") && a.size() > 2) {
             if (sub == "add") {
                 auto t = find_name(a[2]);
                 uint8_t u[16];
                 if (t) memcpy(u, t->uuid, 16); else offline_uuid(a[2], u);
                 reply(s_.lists.whitelist_add(t ? t->name : a[2], uuid_string(u)) ? "Added " + a[2] + " to the whitelist" : "Player is already whitelisted");
-            } else reply(s_.lists.whitelist_remove(a[2]) ? "Removed " + a[2] + " from the whitelist" : "Player is not whitelisted");
+            } else { reply(s_.lists.whitelist_remove(a[2]) ? "Removed " + a[2] + " from the whitelist" : "Player is not whitelisted"); enforce(); }
         } else reply("Usage: /whitelist (on|off|list|reload|add <player>|remove <player>)");
     } else if (cmd == "op") {
         if (!need(3)) return;

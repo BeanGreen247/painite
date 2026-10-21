@@ -104,6 +104,7 @@ void Worker::send(JConn& c, const std::vector<uint8_t>& body) { send_raw_frame(c
 
 void Worker::kick(JConn& c, const std::string& reason) {
     if (c.dead) return;
+    if (!c.counted && !c.name.empty()) info("Disconnecting " + c.name + " (/" + c.addr + "): " + reason);   // vanilla's line for a refused login; CreeperCrest reads it
     Wr w;
     if (c.st == St::Login) {
         int id = c.vd ? c.vd->id.lg_disconnect : 0;

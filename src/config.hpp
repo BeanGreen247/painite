@@ -14,6 +14,7 @@ struct Config {
     int max_players = 20;
     bool online_mode = false;
     bool white_list = false;
+    bool enforce_whitelist = false;   // kick online players who are not on the whitelist when it changes (vanilla enforce-whitelist)
     bool prevent_proxy = false;  // prevent-proxy-connections: pass the client IP to the session server
     std::string session_host = "sessionserver.mojang.com";  // host or host:port
     std::string xbox_host = "authorization.franchise.minecraft-services.net";  // Bedrock login token issuer and key server

@@ -275,6 +275,7 @@ void lists(Ctx& t, Env& e) {
     t.check(try_join(port, 777, "Victim", *ids).empty(), "whitelisted Victim joins");
     msg = try_join(port, 777, "Stranger", *ids);
     t.check(contains_s(msg, "white-listed"), "a player that is not whitelisted is refused");
+    t.check(contains_s(e.srv->log(), "Disconnecting Stranger (/127.0.0.1:") && contains_s(e.srv->log(), "not white-listed"), "the refusal is logged the way CreeperCrest reads it");
     cmd("whitelist off", "hitelist");
     t.check(try_join(port, 777, "Stranger", *ids).empty(), "whitelist off lets everybody in");
     // files edited by hand are picked up (the server re-reads them every few seconds)

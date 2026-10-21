@@ -119,6 +119,7 @@ bool load_config(Config& c, const std::string& toml_path, std::string& err) {
     if (auto v = get("online-mode")) c.online_mode = to_bool(*v, c.online_mode);
     if (auto v = get("prevent-proxy-connections")) c.prevent_proxy = to_bool(*v, false);
     if (auto v = get("white-list")) c.white_list = to_bool(*v, false);
+    if (auto v = get("enforce-whitelist")) c.enforce_whitelist = to_bool(*v, false);
     if (auto v = get("view-distance")) c.view_distance = to_int(*v, c.view_distance);
     if (auto v = get("network-compression-threshold")) c.compression_threshold = to_int(*v, c.compression_threshold);
     if (auto v = get("level-name")) c.level_name = *v;
