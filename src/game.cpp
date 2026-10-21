@@ -163,6 +163,7 @@ void Game::player_broke_block(uint64_t gid, int dim, int x, int y, int z, uint16
             if (it == players_.end() || !it->second.sim || it->second.sim->gamemode == 1 || it->second.sim->gamemode == 3) return;
             sim::ItemStack& held = it->second.sim->held_item();
             tool = held;
+            add_exhaustion_locked(it->second, 0.005f);
             // ItemStack.mineBlock: a tool with durability loses one point per block that has hardness
             const sim::BlockProps* bp = sim::BlockTable::get().find(Blocks::get().info(state).name);
             if (!held.is_empty() && held.damageable() && bp && bp->destroy_time != 0.0f) {
@@ -263,6 +264,18 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     ps.gamemode = gamemode;
     ps.view = view_chunks;
     ps.last_save_ms = now_ms();
+    {   // health and food from the player file
+        Nbt saved;
+        if (s_.world.load_player(uuid_string(id->uuid), saved) && saved.type == Nbt::Compound) {
+            auto num = [&](const char* k, float def) { const Nbt* n = saved.get(k); return n && (n->type == Nbt::Float || n->type == Nbt::Double) ? float(n->f) : n ? float(n->i) : def; };
+            float h = num("Health", 20.0f);
+            ps.v.health = h > 0.0f && h <= 20.0f ? h : 20.0f;
+            ps.v.food = int(std::max(0.0f, std::min(20.0f, num("foodLevel", 20.0f))));
+            ps.v.saturation = std::max(0.0f, num("foodSaturationLevel", 5.0f));
+            ps.v.exhaustion = std::max(0.0f, num("foodExhaustionLevel", 0.0f));
+            ps.v.sent_health = ps.v.health; ps.v.sent_food = ps.v.food; ps.v.sent_sat = ps.v.saturation;
+        }
+    }
     if (sim::Items::get().size() > 0) {
     ps.sim = std::make_unique<sim::PlayerSim>();
     ps.sim->gamemode = gamemode;
@@ -284,6 +297,7 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     held.kind = GEvent::HeldSlot;
     held.slot = ps.sim->inv.selected;
     send_event(id, held);
+    send_health_locked(ps);
     }
     for (auto& kv : players_) {
         GEvent a;
@@ -340,6 +354,8 @@ void Game::update_pos(uint64_t gid, const GPos& pos) {
     auto it = players_.find(gid);
     if (it == players_.end()) return;
     if (pos.dim != it->second.pos.dim) return;   // a late move packet from before a dimension change
+    if (it->second.v.dead) return;
+    track_movement_locked(it->second, pos);
     it->second.pos = pos;
     it->second.dirty = true;
 }
@@ -481,12 +497,14 @@ void Game::save_player_data(uint64_t gid) {
     int gm = 0;
     Nbt inventory_list = Nbt::list_of(Nbt::Compound);
     int selected_slot = 0;
+    Vitals vit;
     {
         std::lock_guard<std::mutex> l(mu_);
         auto it = players_.find(gid);
         if (it == players_.end()) return;
         id = it->second.id;
         pos = it->second.pos;
+        vit = it->second.v;
         gm = it->second.gamemode;
         it->second.last_save_ms = now_ms();
         if (it->second.sim) {
@@ -510,6 +528,10 @@ void Game::save_player_data(uint64_t gid) {
     }
     auto dbl = [](double v) { Nbt n; n.type = Nbt::Double; n.f = v; return n; };
     auto flt = [](double v) { Nbt n; n.type = Nbt::Float; n.f = v; return n; };
+    root.put("Health", flt(vit.dead ? 20.0f : vit.health));
+    root.put("foodLevel", Nbt::make(Nbt::Int, vit.dead ? 20 : vit.food));
+    root.put("foodSaturationLevel", flt(vit.dead ? 5.0f : vit.saturation));
+    root.put("foodExhaustionLevel", flt(vit.exhaustion));
     Nbt p = Nbt::list_of(Nbt::Double);
     p.list = {dbl(pos.x), dbl(pos.y), dbl(pos.z)};
     root.put("Pos", std::move(p));
@@ -630,7 +652,7 @@ void Game::tick() {
             m.ev = e;
         }
         moves.push_back(std::move(m));
-        grid[region_key(p.pos.dim, p.sent.x, p.sent.z)].push_back(&p);
+        if (!p.v.dead) grid[region_key(p.pos.dim, p.sent.x, p.sent.z)].push_back(&p);   // the dead are not seen
     }
     std::unordered_set<uint64_t> fresh;   // (viewer, subject) pairs spawned this tick already carry the new position
     // who sees whom: only players in the same or a neighbouring 512 block region are candidates
@@ -820,6 +842,7 @@ void Game::tick() {
         }
     }
     pickup_items();
+    vitals_tick();
     for (auto it = entity_tracks_.begin(); it != entity_tracks_.end();) {
         if (live_entities.count(it->first)) { ++it; continue; }
         for (uint64_t gid : it->second.viewers) {

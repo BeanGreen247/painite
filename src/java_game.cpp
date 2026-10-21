@@ -3,6 +3,7 @@
 #include "perf.hpp"
 #include "server.hpp"
 #include "dimension.hpp"
+#include "sim/components.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -34,7 +35,7 @@ static void put_entry(Wr& w, const GIdentity& id, int gamemode) {
 struct CmdDef { const char* name; int level; };
 static const CmdDef kCommands[] = {{"help", 0}, {"list", 0}, {"players", 0}, {"whois", 0}, {"playerinfo", 0}, {"tps", 0}, {"me", 0}, {"tell", 0}, {"msg", 0}, {"w", 0}, {"version", 0}, {"info", 0}, {"painite", 0}, {"pn", 0}, {"say", 2}, {"tp", 2},
     {"teleport", 2}, {"execute", 2}, {"locate", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
-    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}};
+    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}, {"kill", 2}};
 
 // Command tree for the client: every command is a literal with one greedy text argument, so tab completion and highlighting
 // know the names; the server does the parsing.
@@ -319,6 +320,27 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             break;
         case GEvent::Block: send_block_update(c, ev.bx, ev.by, ev.bz, ev.block); break;
         case GEvent::Time: send_time(c, ev.t0, ev.t1); break;
+        case GEvent::Health:
+            w.varint(vd.packet("play/c/set_health"));
+            w.f32(ev.health);
+            w.varint(ev.value);
+            w.f32(ev.saturation);
+            send(c, w.b);
+            break;
+        case GEvent::Hurt:
+            w.varint(vd.packet("play/c/hurt_animation"));
+            w.varint(ev.id->eid);
+            w.f32(0.0f);
+            send(c, w.b);
+            break;
+        case GEvent::Death: {
+            w.varint(vd.packet("play/c/player_combat_kill"));
+            w.varint(ev.id->eid);
+            std::vector<uint8_t> msg = sim::text_component_nbt(vg::Json::parse(ev.text));
+            w.raw(msg.data(), msg.size());
+            send(c, w.b);
+            break;
+        }
         case GEvent::Gamemode:
             w.varint(id.pl_player_info);
             w.u8(0x04);
@@ -626,6 +648,7 @@ void Worker::on_dig(JConn& c, Rd& r) {
     int y = static_cast<int>(static_cast<int64_t>(p << 52) >> 52);
     int z = static_cast<int>(static_cast<int64_t>(p << 26) >> 38);
     bool instant = c.gamemode == 1;
+    if (status == 5 && c.gid) s_.game.stop_eating(c.gid);   // release use item
     World& W = s_.dim(c.dim);
     if (status == 0 || status == 2) {
         bool take = (status == 0 && instant) || (status == 2 && c.gamemode != 1 && c.gamemode != 3 && c.gamemode != 2);

@@ -155,7 +155,7 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
 
     if (cmd == "help" || cmd == "?") {
         std::string o = "Commands: help, list, players, tps, me, tell/msg, version";
-        if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kick";
+        if (level >= 2) o += ", say, tp, execute, locate, gamemode, time, setblock, fill, kill, kick";
         if (level >= 3) o += ", ban, ban-ip, pardon, pardon-ip, banlist, whitelist, op, deop";
         if (level >= 4) o += ", save-all, save-on, save-off, stop";
         if (list_commands) o += ". Every command also works as 'painite <command>', e.g. 'painite tps'";
@@ -438,7 +438,13 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         for (int x = x1; x <= x2; x++) for (int y = y1; y <= y2; y++) for (int z = z1; z <= z2; z++)
             if (s_.dim(d).set_block(x, y, z, id)) { block_changed(d, x, y, z, id); n++; }
         reply("Successfully filled " + std::to_string(n) + " block(s)");
-    } else if (cmd == "give" || cmd == "weather" || cmd == "difficulty" || cmd == "effect" || cmd == "summon" || cmd == "kill" || cmd == "xp" || cmd == "enchant") {
+    } else if (cmd == "kill") {
+        if (!need(2)) return;
+        auto t = a.size() > 1 ? find_target(a[1]) : (gid ? identity(gid) : nullptr);
+        if (!t) { if (a.size() > 1) missing(a[1]); else reply("A player is required to run this command here"); return; }
+        kill_player(t->gid);
+        reply("Killed " + t->name);
+    } else if (cmd == "give" || cmd == "weather" || cmd == "difficulty" || cmd == "effect" || cmd == "summon" || cmd == "xp" || cmd == "enchant") {
         reply("/" + cmd + " is not implemented in Painite yet (no inventory, mobs or weather)");
     } else {
         reply("Unknown or incomplete command, see below for error");

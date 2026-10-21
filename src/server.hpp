@@ -80,7 +80,7 @@ struct JConn {
     std::string hotbar_name[9];   // item names in the hotbar slots (flint_and_steel and the like have no block)
     uint16_t hotbar[9] = {};  // internal block ids of the creative hotbar items (0 = none / not a block)
     int held = 0;
-    bool sneaking = false, ground = true;
+    bool sneaking = false, sprinting = false, ground = true;
     uint8_t skin_parts = 0x7f;
     int batches_out = 0;
     std::unordered_set<int64_t> sent;

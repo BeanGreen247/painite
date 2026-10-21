@@ -648,7 +648,7 @@ void Worker::on_move(JConn& c, double nx, double ny, double nz, float yaw, float
     c.ground = ground;
     if (c.gid) {
         GPos gp;
-        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking; gp.skin_parts = c.skin_parts; gp.dim = c.dim;
+        gp.x = c.x; gp.y = c.y; gp.z = c.z; gp.yaw = c.yaw; gp.pitch = c.pitch; gp.head = c.yaw; gp.ground = ground; gp.sneaking = c.sneaking; gp.sprinting = c.sprinting; gp.skin_parts = c.skin_parts; gp.dim = c.dim;
         s_.game.update_pos(c.gid, gp);
     }
     int ncx = static_cast<int>(std::floor(nx / 16)), ncz = static_cast<int>(std::floor(nz / 16));
@@ -705,6 +705,16 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
             c.sneaking = fl & 0x20;
             on_move(c, 0, 0, 0, 0, 0, false, false, c.ground);
         }
+    } else if (pid == c.vd->packet("play/s/player_command")) {
+        r.varint();
+        int action = r.varint();
+        if (!r.bad && (action == 1 || action == 2)) c.sprinting = action == 1;
+    } else if (pid == c.vd->packet("play/s/client_command")) {
+        int action = r.varint();
+        if (!r.bad && action == 0 && c.gid) s_.game.respawn(c.gid);   // "Respawn" on the death screen
+    } else if (pid == c.vd->packet("play/s/use_item")) {
+        int hand = r.varint();
+        if (!r.bad && hand == 0 && c.gid) s_.game.start_eating(c.gid);
     } else if (pid == c.vd->packet("play/s/player_action")) {
         on_dig(c, r);
     } else if (pid == c.vd->packet("play/s/use_item_on")) {

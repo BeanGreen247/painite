@@ -40,14 +40,14 @@ struct GIdentity {
 struct GPos {
     double x = 0, y = 0, z = 0;
     float yaw = 0, pitch = 0, head = 0;
-    bool ground = true, sneaking = false;
+    bool ground = true, sneaking = false, sprinting = false;
     int dim = 0;                 // 0 overworld, 1 nether, 2 end
     uint8_t skin_parts = 0x7f;   // displayed skin layers (Java client information)
 };
 
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
-                ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose,
+                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose,
                 EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
@@ -58,6 +58,7 @@ struct GEvent {
     int64_t t0 = 0, t1 = 0;                // Time: world age, day time
     int value = 0;
     std::string text;
+    float health = 0, saturation = 0;       // Health: value is the food level
     // container events (the player's own worker encodes them)
     int container = 0, state = 0, slot = 0;
     std::vector<sim::ItemStack> items;
@@ -107,6 +108,13 @@ public:
     bool inv_consume_held(uint64_t gid, int n);             // remove n from the selected stack (not in creative); false when it holds fewer
     // a survival player broke a block (any thread): the game thread rolls its loot table, damages the tool and drops the items
     void player_broke_block(uint64_t gid, int dim, int x, int y, int z, uint16_t state);
+    // --- health, hunger, damage, death (vitals.cpp) ---
+    void damage(uint64_t gid, float amount, const std::string& source);   // source: a death message key such as "fall", "starve", "generic"; any thread
+    void kill_player(uint64_t gid);
+    void respawn(uint64_t gid);                  // the client pressed "Respawn"
+    void start_eating(uint64_t gid);             // use_item with food in the hand
+    void stop_eating(uint64_t gid);
+    float health_of(uint64_t gid);
     void inv_sync(uint64_t gid);                            // send the whole inventory again (join, dimension change)
 
     // world clock
@@ -132,7 +140,14 @@ public:
     bool put_ender_eye(int dim, int x, int y, int z);   // an eye of ender into a frame; opens the End portal when the ring is full
 
 private:
+    struct Vitals {
+        float health = 20.0f, saturation = 5.0f, exhaustion = 0.0f, last_hurt = 0.0f, fall = 0.0f, pending_fall = 0.0f, sent_health = 20.0f, sent_saturation_unused = 0.0f, sent_sat = 5.0f;
+        int sent_food = 20;
+        int food = 20, food_timer = 0, invulnerable = 0, air = 300, drown_timer = 0, eating = -1;   // eating: ticks left, -1 when not
+        bool dead = false;
+    };
     struct PState {
+        Vitals v;
         std::shared_ptr<GIdentity> id;
         GPos pos, sent;
         bool dirty = false, sent_valid = false;
@@ -156,6 +171,12 @@ private:
     void queue_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);   // tick only: batched per worker
     void flush_events();
     void broadcast_time();
+    void vitals_tick();    // tick, players_ locked: regeneration, hunger, starvation, drowning, void, eating
+    void hurt_locked(PState& p, float amount, const std::string& source);
+    void die_locked(PState& p, const std::string& source);
+    void send_health_locked(PState& p);
+    void track_movement_locked(PState& p, const GPos& now);
+    void add_exhaustion_locked(PState& p, float x) { if (p.gamemode != 1 && p.gamemode != 3) p.v.exhaustion = std::min(40.0f, p.v.exhaustion + x); }
     void pickup_items();   // tick, players_ locked: players collect the item entities they touch
     void spawn_for(PState& viewer, PState& p);
     void despawn_for(PState& viewer, PState& p);

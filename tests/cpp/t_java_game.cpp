@@ -224,6 +224,8 @@ void survival(Ctx& t, Env& e) {
     B.until([&] { return B.has_pos; }, 5000);
     B.settle(150, 1500);
     int x = int(std::floor(B.pos[0])) + 1, y = int(std::floor(B.pos[1])), z = int(std::floor(B.pos[2]));
+    B.send("move_player_pos", Wr().f64(x - 0.5).f64(B.pos[1]).f64(z + 0.5).u8(1).b);   // stand in the middle of the block next to the dirt, so the drop is always in reach
+    B.pump(150);
     B.command("setblock " + std::to_string(x) + " " + std::to_string(y) + " " + std::to_string(z) + " dirt");
     B.pump(200);
     B.drop("add_entity");
@@ -232,7 +234,72 @@ void survival(Ctx& t, Env& e) {
     B.until([&] { return B.count("add_entity") >= 1; }, 3000);
     t.check(B.count("add_entity") >= 1, "breaking dirt in survival spawns the dropped item");
     B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
+    {   // items slide away from where they pop (as in vanilla): walk onto the item like a player would
+        Bytes spawn;
+        for (auto& en : B.log) if (en.first == "add_entity") { spawn = en.second; break; }
+        if (!spawn.empty()) {
+            Rd r(spawn);
+            r.varint(); r.take(16); r.varint();
+            double ix = r.f64(), iy = r.f64(), iz = r.f64();
+            B.send("move_player_pos", Wr().f64(ix).f64(iy).f64(iz).u8(1).b);
+        }
+    }
     t.check(B.count("take_item_entity") >= 1, "the player picks the item up (take_item_entity)");
+}
+
+// ---- health: fall damage, /kill, the death screen and the respawn --------------------------------------------
+
+float last_health(JBot& b) {
+    float h = -1;
+    for (auto& en : b.log) if (en.first == "set_health") { Rd r(en.second); h = r.f32(); }
+    return h;
+}
+
+void vitals(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Digger");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.until([&] { return B.count("set_health") >= 1; }, 3000);
+    t.check(last_health(B) == 20.0f, "a new player starts with 20 health");
+    B.settle(150, 1500);
+    double x = B.pos[0], y = B.pos[1], z = B.pos[2];
+    // a fall of 20 blocks onto the ground costs ceil(20 - 3) = 17 health
+    B.log.clear();
+    for (double dy = 20; dy > 0; dy -= 1.0) { B.send("move_player_pos", Wr().f64(x).f64(y + dy).f64(z).u8(0).b); B.pump(5); }
+    B.send("move_player_pos", Wr().f64(x).f64(y).f64(z).u8(1).b);
+    B.until([&] { return last_health(B) >= 0 && last_health(B) < 20.0f; }, 3000);
+    t.check(last_health(B) == 3.0f, "a 20 block fall leaves 3 health (" + std::to_string(last_health(B)) + ")");
+    t.check(B.count("hurt_animation") >= 1, "the fall plays the hurt animation");
+    // /kill: death screen, then respawn gives the health back
+    B.log.clear();
+    B.command("kill Digger");
+    B.until([&] { return B.count("player_combat_kill") >= 1; }, 3000);
+    t.check(B.count("player_combat_kill") >= 1, "dying sends the death screen (player_combat_kill)");
+    B.log.clear();
+    B.send("client_command", Wr().varint(0).b);
+    B.until([&] { return B.count("respawn") >= 1 && last_health(B) == 20.0f; }, 3000);
+    t.check(B.count("respawn") >= 1, "pressing Respawn answers with a respawn packet");
+    t.check(last_health(B) == 20.0f, "the respawned player has 20 health");
+}
+
+void eating(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Digger");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    B.command("gamemode creative");
+    B.pump(200);
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at("golden_apple"))).varint(0).varint(0).b);
+    B.send("set_carried_item", Wr().be16(0).b);
+    B.pump(100);
+    B.command("gamemode survival");
+    B.pump(200);
+    B.log.clear();
+    B.send("use_item", Wr().varint(0).varint(1).f32(0).f32(0).b);
+    B.until([&] { return B.count("set_health") >= 1; }, 4000);
+    float sat = -1;
+    for (auto& en : B.log) if (en.first == "set_health") { Rd r(en.second); r.f32(); r.varint(); sat = r.f32(); }
+    t.check(sat > 10.0f, "eating a golden apple raises the saturation (" + std::to_string(sat) + ")");
 }
 
 }  // namespace
@@ -262,6 +329,8 @@ void reg_java_game(Registry& reg) {
     d.name = "survival";
     d.opts = survival_opts;
     d.tests.push_back({"dig-and-pickup", survival});
+    d.tests.push_back({"health-and-death", vitals});
+    d.tests.push_back({"eating", eating});
     reg.push_back(std::move(d));
 }
 
