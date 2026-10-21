@@ -214,7 +214,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger"};
+    o.ops = {"Digger", "Faller", "Eater"};
     return o;
 }
 
@@ -233,6 +233,25 @@ void survival(Ctx& t, Env& e) {
     B.send("player_action", Wr().varint(2).be64(block_pos(x, y, z)).u8(1).varint(2).b);
     B.until([&] { return B.count("add_entity") >= 1; }, 3000);
     t.check(B.count("add_entity") >= 1, "breaking dirt in survival spawns the dropped item");
+    B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
+    if (B.count("take_item_entity") < 1) {   // items slide away from where they pop (as in vanilla): once it rests, walk onto it like a player would
+        B.pump(1500);
+        Bytes spawn;
+        for (auto& en : B.log) if (en.first == "add_entity") { spawn = en.second; break; }
+        if (!spawn.empty()) {
+            Rd r(spawn);
+            r.varint(); r.take(16); r.varint();
+            double ix = r.f64(), iy = r.f64(), iz = r.f64();
+            for (auto& en : B.log) {
+                if (en.first != "move_entity_pos" && en.first != "move_entity_pos_rot") continue;
+                Rd m(en.second);
+                m.varint();
+                if (777 >= 777) m.varint();
+                ix += double(int16_t(m.be16())) / 4096.0; iy += double(int16_t(m.be16())) / 4096.0; iz += double(int16_t(m.be16())) / 4096.0;
+            }
+            B.send("move_player_pos", Wr().f64(ix).f64(iy).f64(iz).u8(1).b);
+        }
+    }
     B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
     {   // items slide away from where they pop (as in vanilla): walk onto the item like a player would
         Bytes spawn;
@@ -257,7 +276,7 @@ float last_health(JBot& b) {
 
 void vitals(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
-    JBot B(e.port(), 777, ids, "Digger");
+    JBot B(e.port(), 777, ids, "Faller");
     B.until([&] { return B.has_pos; }, 5000);
     B.until([&] { return B.count("set_health") >= 1; }, 3000);
     t.check(last_health(B) == 20.0f, "a new player starts with 20 health");
@@ -272,7 +291,7 @@ void vitals(Ctx& t, Env& e) {
     t.check(B.count("hurt_animation") >= 1, "the fall plays the hurt animation");
     // /kill: death screen, then respawn gives the health back
     B.log.clear();
-    B.command("kill Digger");
+    B.command("kill Faller");
     B.until([&] { return B.count("player_combat_kill") >= 1; }, 3000);
     t.check(B.count("player_combat_kill") >= 1, "dying sends the death screen (player_combat_kill)");
     B.log.clear();
@@ -284,7 +303,7 @@ void vitals(Ctx& t, Env& e) {
 
 void eating(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
-    JBot B(e.port(), 777, ids, "Digger");
+    JBot B(e.port(), 777, ids, "Eater");
     B.until([&] { return B.has_pos; }, 5000);
     B.settle(150, 1500);
     B.command("gamemode creative");
