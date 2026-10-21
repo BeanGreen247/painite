@@ -362,19 +362,29 @@ void Bedrock::on_auth_input(BSession& b, const uint8_t* p, size_t n) {
     float head = rd_f32(p);
     (void)head;
     if (!std::isfinite(x) || !std::isfinite(y) || !std::isfinite(z) || std::fabs(x) > 3e7f || std::fabs(z) > 3e7f || std::fabs(y) > 3e7f) return;
-    // input flags: list of ordinals
-    uint64_t cnt;
-    if (!rd_varuint(p, e, cnt) || cnt > 80) return;
-    bool sneaking = b.sneaking, item_interact = false, block_action = false;
-    for (uint64_t i = 0; i < cnt; i++) {
+    // input flags. 2193: a count and the ordinals; 2168 and 2169: the same behind a presence byte; before 2168: a bit set (bit = ordinal)
+    // (CloudburstMC/Protocol PlayerAuthInputSerializer_v766 / v2168 / v2193)
+    uint64_t flag_bits[2] = {0, 0};
+    auto has_flag = [&](int ord) { return ord >= 0 && ord < 128 && ((flag_bits[ord >> 6] >> (ord & 63)) & 1); };
+    if (b.proto < 2168) {
         uint64_t v;
         if (!rd_varuint(p, e, v)) return;
-        int ord = static_cast<int>(unzz64(v));
-        if (ord == 27) sneaking = true;        // start sneaking
-        else if (ord == 28) sneaking = false;  // stop sneaking
-        else if (ord == 34) item_interact = true;
-        else if (ord == 35) block_action = true;
+        flag_bits[0] = v;
+    } else {
+        if (b.proto < 2193) { if (p >= e) return; p++; }
+        uint64_t cnt;
+        if (!rd_varuint(p, e, cnt) || cnt > 80) return;
+        for (uint64_t i = 0; i < cnt; i++) {
+            uint64_t v;
+            if (!rd_varuint(p, e, v)) return;
+            int ord = static_cast<int>(unzz64(v));
+            if (ord >= 0 && ord < 128) flag_bits[ord >> 6] |= 1ull << (ord & 63);
+        }
     }
+    bool sneaking = b.sneaking;
+    if (has_flag(27)) sneaking = true;         // start sneaking
+    else if (has_flag(28)) sneaking = false;   // stop sneaking
+    bool item_interact = has_flag(34), block_action = has_flag(35);
     b.x = x; b.y = y - kEye; b.z = z; b.yaw = yaw; b.pitch = pitch; b.sneaking = sneaking;
     if (b.st == BSession::St::Playing && b.gid) {
         GPos gp;
@@ -391,16 +401,22 @@ void Bedrock::on_auth_input(BSession& b, const uint8_t* p, size_t n) {
     if (!rd_varuint(p, e, v)) return;
     if (e - p < 12) return;
     p += 12;
-    // optional parts, each behind a presence byte: transaction, item stack request, block actions
-    if (p >= e) return;
-    bool has_tx = *p++ != 0;
-    if (has_tx) return;   // block placement through item transactions is handled by the inventory code once it exists
-    if (p >= e) return;
-    bool has_isr = *p++ != 0;
-    if (has_isr) return;
-    if (p >= e || !*p++) return;
+    // optional parts: item transaction, item stack request, block actions (presence bytes from 2168 on, the flags decide before that)
+    auto present = [&](int flag, bool& out) {
+        if (b.proto < 2168) { out = has_flag(flag); return true; }
+        if (b.proto < 2193) { if (p >= e) return false; p++; }   // 2168 and 2169 write an outer byte first
+        if (p >= e) return false;
+        out = *p++ != 0;
+        return true;
+    };
+    bool has_tx, has_isr, has_acts;
+    if (!present(34, has_tx) || has_tx) return;   // block placement through item transactions is handled by the inventory code once it exists
+    if (!present(36, has_isr) || has_isr) return;
+    if (!present(35, has_acts) || !has_acts) return;
     uint64_t acts;
-    if (!rd_varuint(p, e, acts) || acts > 64) return;
+    if (!rd_varuint(p, e, acts)) return;
+    if (b.proto < 2168) acts = static_cast<uint64_t>(unzz64(acts));   // an old count is a zigzag varint
+    if (acts > 64) return;
     for (uint64_t i = 0; i < acts; i++) {
         uint64_t a;
         if (!rd_varuint(p, e, a)) return;
@@ -459,14 +475,14 @@ void Bedrock::change_dimension(BSession& b, const GPos& p) {
 
 // ---- chunks from the world ------------------------------------------------------------------------------
 
-const std::vector<uint8_t>& Bedrock::level_chunk_tail(int dim, int x, int z) {
-    int64_t key = ((static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z)) ^ (static_cast<int64_t>(dim) << 58);
+const std::vector<uint8_t>& Bedrock::level_chunk_tail(int dim, int x, int z, bool legacy) {
+    int64_t key = ((static_cast<int64_t>(x) << 32) | static_cast<uint32_t>(z)) ^ (static_cast<int64_t>(dim) << 58) ^ (legacy ? 1ll << 57 : 0);
     auto ch = s_.dim(dim).chunk(x, z);
     uint32_t ver = ch->version.load();
     auto& slot = tail_cache_[key];
     if (slot.ver != ver || slot.tail.empty()) {
         tail_cache_bytes_ -= slot.tail.size();
-        encode_bedrock_levelchunk(*ch, slot.tail, dim);
+        encode_bedrock_levelchunk(*ch, slot.tail, dim, legacy);
         slot.ver = ver;
         tail_cache_bytes_ += slot.tail.size();
         if (tail_cache_bytes_ > 16u * 1024 * 1024) {

@@ -54,6 +54,13 @@ def parse_subchunk_entries(pl):
 CAPTURE_NAME = "PainiteCapture"
 
 
+def pack_response(protocol, status, text):
+    """ResourcePackClientResponse: 2168+ is varint status + text; before that u8 status (3 have all, 4 completed) and an empty u16 list."""
+    if protocol >= 2168:
+        return b.varuint(status) + _s(text)
+    return bytes([status + 1]) + struct.pack("<H", 0)
+
+
 def build(out, rec, protocol):
     """Write Painite's Bedrock data file from a recorded session."""
     def first(pid):
@@ -77,9 +84,10 @@ def build(out, rec, protocol):
     _, j = rd_varuint(lc, 0)
     _, j = rd_varuint(lc, j)
     records.append((5, 58, lc[j:]))               # LevelChunk: everything after the x, z varints
-    sub = next(bytes.fromhex(h) for p, h in rec if p == 174)
-    for off, entry in parse_subchunk_entries(sub).items():
-        records.append((6, 64 + off[1] - 0, entry))   # id = 64 + sub chunk y offset (request center y is -4)
+    if protocol >= 2193:   # the server builds sub chunks itself; the recorded ones are kept only for the layout the parser below knows
+        sub = next(bytes.fromhex(h) for p, h in rec if p == 174)
+        for off, entry in parse_subchunk_entries(sub).items():
+            records.append((6, 64 + off[1] - 0, entry))   # id = 64 + sub chunk y offset (request center y is -4)
     name = CAPTURE_NAME.encode()
     records.append((7, 1, name))
     ap = next((bytes.fromhex(h) for p, h in rec if p == 12), None)
@@ -97,6 +105,8 @@ def main():
     host, port, out = sys.argv[1], int(sys.argv[2]), sys.argv[3]
     secs = float(sys.argv[4]) if len(sys.argv) > 4 else 12
     info = b.ping_server(host, port)
+    if info and os.environ.get("PN_PROTOCOL"):   # speak an older protocol to a server that supports several (testing)
+        info = dict(info, protocol=int(os.environ["PN_PROTOCOL"]), version=os.environ.get("PN_VERSION", info["version"]))
     if info:
         print("server:", info["version"], "protocol", info["protocol"])
     c = b.BedrockClient(host, port, **({"protocol": info["protocol"], "game_version": info["version"]} if info else {}))
@@ -122,9 +132,9 @@ def main():
                 c.start_encryption(pl[i:i + ln].decode())
                 c.send_packets([(4, b"")])
             elif pid == 6:
-                c.send_packets([(8, b.varuint(2) + _s("downloadingfinished"))])
+                c.send_packets([(8, pack_response(c.protocol, 2, "downloadingfinished"))])
             elif pid == 7:
-                c.send_packets([(8, b.varuint(3) + _s("resourcepackstackfinished"))])
+                c.send_packets([(8, pack_response(c.protocol, 3, "resourcepackstackfinished"))])
             elif pid == 11:
                 _, i = b.read_varuint(pl)          # unique entity id (zigzag varint64)
                 runtime_id, i = b.read_varuint(pl, i)
@@ -153,9 +163,9 @@ def main():
                     o.start_encryption(pl[i:i + ln].decode())
                     o.send_packets([(4, b"")])
                 elif pid == 6:
-                    o.send_packets([(8, b.varuint(2) + _s("downloadingfinished"))])
+                    o.send_packets([(8, pack_response(o.protocol, 2, "downloadingfinished"))])
                 elif pid == 7:
-                    o.send_packets([(8, b.varuint(3) + _s("resourcepackstackfinished"))])
+                    o.send_packets([(8, pack_response(o.protocol, 3, "resourcepackstackfinished"))])
                 elif pid == 11:
                     _, i = b.read_varuint(pl)
                     o_rt, i = b.read_varuint(pl, i)

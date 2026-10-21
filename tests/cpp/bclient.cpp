@@ -506,7 +506,7 @@ bool BedBot::step(int timeout_ms) {
             chunks++;
             Rd q(p.d);
             q.varuint(); q.varuint();
-            chunk_dims[int(q.varuint())]++;
+            chunk_dims[q.zz32()]++;   // the dimension is a signed varint
         } else if (p.id == 61) {
             dim_changes[r.zz32()]++;
             log.push_back(p);

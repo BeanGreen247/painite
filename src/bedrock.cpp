@@ -647,7 +647,11 @@ void Bedrock::after_handshake(BSession& b) {
 void Bedrock::on_pack_response(BSession& b, const uint8_t* p, size_t n) {
     const uint8_t* e = p + n;
     uint32_t st;
-    if (!read_varuint(p, e, st)) return;
+    if (b.proto < 2168) {   // until 2167: u8 status (1 refused, 2 send packs, 3 have all, 4 completed), u16 count, pack ids
+        if (p >= e) return;
+        st = *p++;
+        st = st == 0 ? 1 : st - 1;   // the same numbers as 2168+: 0 cancel, 1 downloading, 2 downloaded, 3 stack finished
+    } else if (!read_varuint(p, e, st)) return;
     if (st == 0) { rak_->close(*b.rak, true); return; }
     if (st == 2 && b.st == BSession::St::Packs) {
         b.st = BSession::St::Stack;
@@ -732,7 +736,7 @@ void Bedrock::pump_chunks(BSession& b) {
         std::vector<uint8_t> pl;
         put_varuint(pl, zz_enc(x));
         put_varuint(pl, zz_enc(z));
-        const auto& tail = level_chunk_tail(b.dim, x, z);
+        const auto& tail = level_chunk_tail(b.dim, x, z, b.proto < 2168);
         pl.insert(pl.end(), tail.begin(), tail.end());
         b.sent.insert(pack(x, z));
         batch.emplace_back(58, std::move(pl));
@@ -757,17 +761,23 @@ void Bedrock::finish_spawn(BSession& b) {
 
 void Bedrock::on_subchunk_request(BSession& b, const uint8_t* p, size_t n) {
     const uint8_t* e = p + n;
-    uint32_t dim, cnt;
-    if (!read_varuint(p, e, dim) || !read_varuint(p, e, cnt) || cnt > 8192 || static_cast<size_t>(e - p) < cnt * 3 + 12) return;
+    uint32_t dim_wire, cnt;
+    if (!read_varuint(p, e, dim_wire) || !read_varuint(p, e, cnt) || cnt > 8192 || static_cast<size_t>(e - p) < cnt * 3 + 12) return;
+    const uint32_t dim = (dim_wire >> 1) ^ (0u - (dim_wire & 1));   // the dimension is a signed varint
     const uint8_t* offs = p;
     p += cnt * 3;
     int32_t c[3];
     memcpy(c, p, 12);
     std::vector<uint8_t> pl;
     pl.push_back(0);                      // cache disabled
-    put_varuint(pl, dim);
-    pl.insert(pl.end(), p, p + 12);
-    put_varuint(pl, cnt);
+    put_varuint(pl, dim_wire);
+    if (b.proto >= 2168) {
+        pl.insert(pl.end(), p, p + 12);   // the centre as three little endian ints
+        put_varuint(pl, cnt);
+    } else {                              // until 2167: three zigzag varints and a little endian count
+        for (int i = 0; i < 3; i++) put_varuint(pl, zz_enc(c[i]));
+        for (int i = 0; i < 4; i++) pl.push_back(static_cast<uint8_t>(cnt >> (8 * i)));
+    }
     std::vector<uint8_t> entry;
     for (uint32_t i = 0; i < cnt; i++) {
         const uint8_t* o = offs + i * 3;

@@ -9,7 +9,8 @@ namespace pn {
 void bedrock_set_biomes(const std::vector<std::string>& java_names, const std::string& biome_file);
 
 // Tail of a LevelChunk packet after the x and z varints (dimension, sub chunk request mode, biomes).
-void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim = 0);
+// legacy: the layout before protocol 2168 (a -2 sub chunk marker with a 16 bit limit, no blob id list).
+void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim = 0, bool legacy = false);
 // SubChunk entry (after the 3 offset bytes) for world section index 0..23.
 // bedrock_protocol selects the block palette of the client's version.
 void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, int bedrock_protocol);

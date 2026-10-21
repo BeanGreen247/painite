@@ -5,12 +5,12 @@ Source of Bedrock's block list: Geyser's block_palette (MIT, https://github.com/
 Bedrock Dedicated Server. Java states come from data/vanilla-<ver>.blocks. The translation is rule based (name changes, then
 property conversions, then the closest Bedrock state); anything left over falls back to the block's default state.
 
-usage: tools/fetch_bedrock_blocks.py [--blocks data/vanilla-26.3.blocks] [--out data] [--palette 26_50] [--protocol 2193]
+usage: tools/fetch_bedrock_blocks.py [--blocks data/vanilla-26.3.blocks] [--out data] [--palette 26_50] [--ref master] [--protocol 2193]
 writes data/blocks-bedrock-<protocol>.bin (u32 magic 'PNBB', u32 count, count x i32 runtime id by Java state id) and data/biomes-bedrock.txt
 """
 import argparse, gzip, json, os, struct, sys, urllib.request
 
-PAL = "https://raw.githubusercontent.com/GeyserMC/Geyser/master/core/src/main/resources/bedrock/block_palette.{}.nbt"
+PAL = "https://raw.githubusercontent.com/GeyserMC/Geyser/{}/core/src/main/resources/bedrock/block_palette.{}.nbt"
 BIO = "https://raw.githubusercontent.com/GeyserMC/mappings/master/biomes.json"
 
 
@@ -217,6 +217,7 @@ def main():
     ap.add_argument("--blocks", help="Java block state list (default: the newest data/vanilla-*.blocks)")
     ap.add_argument("--out", default="data")
     ap.add_argument("--palette", default="26_50")
+    ap.add_argument("--ref", default="master", help="Geyser branch or commit to take the palette from (old palettes only exist in its history)")
     ap.add_argument("--protocol", type=int, default=2193, help="Bedrock protocol number of the version the palette belongs to (names the output file)")
     a = ap.parse_args()
     if not a.blocks:
@@ -229,7 +230,7 @@ def main():
         if not best:
             sys.exit("no data/vanilla-*.ids found; run tools/fetch_vanilla_data.py first")
         a.blocks = best[1]
-    raw = gzip.decompress(get(PAL.format(a.palette)))
+    raw = gzip.decompress(get(PAL.format(a.ref, a.palette)))
     root, _ = nbt_read(raw, 3, raw[0])
     pal = {}
     for e in root["blocks"]:

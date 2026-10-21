@@ -109,7 +109,7 @@ private:
     std::vector<uint8_t> player_list_entry(const BedrockData& data, const GIdentity& id, bool add) const;
     void send_time_to(BSession& b, int64_t day_time);
     void send_game_mode(BSession& b, int mode);
-    const std::vector<uint8_t>& level_chunk_tail(int dim, int x, int z);
+    const std::vector<uint8_t>& level_chunk_tail(int dim, int x, int z, bool legacy);
     void change_dimension(BSession& b, const GPos& p);
     std::unordered_map<uint64_t, BSession*> by_id_;
     struct CachedTail { uint32_t ver = 0; std::vector<uint8_t> tail; };

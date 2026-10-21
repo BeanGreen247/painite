@@ -61,7 +61,7 @@ static void put_storage(std::vector<uint8_t>& o, const std::vector<int32_t>& val
     (void)zigzag_palette_entries;
 }
 
-void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim) {
+void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim, bool legacy) {
     std::lock_guard<std::mutex> l(c.mu);
     // Bedrock's Nether is 128 blocks high (8 sub chunks), the End 256 (16); sub chunk numbers count from the dimension's lowest one
     const int smin = dim == 0 ? 0 : 4, smax = dim == 0 ? kSections : dim == 1 ? 12 : 20;
@@ -87,14 +87,52 @@ void encode_bedrock_levelchunk(Chunk& c, std::vector<uint8_t>& tail, int dim) {
     }
     biomes.push_back(0);   // border blocks
     tail.clear();
-    tail.push_back(static_cast<uint8_t>(dim));   // dimension
-    tail.push_back(0);                 // sub chunk count (limited request mode)
-    tail.push_back(1);                 // highest sub chunk present
-    put_zz(tail, highest);
-    tail.push_back(0);                 // cache disabled
-    tail.push_back(0);                 // no blob hashes
+    put_zz(tail, dim);                 // dimension (a signed varint)
+    if (legacy) {
+        put_varuint(tail, 0xFFFFFFFEu);    // sub chunks are requested (-2), with a limit
+        tail.push_back(static_cast<uint8_t>(highest));
+        tail.push_back(static_cast<uint8_t>(highest >> 8));
+        tail.push_back(0);                 // cache disabled
+    } else {
+        tail.push_back(0);                 // sub chunk count (limited request mode)
+        tail.push_back(1);                 // highest sub chunk present
+        put_zz(tail, highest);
+        tail.push_back(0);                 // cache disabled
+        tail.push_back(0);                 // no blob hashes
+    }
     put_varuint(tail, static_cast<uint32_t>(biomes.size()));
     tail.insert(tail.end(), biomes.begin(), biomes.end());
+}
+
+// One SubChunk entry (after the three offset bytes) in the layout of the client's protocol:
+//   2193+:  result, optional data, height map (type, optional 16 byte pieces), render height map, optional blob id
+//   2168:   the same with the height map as one run of 256 bytes
+//   before: result, data (always, the cache is off), height map type and 256 bytes when it holds data, render type likewise
+// (CloudburstMC/Protocol SubChunkSerializer_v818 / v2168 / v2193)
+static void put_subchunk_entry(std::vector<uint8_t>& out, int proto, int result, const std::vector<uint8_t>* data, int hm_type, const int* hm, int render_type) {
+    out.clear();
+    out.push_back(static_cast<uint8_t>(result));
+    if (proto >= 2168) {
+        if (data) { out.push_back(1); put_varuint(out, static_cast<uint32_t>(data->size())); out.insert(out.end(), data->begin(), data->end()); }
+        else out.push_back(0);
+        out.push_back(static_cast<uint8_t>(hm_type));
+        if (hm) {
+            out.push_back(1);
+            for (int z = 0; z < 16; z++) {
+                if (proto >= 2193) out.push_back(16);
+                for (int x = 0; x < 16; x++) out.push_back(static_cast<uint8_t>(hm[z * 16 + x]));
+            }
+        } else out.push_back(0);
+        out.push_back(static_cast<uint8_t>(render_type));
+        out.push_back(0);   // no render height map data
+        out.push_back(0);   // no blob id
+        return;
+    }
+    put_varuint(out, data ? static_cast<uint32_t>(data->size()) : 0);
+    if (data) out.insert(out.end(), data->begin(), data->end());
+    out.push_back(static_cast<uint8_t>(hm_type));
+    if (hm) for (int i = 0; i < 256; i++) out.push_back(static_cast<uint8_t>(hm[i]));
+    out.push_back(static_cast<uint8_t>(render_type));
 }
 
 void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, int proto) {
@@ -104,7 +142,7 @@ void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, i
     const Section* sec = (section >= 0 && section < kSections) ? c.sec[section].get() : nullptr;
     bool any = false;
     if (sec) for (int i = 0; i < 4096; i++) if (sec->b[i]) { any = true; break; }
-    if (!any) { out = {6, 0, 3, 0, 3, 0, 0}; return; }   // success, all air
+    if (!any) { put_subchunk_entry(out, proto, 6, nullptr, 3, nullptr, 3); return; }   // success, all air; height map "too low"
     std::vector<int32_t> l0(4096), l1(4096);
     int32_t air = B.bedrock_id(proto, 0);
     bool water_layer = false;
@@ -123,10 +161,6 @@ void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, i
     payload.push_back(static_cast<uint8_t>(static_cast<int8_t>(section - 4)));
     put_storage(payload, l0, true);
     if (water_layer) put_storage(payload, l1, true);
-    out.push_back(1);
-    out.push_back(1);
-    put_varuint(out, static_cast<uint32_t>(payload.size()));
-    out.insert(out.end(), payload.begin(), payload.end());
     // heightmap: per column the number of blocks up to the highest non-air one inside this section
     int vals[256];
     bool all_hi = true, all_lo = true;
@@ -142,17 +176,9 @@ void encode_bedrock_subchunk(Chunk& c, int section, std::vector<uint8_t>& out, i
         if (!above) all_hi = false;
         if (vals[z * 16 + x] != 0) all_lo = false;
     }
-    if (all_hi) { out.insert(out.end(), {2, 0, 2, 0, 0}); return; }
-    if (all_lo) { out.insert(out.end(), {3, 0, 3, 0, 0}); return; }
-    out.push_back(1);
-    out.push_back(1);
-    for (int z = 0; z < 16; z++) {
-        out.push_back(16);
-        for (int x = 0; x < 16; x++) out.push_back(static_cast<uint8_t>(vals[z * 16 + x]));
-    }
-    out.push_back(4);   // render heightmap: copied
-    out.push_back(0);
-    out.push_back(0);
+    if (all_hi) put_subchunk_entry(out, proto, 1, &payload, 2, nullptr, 2);
+    else if (all_lo) put_subchunk_entry(out, proto, 1, &payload, 3, nullptr, 3);
+    else put_subchunk_entry(out, proto, 1, &payload, 1, vals, 4);   // render height map: copied
 }
 
 }  // namespace pn
