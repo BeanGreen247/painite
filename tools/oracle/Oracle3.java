@@ -8,6 +8,7 @@
 //   noisevol NAME X Y Z SX SY SZ XZSCALE YSCALE AMPLITUDE   Noise.addToVolume into a zeroed buffer, printed as bits
 //   fill CX CZ                     doFill of one chunk (density, aquifer, default block) as run lengths of block names, z then x outermost, y from the top; '*' marks a scheduled fluid update
 //   aq NAME X Y Z                  an aquifer function (barrier floodedness spread lava exclusion surface_level) at one block, through the caching samplers of a noise chunk covering it
+//   features                       the decoration steps of the overworld: the placed features in the order FeatureSorter gives them, one line per step
 //   climate X Y Z                  the six quantised climate values at a block (quart cell) and the biome
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -153,6 +154,20 @@ public class Oracle3 {
                     };
                     float v = state.sampleBlockValueUncached(f, x, y, z);
                     System.out.println(String.format("aq %s %d %d %d = %08x %s", t[1], x, y, z, Float.floatToRawIntBits(v), v));
+                }
+                case "features" -> {
+                    var biomeLookup = provider.lookupOrThrow(Registries.BIOME);
+                    var plist = provider.lookupOrThrow(Registries.MULTI_NOISE_BIOME_SOURCE_PARAMETER_LIST).getOrThrow(net.minecraft.world.level.biome.MultiNoiseBiomeSourceParameterLists.OVERWORLD);
+                    var source = net.minecraft.world.level.biome.MultiNoiseBiomeSource.createFromPreset(plist);
+                    var steps = net.minecraft.world.level.biome.FeatureSorter.buildFeaturesPerStep(java.util.List.copyOf(source.possibleBiomes()), b -> b.value().getGenerationSettings().features(), true);
+                    var placed = provider.lookupOrThrow(Registries.PLACED_FEATURE);
+                    java.util.Map<Object, String> names = new java.util.IdentityHashMap<>();
+                    placed.listElements().forEach(h -> names.put(h.value(), h.key().identifier().getPath()));
+                    for (int st = 0; st < steps.size(); st++) {
+                        StringBuilder sb = new StringBuilder("features " + st);
+                        for (var f : steps.get(st).features()) sb.append(' ').append(names.get(f));
+                        System.out.println(sb);
+                    }
                 }
                 default -> System.out.println("? " + line);
             }

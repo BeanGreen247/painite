@@ -12,8 +12,13 @@ struct BiomeInfo {
     bool has_precipitation = true;
 };
 
+namespace v3 { float biome_temperature_raw(float base, bool frozen, int x, int y, int z, int sea_level); }
+// 26.3 replaced the biome noises (float simplex stacks): set by the generator of that version
+inline bool& biome_noises_v263() { static bool on = false; return on; }
+
 // Biome.getHeightAdjustedTemperature
 inline float biome_temperature(const BiomeInfo& b, int x, int y, int z, int sea_level) {
+    if (biome_noises_v263()) return v3::biome_temperature_raw(b.temperature, b.frozen, x, y, z, sea_level);
     float t = b.temperature;
     if (b.frozen) {
         double large = biome_frozen_noise().get_value(x * 0.05, z * 0.05, false) * 7.0;

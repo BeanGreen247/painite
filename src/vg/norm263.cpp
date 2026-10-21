@@ -41,7 +41,7 @@ Json simple_provider(const Json& state) {
 const std::set<std::string>& provider_keys() {
     static const std::set<std::string> k = {"trunk_provider", "foliage_provider", "below_trunk_provider", "state_provider", "provider", "to_place", "block_provider", "above_root_provider",
         "muddy_roots_provider", "root_provider", "cap_provider", "stem_provider", "hanging_root_state_provider", "root_state_provider", "alternate_inner_layer_provider", "filling_provider",
-        "inner_layer_provider", "middle_layer_provider", "outer_layer_provider", "dirt_provider", "base_state_provider", "ground_provider", "block_state_provider", "barrier", "fluid", "ground_state", "fallback", "then"};
+        "inner_layer_provider", "middle_layer_provider", "outer_layer_provider", "dirt_provider", "base_state_provider", "ground_provider", "block_state_provider", "barrier", "fluid", "ground_state", "then"};
     return k;
 }
 
@@ -103,7 +103,13 @@ void Norm::provider(Json& j) {
             // nested providers (rule_based "then", randomized_int "source", ...) are providers; other uses of these keys are states
             if (is_state(kv.second) || kv.second.is_str() || (kv.second.is_obj() && kv.second.has("type"))) provider(kv.second);
             else generic(kv.second);
-        } else generic(kv.second);
+        } else {
+            if (state_keys().count(kv.first)) {
+                if (kv.second.is_str() && kv.second.str.rfind("minecraft:", 0) == 0) { kv.second = name_state(kv.second.str); continue; }
+                if (kv.second.is_arr()) for (auto& e : kv.second.arr) if (e.is_str() && e.str.rfind("minecraft:", 0) == 0) e = name_state(e.str);
+            }
+            generic(kv.second);
+        }
     }
 }
 
@@ -126,6 +132,7 @@ void Norm::generic(Json& j) {
     if (!j.is_obj()) return;
     if (is_state(j)) { j = to_state(j); return; }
     for (auto& kv : j.obj) {
+        if (kv.first == "pool_aliases") continue;   // alias targets are pool ids, not block states
         if (state_keys().count(kv.first)) {
             if (kv.second.is_str() && kv.second.str.rfind("minecraft:", 0) == 0) { kv.second = name_state(kv.second.str); continue; }
             if (kv.second.is_arr()) for (auto& e : kv.second.arr) if (e.is_str() && e.str.rfind("minecraft:", 0) == 0) e = name_state(e.str);

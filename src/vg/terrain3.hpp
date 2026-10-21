@@ -16,8 +16,12 @@ struct BiomeData3 {
     bool frozen = false;         // temperature_modifier: frozen
 };
 
+// Biome.BIOME_INFO_NOISE.get(x, z) of 26.3 (placement modifiers that scale the feature counts)
+float biome_info_noise3(double x, double z);
+
 // Biome.getHeightAdjustedTemperature with the 26.3 noises
 float biome_temperature3(const BiomeData3& b, int x, int y, int z, int sea_level);
+float biome_temperature_raw(float base, bool frozen, int x, int y, int z, int sea_level);
 
 struct TerrainSettings {
     int min_y = -64, height = 384, sea_level = 63;   // the noise range after clamping to the dimension

@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include "noise3.hpp"
 
 namespace pn::vg {
 
@@ -19,6 +20,9 @@ struct FeatureShared {
     std::map<const Json*, std::unique_ptr<NormalNoise>> noises;
     std::map<const Json*, std::unique_ptr<NormalNoise>> slow_noises;
     const NormalNoise& noise_of(const Json* key, const Json& provider, bool slow = false);
+    // 26.3: the same providers use the float noise stacks
+    std::map<const Json*, std::shared_ptr<v3::NoiseStack>> noises3, slow_noises3;
+    const v3::NoiseStack& noise3_of(const Json* key, const Json& provider, bool slow = false);
     std::unique_ptr<NormalNoise> geode_noise;   // NormalNoise.create(WorldgenRandom(LegacyRandomSource(seed)), -4, 1.0)
 };
 

@@ -49,10 +49,14 @@ const BiomeNoises& biome_noises() { static BiomeNoises n; return n; }
 
 }  // namespace
 
-float biome_temperature3(const BiomeData3& b, int x, int y, int z, int sea_level) {
+float biome_info_noise3(double x, double z) { return biome_noises().info->get(x, z); }
+
+float biome_temperature3(const BiomeData3& b, int x, int y, int z, int sea_level) { return biome_temperature_raw(b.temperature, b.frozen, x, y, z, sea_level); }
+
+float biome_temperature_raw(float base, bool frozen, int x, int y, int z, int sea_level) {
     const BiomeNoises& N = biome_noises();
-    float t = b.temperature;
-    if (b.frozen) {
+    float t = base;
+    if (frozen) {
         double large = double(N.frozen->get(double(x) * 0.05, double(z) * 0.05) * 7.0f);
         double edge = double(N.info->get(double(x) * 0.2, double(z) * 0.2));
         if (large + edge < 0.3 && double(N.info->get(double(x) * 0.09, double(z) * 0.09)) < 0.8) t = 0.2f;

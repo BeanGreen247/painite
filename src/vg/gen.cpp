@@ -186,6 +186,7 @@ struct VanillaGen::Impl {
             bi.has_precipitation = bj.get_bool("has_precipitation", true);
             biome_infos.push_back(bi);
         }
+        biome_noises_v263() = true;
         t3 = std::make_unique<v3::Terrain3>(reg, *bd, o.seed, sname, std::move(bio), dim_min_y, dim_height);
         const v3::TerrainSettings& ts = t3->settings();
         ns.min_y = ts.min_y; ns.height = ts.height; ns.sea_level = ts.sea_level;

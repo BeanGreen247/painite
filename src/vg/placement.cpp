@@ -1,4 +1,5 @@
 #include "feature.hpp"
+#include "terrain3.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -53,6 +54,22 @@ const NormalNoise& FeatureShared::noise_of(const Json* key, const Json& provider
     for (auto& a : params.at("amplitudes").arr) np.amplitudes.push_back(a.number());
     LegacyRandom r(provider.at("seed").int_value());
     return *(table[key] = std::make_unique<NormalNoise>(r, np));
+}
+
+const v3::NoiseStack& FeatureShared::noise3_of(const Json* key, const Json& provider, bool slow) {
+    std::lock_guard<std::mutex> l(mu);
+    auto& table = slow ? slow_noises3 : noises3;
+    auto it = table.find(key);
+    if (it != table.end()) return *it->second;
+    const Json& j = provider.at(slow ? "slow_noise" : "noise");
+    v3::NoiseParams np;
+    np.base_amplitude = j.has("base_amplitude") ? j.at("base_amplitude").number() : 1.0;
+    np.base_octave = int(j.at("base_octave").int_value());
+    np.octave_count = int(j.get_int("octave_count", 1));
+    if (const Json* n = j.find("normalize")) np.normalize = n->is_bool() ? (n->b ? v3::NoiseParams::ENABLED : v3::NoiseParams::DISABLED) : v3::NoiseParams::LEGACY;
+    if (const Json* a = j.find("amplitude_modifiers")) for (auto& e : a->arr) np.amplitude_modifiers.push_back(e.number());
+    LegacyRandom r(provider.at("seed").int_value());
+    return *(table[key] = v3::create_normal_noise(np, r));
 }
 
 const Json& resolve_ref(FeatureEnv& env, const char* kind, const Json& ref) {
@@ -172,6 +189,35 @@ uint16_t provide_state(FeatureEnv& env, const Json& p, Rng& random, const BlockP
         int axis = random.next_int(3);
         return bd.with(bd.state(p.at("state")), "axis", axes[axis]);
     }
+    if (env.v263 && (t == "noise_provider" || t == "noise_threshold_provider" || t == "dual_noise_provider")) {
+        const v3::NoiseStack& noise = env.shared.noise3_of(&p, p);
+        double scale = double(p.at("scale").float_value());
+        auto value = [&](const v3::NoiseStack& n, int x, int y, int z, double sc) { return n.get(double(x) * sc, double(y) * sc, double(z) * sc); };
+        auto pick_state = [&](const std::vector<uint16_t>& states, float noise_value) {
+            float placement = v3::mth_clamp((1.0f + noise_value) / 2.0f, 0.0f, 0.9999f);
+            return states[size_t(int(placement * float(states.size())))];
+        };
+        if (t == "noise_threshold_provider") {
+            double local = double(value(noise, pos.x, pos.y, pos.z, scale));
+            auto pick = [&](const Json& list) { return bd.state(list.arr[size_t(random.next_int(int(list.arr.size())))]); };
+            if (local < double(p.at("threshold").float_value())) return pick(p.at("low_states"));
+            float c = random.next_float();
+            return c < p.at("high_chance").float_value() ? pick(p.at("high_states")) : bd.state(p.at("default_state"));
+        }
+        std::vector<uint16_t> states;
+        for (auto& s : p.at("states").arr) states.push_back(bd.state(s));
+        if (t == "noise_provider") return pick_state(states, value(noise, pos.x, pos.y, pos.z, scale));
+        const v3::NoiseStack& slow = env.shared.noise3_of(&p, p, true);
+        float slow_scale = p.at("slow_scale").float_value();
+        auto slow_value = [&](int x, int y, int z) { return slow.get(double(float(x) * slow_scale), double(float(y) * slow_scale), double(float(z) * slow_scale)); };
+        const Json& var = p.at("variety");
+        double variety_noise = double(slow_value(pos.x, pos.y, pos.z));
+        int lo = int(var.at("min_inclusive").int_value()), hi = int(var.at("max_inclusive").int_value());
+        int local_variety = int(clamped_map(variety_noise, -1.0, 1.0, double(lo), double(hi + 1)));
+        std::vector<uint16_t> possible;
+        for (int i = 0; i < local_variety; i++) possible.push_back(pick_state(states, slow_value(pos.x + i * 54545, pos.y, pos.z + i * 34234)));
+        return pick_state(possible, value(noise, pos.x, pos.y, pos.z, scale));
+    }
     if (t == "noise_provider" || t == "noise_threshold_provider" || t == "dual_noise_provider") {
         const NormalNoise& noise = env.shared.noise_of(&p, p);
         double scale = double(p.at("scale").float_value());
@@ -263,11 +309,12 @@ struct PlaceRun {
             int64_t lo = surface + m.get_int("min_inclusive", INT32_MIN), hi = surface + m.get_int("max_inclusive", INT32_MAX);
             if (lo <= pos.y && pos.y <= hi) run(i + 1, pos);
         } else if (t == "noise_based_count") {
-            double v = biome_info_noise().get_value(double(pos.x) / m.at("noise_factor").number(), double(pos.z) / m.at("noise_factor").number(), false);
+            double v = env.v263 ? double(v3::biome_info_noise3(double(pos.x) / m.at("noise_factor").number(), double(pos.z) / m.at("noise_factor").number()))
+                                : biome_info_noise().get_value(double(pos.x) / m.at("noise_factor").number(), double(pos.z) / m.at("noise_factor").number(), false);
             int n = int(std::ceil((v + m.get_number("noise_offset", 0.0)) * double(m.at("noise_to_count_ratio").int_value())));
             for (int k = 0; k < n; k++) run(i + 1, pos);
         } else if (t == "noise_threshold_count") {
-            double v = biome_info_noise().get_value(double(pos.x) / 200.0, double(pos.z) / 200.0, false);
+            double v = env.v263 ? double(v3::biome_info_noise3(double(pos.x) / 200.0, double(pos.z) / 200.0)) : biome_info_noise().get_value(double(pos.x) / 200.0, double(pos.z) / 200.0, false);
             int n = v < m.at("noise_level").number() ? int(m.at("below_noise").int_value()) : int(m.at("above_noise").int_value());
             for (int k = 0; k < n; k++) run(i + 1, pos);
         } else if (t == "count_on_every_layer") {
