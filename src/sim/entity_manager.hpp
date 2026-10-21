@@ -13,11 +13,13 @@ class BlockCollisionShapes {
 public:
     static BlockCollisionShapes& get();
     bool load(const std::string& states_path, const std::string& shapes_path, std::string& err);
-    const std::vector<AABB>& boxes(uint16_t state) const;
-    bool is_full_block(uint16_t state) const;
+    const std::vector<AABB>& boxes(uint16_t state) const { return state < flat_.size() && flat_[state] ? *flat_[state] : empty_; }
+    bool is_full_block(uint16_t state) const { return state < flat_full_.size() && flat_full_[state]; }
 
 private:
     std::unordered_map<uint16_t, int> state_shapes_;
+    std::vector<const std::vector<AABB>*> flat_;   // by state id: the boxes, null for no collision (the hot path of every entity move)
+    std::vector<uint8_t> flat_full_;
     std::unordered_map<int, std::vector<AABB>> shapes_;
     static const std::vector<AABB> empty_;
 };

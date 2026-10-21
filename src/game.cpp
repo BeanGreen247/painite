@@ -853,6 +853,9 @@ void Game::tick() {
                         queue_event(viewer->second.id, std::move(event));
                     }
                 entity.pending_events.clear();
+                uint64_t sig = entity.data_signature();
+                if (sig == track.data_sig) continue;   // nothing to say about this entity's data this tick
+                track.data_sig = sig;
                 std::vector<sim::Entity::DataItem> data;
                 entity.collect_data(data);
                 bool changed = data.size() != track.data.size();

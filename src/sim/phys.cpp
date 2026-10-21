@@ -52,7 +52,9 @@ static void collect(const CollisionSource& w, const AABB& area, std::vector<AABB
 
 // Entity.collide
 Vec3 entity_collide(const CollisionSource& world, const AABB& aabb, const Vec3& movement, bool on_ground, float max_up_step) {
-    std::vector<AABB> colliders;
+    thread_local std::vector<AABB> colliders, around;   // scratch space: this runs for every moving entity every tick, so it must not allocate
+    thread_local std::vector<float> candidates;
+    colliders.clear();
     collect(world, aabb.expand_towards(movement), colliders);
     Vec3 step = movement.length_sqr() == 0.0 ? movement : collide_with_shapes(movement, aabb, colliders);
     bool x_col = movement.x != step.x, y_col = movement.y != step.y, z_col = movement.z != step.z;
@@ -61,11 +63,11 @@ Vec3 entity_collide(const CollisionSource& world, const AABB& aabb, const Vec3& 
         AABB grounded = on_ground_after ? aabb.move(0.0, step.y, 0.0) : aabb;
         AABB step_up = grounded.expand_towards(movement.x, double(max_up_step), movement.z);
         if (!on_ground_after) step_up = step_up.expand_towards(0.0, -double(1.0E-5f), 0.0);
-        std::vector<AABB> around;
+        around.clear();
         collect(world, step_up, around);
         float skip = float(step.y);
         // collectCandidateStepUpHeights: the y coordinates of all collider faces above the box, within the step height
-        std::vector<float> candidates;
+        candidates.clear();
         for (const AABB& c : around) {
             for (double coord : {c.min_y, c.max_y}) {
                 float rel = float(coord - grounded.min_y);

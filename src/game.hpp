@@ -168,6 +168,7 @@ private:
         float yaw = 0, pitch = 0;
         bool on_ground = false;
         std::vector<sim::Entity::DataItem> data;
+        uint64_t data_sig = ~0ull;   // data_signature() of the entity when `data` was built
         std::unordered_set<uint64_t> viewers;
     };
     void loop();

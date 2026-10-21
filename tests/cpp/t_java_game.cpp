@@ -2,6 +2,8 @@
 #include "chunkparse.hpp"
 #include "harness.hpp"
 #include <array>
+#include <cstdio>
+#include <unistd.h>
 #include <cmath>
 #include <map>
 
@@ -214,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress"};
     return o;
 }
 
@@ -469,6 +471,52 @@ void ranged(Ctx& t, Env& e) {
     t.check(entity_types_seen(ids->entity_types.at("snowball")) >= 1, "using a snowball throws it");
 }
 
+// Opt-in (PAINITE_PERF=1): 150 zombies chase a survival player among 150 cows; prints the server's timers and memory
+std::string printable(const Bytes& b) { std::string o; for (uint8_t c : b) o += (c >= 32 && c < 127) ? char(c) : ' '; return o; }
+
+long rss_kb(const std::string& dir) {
+    for (int pid = 2; pid < 400000; pid++) {
+        char link[64], target[512];
+        snprintf(link, sizeof link, "/proc/%d/cwd", pid);
+        ssize_t n = readlink(link, target, sizeof target - 1);
+        if (n <= 0) continue;
+        target[n] = 0;
+        if (dir != target) continue;
+        snprintf(link, sizeof link, "/proc/%d/status", pid);
+        FILE* f = fopen(link, "r");
+        if (!f) continue;
+        char line[256];
+        long kb = -1;
+        while (fgets(line, sizeof line, f)) if (!strncmp(line, "VmRSS:", 6)) kb = atol(line + 6);
+        fclose(f);
+        return kb;
+    }
+    return -1;
+}
+
+void perf_mobs(Ctx& t, Env& e) {
+    if (!getenv("PAINITE_PERF")) return;
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Stress");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    int px = int(std::floor(B.pos[0])), py = int(std::floor(B.pos[1])), pz = int(std::floor(B.pos[2]));
+    long before = rss_kb(e.srv->dir);
+    for (int i = 0; i < 150; i++) {
+        double a = i * 0.0419;
+        B.command("summon zombie " + std::to_string(px + 0.5 + std::cos(a) * (12 + i % 20)) + " " + std::to_string(py) + " " + std::to_string(pz + 0.5 + std::sin(a) * (12 + i % 20)));
+        B.command("summon cow " + std::to_string(px + 0.5 - std::cos(a) * (14 + i % 20)) + " " + std::to_string(py) + " " + std::to_string(pz + 0.5 - std::sin(a) * (14 + i % 20)));
+        if (i % 10 == 0) B.pump(50);
+    }
+    B.pump(8000);
+    B.log.clear();
+    B.command("perf");
+    B.pump(500);
+    std::string rep;
+    for (auto& en : B.log) if (en.first == "system_chat") rep += printable(en.second) + "\n";
+    t.note("RSS before " + std::to_string(before) + " kB, after " + std::to_string(rss_kb(e.srv->dir)) + " kB\n" + rep);
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -500,6 +548,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
+    d.tests.push_back({"perf-mobs", perf_mobs});
     d.tests.push_back({"bow-and-snowball", ranged});
     d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));

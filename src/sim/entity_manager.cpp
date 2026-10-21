@@ -49,23 +49,35 @@ double EntityManager::fluid_height(const AABB& box, bool lava) const {
     const char* want = lava ? "minecraft:lava" : "minecraft:water";
     AABB b = box.deflate(0.001);
     int x0 = int(std::floor(b.min_x)), x1 = int(std::ceil(b.max_x)), y0 = int(std::floor(b.min_y)), y1 = int(std::ceil(b.max_y)), z0 = int(std::floor(b.min_z)), z1 = int(std::ceil(b.max_z));
-    auto amount = [&](const BlockInfo& bi) -> int {   // FluidState amount 0..8 of the wanted fluid in a block state
+    // the chunk of the last lookup is kept for the next one: a box almost always sits inside one or two chunks
+    std::shared_ptr<Chunk> last;
+    int lcx = INT32_MIN, lcz = INT32_MIN;
+    auto state_at = [&](int x, int y, int z) -> uint16_t {
+        int cx = x >> 4, cz = z >> 4;
+        if (cx != lcx || cz != lcz) { last = world_.chunk_if_loaded(cx, cz); lcx = cx; lcz = cz; }
+        if (!last) return 0;
+        std::lock_guard<std::mutex> lock(last->mu);
+        return last->get(x & 15, y, z & 15);
+    };
+    auto amount = [&](uint16_t state) -> int {   // FluidState amount 0..8 of the wanted fluid in a block state
+        if (!state) return 0;
+        const BlockInfo& bi = B.info(state);
+        if (bi.air) return 0;
         if (bi.name == want) {
             size_t p = bi.props.find("level=");
             int lvl = p == std::string::npos ? 0 : atoi(bi.props.c_str() + p + 6);
             return lvl == 0 || lvl >= 8 ? 8 : 8 - lvl;
         }
-        if (!lava && bi.props.find("waterlogged=true") != std::string::npos) return 8;
+        if (!lava && !bi.props.empty() && bi.props.find("waterlogged=true") != std::string::npos) return 8;
         return 0;
     };
     double result = 0.0;
     for (int y = y0; y < y1; ++y)
         for (int z = z0; z < z1; ++z)
             for (int x = x0; x < x1; ++x) {
-                if (!chunk_loaded(x, z)) continue;
-                int a = amount(B.info(block_at(x, y, z)));
+                int a = amount(state_at(x, y, z));
                 if (a == 0) continue;
-                double h = amount(B.info(block_at(x, y + 1, z))) > 0 ? 1.0 : a / 9.0;   // FlowingFluid.getHeight: full when the same fluid is above
+                double h = amount(state_at(x, y + 1, z)) > 0 ? 1.0 : a / 9.0;   // FlowingFluid.getHeight: full when the same fluid is above
                 double top = y + h;
                 if (top >= box.min_y) result = std::max(result, top - box.min_y);
             }
@@ -238,15 +250,22 @@ void EntityManager::block_collisions(const AABB& area, std::vector<AABB>& out) c
     const int max_x = static_cast<int>(std::ceil(area.max_x)) - 1;
     const int max_y = static_cast<int>(std::ceil(area.max_y)) - 1;
     const int max_z = static_cast<int>(std::ceil(area.max_z)) - 1;
-    for (int y = min_y; y <= max_y; ++y) {
-        for (int z = min_z; z <= max_z; ++z) {
-            for (int x = min_x; x <= max_x; ++x) {
-                uint16_t state = block_at(x, y, z);
-                for (const AABB& box : BlockCollisionShapes::get().boxes(state))
-                    out.push_back(box.move(x, y, z));
-            }
+    // one chunk lookup and one lock per chunk, not per block: this runs several times for every moving entity every tick
+    const BlockCollisionShapes& shapes = BlockCollisionShapes::get();
+    for (int cz = min_z >> 4; cz <= max_z >> 4; ++cz)
+        for (int cx = min_x >> 4; cx <= max_x >> 4; ++cx) {
+            auto chunk = world_.chunk_if_loaded(cx, cz);
+            if (!chunk) continue;   // unloaded chunks are air
+            std::lock_guard<std::mutex> lock(chunk->mu);
+            int x0 = std::max(min_x, cx << 4), x1 = std::min(max_x, (cx << 4) + 15), z0 = std::max(min_z, cz << 4), z1 = std::min(max_z, (cz << 4) + 15);
+            for (int y = min_y; y <= max_y; ++y)
+                for (int z = z0; z <= z1; ++z)
+                    for (int x = x0; x <= x1; ++x) {
+                        uint16_t state = chunk->get(x & 15, y, z & 15);
+                        if (!state) continue;
+                        for (const AABB& box : shapes.boxes(state)) out.push_back(box.move(x, y, z));
+                    }
         }
-    }
 }
 
 void EntityManager::entities_in_box(const AABB& box, const Entity* except, std::vector<Entity*>& out) {

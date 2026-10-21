@@ -56,20 +56,18 @@ bool BlockCollisionShapes::load(const std::string& states_path, const std::strin
     }
     shapes_ = std::move(loaded_shapes);
     state_shapes_ = std::move(loaded_states);
+    size_t top = 0;
+    for (auto& kv : state_shapes_) top = std::max<size_t>(top, kv.first);
+    flat_.assign(top + 1, nullptr);
+    flat_full_.assign(top + 1, 0);
+    for (auto& kv : state_shapes_) {
+        auto it = shapes_.find(kv.second);
+        if (it == shapes_.end() || it->second.empty()) continue;
+        flat_[kv.first] = &it->second;
+        const auto& sh = it->second;
+        flat_full_[kv.first] = sh.size() == 1 && sh[0].min_x == 0.0 && sh[0].min_y == 0.0 && sh[0].min_z == 0.0 && sh[0].max_x == 1.0 && sh[0].max_y == 1.0 && sh[0].max_z == 1.0;
+    }
     return true;
-}
-
-const std::vector<AABB>& BlockCollisionShapes::boxes(uint16_t state) const {
-    auto shape = state_shapes_.find(state);
-    if (shape == state_shapes_.end()) return empty_;
-    auto boxes = shapes_.find(shape->second);
-    return boxes == shapes_.end() ? empty_ : boxes->second;
-}
-
-bool BlockCollisionShapes::is_full_block(uint16_t state) const {
-    const auto& shape = boxes(state);
-    return shape.size() == 1 && shape[0].min_x == 0.0 && shape[0].min_y == 0.0 && shape[0].min_z == 0.0 &&
-           shape[0].max_x == 1.0 && shape[0].max_y == 1.0 && shape[0].max_z == 1.0;
 }
 
 }  // namespace pn::sim

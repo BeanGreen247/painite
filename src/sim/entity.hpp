@@ -26,7 +26,7 @@ public:
     virtual bool set_block_state(int x, int y, int z, uint16_t state) { return false; }   // tells the players who see it
     virtual int min_build_y() const { return -64; }
     virtual int max_build_y() const { return 320; }
-    virtual bool no_collision(const AABB& box) const { std::vector<AABB> v; block_collisions(box, v); return v.empty(); }
+    virtual bool no_collision(const AABB& box) const { thread_local std::vector<AABB> v; v.clear(); block_collisions(box, v); return v.empty(); }
     virtual void entities_in_box(const AABB& box, const Entity* except, std::vector<Entity*>& out) = 0;
     virtual Entity* add_entity(std::unique_ptr<Entity> e) = 0;
     // players, for mob AI and attacks
@@ -79,6 +79,7 @@ public:
     // entity data (SynchedEntityData) as the wire carries it: (index, serializer id, value bytes); filled by subclasses
     struct DataItem { int index; int serializer; std::vector<uint8_t> value; };
     virtual void collect_data(std::vector<DataItem>& out) const;
+    virtual uint64_t data_signature() const { return 0; }   // changes whenever collect_data would give something new; lets the game skip building the data of entities that did not change
     virtual int block_state_id() const { return -1; }   // the "data" of the add entity packet for entities that carry a block state (falling block)
 };
 
@@ -111,6 +112,7 @@ public:
     void set_pickup_delay(int t) { pickup_delay = t; }
     bool mergable() const { return !removed && pickup_delay != 32767 && age != -32768 && age < 6000 && item.count() < item.max_stack_size(); }
     void collect_data(std::vector<DataItem>& out) const override;
+    uint64_t data_signature() const override { return (uint64_t(item.count()) << 32) ^ uint64_t(item.is_empty() ? 0 : item.item()->index + 1) ^ (uint64_t(item.patch().added.size()) << 56); }
     static bool are_mergable(const ItemStack& a, const ItemStack& b);
 private:
     void merge_with_neighbours();

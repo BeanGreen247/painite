@@ -3,6 +3,7 @@
 #include "../blocks.hpp"
 #include "loot.hpp"
 #include "path.hpp"
+#include "../perf.hpp"
 #include <cstring>
 #include <cmath>
 
@@ -130,10 +131,12 @@ void LivingEntity::tick() {
         if (std::fabs(delta.y) < 0.003) delta = delta.with(1, 0.0);
         if (std::fabs(delta.z) < 0.003) delta = delta.with(2, 0.0);
         if (jumping && on_ground) { delta = delta.with(1, double(jump_power)); on_ground = false; }
-        ai_step();
+        { PN_PERF("mob.ai"); ai_step(); }
     }
     Vec3 before = pos;
-    travel();
+    // a mob standing still on the ground only needs its footing checked now and then
+    bool idle = on_ground && !jumping && xxa == 0.0 && zza == 0.0 && delta.length_sqr() < 1.0E-6 && fire_ticks == 0 && !dead;
+    if (!idle || (tick_count + id) % 5 == 0) { PN_PERF("mob.travel"); travel(); }
     if (dead) return;
     // fall damage: the distance fallen since the last time on the ground (or in water)
     if (on_ground) {
@@ -171,10 +174,11 @@ void Mob::follow_goal() {
     if (hd2 > 6.25 || std::fabs(gdy) > 1.5) {   // further than 2.5 blocks (or on another level): plan a way around what is in between
         double moved = (Vec3(goal_x, goal_y, goal_z) - path_goal).length();
         if (path.empty() || path_i >= path.size() || --repath <= 0 || moved > 1.5) {
+            PN_PERF("mob.pathfind");
             path = find_path(*level, pos, Vec3(goal_x, goal_y, goal_z), width, height);
             path_goal = Vec3(goal_x, goal_y, goal_z);
             path_i = 0;
-            repath = 20 + (id % 10);
+            repath = int(std::min(100.0, 12.0 + std::sqrt(hd2) * 2.0)) + (id % 10);   // far targets are worth re-planning less often
         }
         while (path_i < path.size() && (path[path_i].x - pos.x) * (path[path_i].x - pos.x) + (path[path_i].z - pos.z) * (path[path_i].z - pos.z) < 0.16 && std::fabs(path[path_i].y - pos.y) < 1.2) ++path_i;
         if (path_i < path.size()) { tx = path[path_i].x; ty = path[path_i].y; tz = path[path_i].z; }

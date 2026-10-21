@@ -34,7 +34,8 @@ struct Search {
         if (it != stand_cache.end()) return it->second;
         bool ok = clear(x, y, z);
         if (ok) {
-            std::vector<AABB> below;
+            thread_local std::vector<AABB> below;
+            below.clear();
             w.block_collisions(AABB(x + 0.5 - 0.1, y - 0.3, z + 0.5 - 0.1, x + 0.5 + 0.1, y - 0.0001, z + 0.5 + 0.1), below);
             ok = !below.empty();
         }
@@ -57,7 +58,7 @@ std::vector<Vec3> find_path(EntityWorld& world, const Vec3& from, const Vec3& to
     nodes.push_back({sx, sy, sz, 0.0f, -1});
     std::unordered_map<uint64_t, float> best_g;
     best_g[Search::key(sx, sy, sz)] = 0.0f;
-    auto heuristic = [&](int x, int y, int z) { double dx = x - gx, dy = y - gy, dz = z - gz; return float(std::sqrt(dx * dx + dy * dy * 0.5 + dz * dz)); };
+    auto heuristic = [&](int x, int y, int z) { double dx = x - gx, dy = y - gy, dz = z - gz; return 1.5f * float(std::sqrt(dx * dx + dy * dy * 0.5 + dz * dz)); };   // weighted: slightly longer paths, far fewer cells looked at
     using Item = std::pair<float, int>;   // f, node index
     std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
     open.push({heuristic(sx, sy, sz), 0});

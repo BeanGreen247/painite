@@ -1,6 +1,7 @@
 // Living entities and mobs (LivingEntity, Mob and a few goals): health, damage, knockback, walking physics, wandering animals and melee monsters.
 #pragma once
 #include "entity.hpp"
+#include <cstring>
 
 namespace pn::sim {
 
@@ -25,6 +26,7 @@ public:
     double default_gravity() const override { return 0.08; }
     void tick() override;
     void collect_data(std::vector<DataItem>& out) const override;
+    uint64_t data_signature() const override { uint32_t h; float v = health; memcpy(&h, &v, 4); return uint64_t(h) | (uint64_t(fire_ticks > 0) << 32); }
     // LivingEntity.hurt: returns false when the hit was ignored. `from` is where the hit came from (knockback pushes away from it).
     bool hurt(float amount, const Vec3* from, uint64_t attacker_gid = 0, bool by_player = false);
     void knockback(double strength, double dx, double dz);
