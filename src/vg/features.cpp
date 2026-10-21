@@ -234,7 +234,11 @@ bool place_simple_block(FeatureEnv& env, const Json& config, Rng& random, const 
     if (!state_can_survive(env, st, origin)) return false;
     const auto& cls = bd.classes(st);
     if (std::find(cls.begin(), cls.end(), "DoublePlantBlock") != cls.end()) {
-        if (!bd.air(lv.get(origin.above()))) return false;
+        if (env.v263) {
+            uint16_t above = lv.get(origin.above());
+            bool same_fluid = bd.water(st) == bd.water(above) && bd.lava(st) == bd.lava(above);
+            if (!bd.air(above) && (!same_fluid || !bd.replaceable(above))) return false;
+        } else if (!bd.air(lv.get(origin.above()))) return false;
         // DoublePlantBlock.placeAt: lower half (waterlogged when the spot holds water) and upper half
         uint16_t lower = bd.with(st, "half", "lower"), upper = bd.with(st, "half", "upper");
         lv.set(origin, lower);

@@ -522,6 +522,7 @@ struct VanillaGen::Impl {
         env.biomes = &biome_infos;
         env.templates = feature_templates.get();
         env.pre_262 = opt.version == "26.1";
+        env.v263 = is3;
         env.sea_level = ns.sea_level;
         env.seed = opt.seed;
         std::vector<std::shared_ptr<const StructureStart>> touching;

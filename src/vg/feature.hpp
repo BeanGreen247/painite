@@ -30,6 +30,7 @@ struct FeatureEnv {
     std::function<bool(int biome, const std::string& placed_feature)> biome_has_feature;
     const std::vector<BiomeInfo>* biomes = nullptr;   // by biome value
     int sea_level = 63;
+    bool v263 = false;   // 26.3 behaviour of features that changed
     bool pre_262 = false;   // 26.1: a few features behave as they did before 26.2 (see the version notes in docs/VERSIONS.md)
     int64_t seed = 0;    // the world seed
     const BlockData& bd() const { return level.bd(); }

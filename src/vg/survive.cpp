@@ -80,6 +80,11 @@ bool state_can_survive(FeatureEnv& env, uint16_t state, const BlockPos& pos) {
         for (int d = 0; d < 6; d++) if (bd.flags(lv.get(pos + Dir(d))) & BF_IGNITED_BY_LAVA) return true;   // burnable neighbours (flammable blocks)
         return false;
     }
+    if (c0 == "SmallDripleafBlock") {
+        if (bd.prop(state, "half") == "upper") return bd.name(below_state) == name && bd.prop(below_state, "half") == "lower";
+        uint16_t here = lv.get(pos);
+        return in_tag(below_state, "minecraft:supports_small_dripleaf") || (bd.water(here) && (bd.flags(here) & BF_SOURCE) && in_tag(below_state, "minecraft:supports_vegetation"));
+    }
     if (has_class(cls, "DoublePlantBlock")) {
         if (bd.prop(state, "half") == "upper") return bd.name(below_state) == name && bd.prop(below_state, "half") == "lower";
         return in_tag(below_state, "minecraft:supports_vegetation");
