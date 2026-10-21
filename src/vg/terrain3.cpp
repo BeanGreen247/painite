@@ -781,6 +781,8 @@ Terrain3::Terrain3(const Registry& reg, const BlockData& bd, int64_t seed, const
     I.iceberg_surface = n("minecraft:iceberg_surface");
     { auto r = rs_->random_from_hash("minecraft:clay_bands"); I.clay_bands = generate_bands(*r, I); }
     const Json& router = s.at("noise_router");
+    climate_ = Climate6{comp_->sampler(router.at("temperature")), comp_->sampler(router.at("vegetation")), comp_->sampler(router.at("continents")),
+                        comp_->sampler(router.at("erosion")), comp_->sampler(router.at("depth")), comp_->sampler(router.at("ridges"))};
     I.final_density = comp_->sampler(router.at("final_density"));
     I.prelim_surface = comp_->sampler(router.at("chunk_surface_level"));
     if (ns_.has_aquifers) {

@@ -45,6 +45,10 @@ int sample_int(const Json& p, Rng& random) {
         int lo = int(p.at("min_inclusive").int_value()), hi = int(p.at("max_inclusive").int_value());
         return lo + random.next_int(random.next_int(hi - lo + 1) + 1);
     }
+    if (t == "very_biased_to_bottom") {
+        int lo = int(p.at("min_inclusive").int_value()), hi = int(p.at("max_inclusive").int_value());
+        return lo + random.next_int(random.next_int(random.next_int(hi - lo + 1) + 1) + 1);
+    }
     if (t == "clamped") {
         int v = sample_int(p.at("source"), random);
         return std::min(std::max(v, int(p.at("min_inclusive").int_value())), int(p.at("max_inclusive").int_value()));
@@ -73,7 +77,7 @@ int int_provider_min(const Json& p) {
     if (p.is_num()) return int(p.int_value());
     std::string t = type_of(p);
     if (t == "constant") return int(p.at("value").int_value());
-    if (t == "uniform" || t == "biased_to_bottom" ) return int(p.at("min_inclusive").int_value());
+    if (t == "uniform" || t == "biased_to_bottom" || t == "very_biased_to_bottom") return int(p.at("min_inclusive").int_value());
     if (t == "clamped") return std::max(int(p.at("min_inclusive").int_value()), int_provider_min(p.at("source")));
     if (t == "clamped_normal") return int(p.at("min_inclusive").int_value());
     if (t == "trapezoid") return int(p.at("min").int_value());
@@ -89,7 +93,7 @@ int int_provider_max(const Json& p) {
     if (p.is_num()) return int(p.int_value());
     std::string t = type_of(p);
     if (t == "constant") return int(p.at("value").int_value());
-    if (t == "uniform" || t == "biased_to_bottom") return int(p.at("max_inclusive").int_value());
+    if (t == "uniform" || t == "biased_to_bottom" || t == "very_biased_to_bottom") return int(p.at("max_inclusive").int_value());
     if (t == "clamped") return std::min(int(p.at("max_inclusive").int_value()), int_provider_max(p.at("source")));
     if (t == "clamped_normal") return int(p.at("max_inclusive").int_value());
     if (t == "trapezoid") return int(p.at("max").int_value());

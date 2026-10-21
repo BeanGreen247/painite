@@ -38,6 +38,9 @@ public:
     RandomState3& random_state() { return *rs_; }
     DfCompiler& compiler() { return *comp_; }
     const std::vector<BiomeData3>& biomes() const { return biomes_; }
+    // the six climate router functions (Climate.Sampler)
+    struct Climate6 { const Sampler *temperature = nullptr, *vegetation = nullptr, *continents = nullptr, *erosion = nullptr, *depth = nullptr, *ridges = nullptr; };
+    const Climate6& climate_samplers() const { return climate_; }
     uint16_t water_id() const { return water_; }
 
     // NoiseChunk: the volume, the caching samplers and the aquifer of one chunk (beardifier may be null)
@@ -69,6 +72,7 @@ private:
     TerrainSettings ns_;
     std::vector<BiomeData3> biomes_;
     uint16_t water_ = 0;
+    Climate6 climate_;
     std::unique_ptr<RandomState3> rs_;
     std::unique_ptr<DfCompiler> comp_;
     std::unique_ptr<Impl> p_;

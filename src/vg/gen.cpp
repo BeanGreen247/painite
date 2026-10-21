@@ -10,6 +10,7 @@
 #include "shape.hpp"
 #include "noisegen.hpp"
 #include "surface.hpp"
+#include "terrain3.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -46,6 +47,11 @@ struct VanillaGen::Impl {
     FeatureShared feature_shared;
     std::unique_ptr<TemplateManager> feature_templates;
     size_t quart_rows = 0;                   // quart cells per column over the dimension's height
+    // 26.3: the generator engine of net.minecraft.world.level.levelgen was rewritten (float density, material rules); this path replaces the noise, surface and biome parts
+    bool is3 = false;
+    std::unique_ptr<v3::Terrain3> t3;
+    std::mutex bc_mu;
+    std::map<std::pair<int, int>, std::shared_ptr<const std::vector<uint8_t>>> bc_cache;
 
     // a chunk on its way through the generation steps
     struct Proto {
@@ -69,6 +75,7 @@ struct VanillaGen::Impl {
 
     Impl(const std::string& data_dir, const GenOptions& o, const std::vector<std::string>& biome_names) : opt(o), reg(data_dir + "/worldgen/" + o.version) {
         if (!o.overlay.empty()) reg.set_overlay(o.overlay);
+        if (o.version == "26.3") { is3 = true; init3(data_dir, o, biome_names); return; }
         std::string sname = o.dim == 0 ? (o.level_type == "large_biomes" ? "large_biomes" : o.level_type == "amplified" ? "amplified" : "overworld") : o.dim == 1 ? "nether" : "end";
         settings = &reg.get("noise_settings", sname);
         state = std::make_unique<WorldState>(reg, *settings, o.seed);
@@ -145,14 +152,115 @@ struct VanillaGen::Impl {
         make_structures();
     }
 
+
+    // ---- 26.3
+    void init3(const std::string& data_dir, const GenOptions& o, const std::vector<std::string>& biome_names) {
+        std::string sname = o.dim == 0 ? (o.level_type == "large_biomes" ? "large_biomes" : o.level_type == "amplified" ? "amplified" : "overworld") : o.dim == 1 ? "nether" : "end";
+        settings = &reg.get("noise_settings", sname);
+        if (o.dim == 0) { dim_min_y = -64; dim_height = 384; } else { dim_min_y = 0; dim_height = 256; }
+        bd = std::make_unique<BlockData>(data_dir + "/worldgen/" + o.version + "/blockflags.txt", data_dir + "/worldgen/" + o.version + "/blockclasses.txt", reg);
+        for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:plains") plains = uint8_t(i);
+        if (o.dim == 2) climate.biomes = {"the_end", "end_highlands", "end_midlands", "small_end_islands", "end_barrens"};
+        else {
+            std::string dump = o.climate_dump.empty() ? data_dir + "/worldgen/" + o.version + "/climate.txt" : o.climate_dump;
+            climate = load_climate_dump(dump, o.dim == 1 ? "nether" : "overworld", 19);
+        }
+        for (auto& name : climate.biomes) {
+            uint8_t idx = plains;
+            for (size_t i = 0; i < biome_names.size(); i++) if (biome_names[i] == "minecraft:" + name) idx = uint8_t(i);
+            biome_index.push_back(idx);
+        }
+        std::vector<v3::BiomeData3> bio;
+        for (auto& name : climate.biomes) {
+            v3::BiomeData3 b;
+            b.name = "minecraft:" + name;
+            const Json& bj = reg.get("biome", name);
+            b.temperature = bj.at("temperature").float_value();
+            b.frozen = bj.get_string("temperature_modifier") == "frozen";
+            bio.push_back(b);
+            BiomeInfo bi;
+            bi.name = b.name; bi.temperature = b.temperature; bi.frozen = b.frozen;
+            bi.has_precipitation = bj.get_bool("has_precipitation", true);
+            biome_infos.push_back(bi);
+        }
+        t3 = std::make_unique<v3::Terrain3>(reg, *bd, o.seed, sname, std::move(bio), dim_min_y, dim_height);
+        const v3::TerrainSettings& ts = t3->settings();
+        ns.min_y = ts.min_y; ns.height = ts.height; ns.sea_level = ts.sea_level;
+        feature_templates = std::make_unique<TemplateManager>(reg, *bd);
+        quart_rows = size_t(dim_height / 4);
+        decorator = std::make_unique<Decorator>(reg, o.seed, climate.biomes);
+        make_structures();
+    }
+
+    // the biomes of a chunk the way ChunkGenerator.doCreateBiomes fills them: the six climate functions over one volume of quart cells, then the parameter list search
+    std::shared_ptr<const std::vector<uint8_t>> chunk_biomes3(int cx, int cz) {
+        {
+            std::lock_guard<std::mutex> l(bc_mu);
+            auto it = bc_cache.find({cx, cz});
+            if (it != bc_cache.end()) return it->second;
+        }
+        auto out = std::make_shared<std::vector<uint8_t>>(quart_rows * 16, 0);
+        if (opt.dim == 2) {
+            // TheEndBiomeSource.getNoiseBiome
+            const v3::Sampler* ero = t3->climate_samplers().erosion;
+            v3::SamplerCtx ctx;
+            ctx.caches = true;
+            for (size_t qy = 0; qy < quart_rows; qy++)
+                for (int qz = 0; qz < 4; qz++)
+                    for (int qx = 0; qx < 4; qx++) {
+                        int bx = (cx * 4 + qx) * 4, by = (int(qy) + (dim_min_y >> 2)) * 4, bz = (cz * 4 + qz) * 4;
+                        int sx = bx >> 4, sz = bz >> 4;
+                        int v;
+                        if (int64_t(sx) * sx + int64_t(sz) * sz <= 4096) v = 0;
+                        else {
+                            float hh = ero->value(ctx, ((bx >> 4) * 2 + 1) * 8, by, ((bz >> 4) * 2 + 1) * 8);
+                            v = hh > 0.25f ? 1 : hh >= -0.0625f ? 2 : hh < -0.21875f ? 3 : 4;
+                        }
+                        (*out)[(qy * 4 + size_t(qz)) * 4 + size_t(qx)] = uint8_t(v);
+                    }
+        } else {
+            const auto& cs = t3->climate_samplers();
+            v3::Volume vol;
+            vol.sx = 4; vol.sy = int(quart_rows); vol.sz = 4;
+            vol.minx = cx * 16; vol.miny = dim_min_y; vol.minz = cz * 16;
+            vol.stepx = vol.stepy = vol.stepz = 4;
+            v3::SamplerCtx ctx;
+            ctx.caches = true;
+            std::vector<float> b[6];
+            const v3::Sampler* fns[6] = {cs.temperature, cs.vegetation, cs.continents, cs.erosion, cs.depth, cs.ridges};
+            for (int k = 0; k < 6; k++) { b[k].resize(size_t(vol.size())); fns[k]->volume(ctx, b[k].data(), vol); }
+            for (int qy = 0; qy < vol.sy; qy++)
+                for (int qz = 0; qz < 4; qz++)
+                    for (int qx = 0; qx < 4; qx++) {
+                        size_t i = size_t(vol.index(qx, qy, qz));
+                        TargetPoint tp{quantize_coord(b[0][i]), quantize_coord(b[1][i]), quantize_coord(b[2][i]), quantize_coord(b[3][i]), quantize_coord(b[4][i]), quantize_coord(b[5][i])};
+                        (*out)[(size_t(qy) * 4 + size_t(qz)) * 4 + size_t(qx)] = uint8_t(climate.list->find_value(tp));
+                    }
+        }
+        std::lock_guard<std::mutex> l(bc_mu);
+        if (bc_cache.size() > 4096) bc_cache.clear();
+        return bc_cache.emplace(std::make_pair(cx, cz), out).first->second;
+    }
+    // the biome value of one quart cell, from the chunk that holds it
+    int biome_cell3(int qx, int qy, int qz) {
+        auto g = chunk_biomes3(qx >> 2, qz >> 2);
+        int row = std::clamp(qy - (dim_min_y >> 2), 0, int(quart_rows) - 1);
+        return int((*g)[(size_t(row) * 4 + size_t(qz & 3)) * 4 + size_t(qx & 3)]);
+    }
+
     // terrain height of a column without building the chunk (NoiseBasedChunkGenerator.getBaseHeight / getBaseColumn)
     int base_height(int x, int z, HeightmapType t) const {
+        if (is3) {
+            const uint8_t* flags3 = bd->chunk_flags();
+            return t3->iterate_column(x, z, [flags3, t](uint16_t id) { return t == WORLD_SURFACE_WG ? !(flags3[id] & kFlagAir) : (flags3[id] & kFlagBlocksMotion) != 0; });
+        }
         ChunkFill col(*state, ns, pal, x, z, dim_min_y, dim_height, ChunkFill::ColumnTag{});
         const uint8_t* flags = bd->chunk_flags();
         auto tester = [flags, t](uint16_t id) { return t == WORLD_SURFACE_WG ? !(flags[id] & kFlagAir) : (flags[id] & kFlagBlocksMotion) != 0; };
         return col.column(x, z, tester);
     }
     void base_column(int x, int z, std::vector<uint16_t>& out) const {
+        if (is3) { t3->iterate_column(x, z, nullptr, &out); return; }
         ChunkFill col(*state, ns, pal, x, z, dim_min_y, dim_height, ChunkFill::ColumnTag{});
         col.column(x, z, nullptr, &out);
     }
@@ -201,7 +309,26 @@ struct VanillaGen::Impl {
                                             GenRange{std::max(ns.min_y, dim_min_y), std::min(ns.min_y + ns.height, dim_min_y + dim_height) - std::max(ns.min_y, dim_min_y)}, std::move(per_biome));
     }
 
+    int zoom_biome(int x, int y, int z, const std::function<int(int, int, int)>& lookup) const {
+        return is3 ? t3->biome_at(x, y, z, lookup) : surface->biome_with(x, y, z, lookup);
+    }
+    // Climate.Sampler.sample + findValue for one quart cell (structures and the other point lookups; chunks use chunk_biomes3)
+    int biome_point3(int qx, int qy, int qz) const {
+        v3::SamplerCtx ctx;
+        const auto& cs = t3->climate_samplers();
+        int bx = qx * 4, by = qy * 4, bz = qz * 4;
+        if (opt.dim == 2) {
+            int sx = bx >> 4, sz = bz >> 4;
+            if (int64_t(sx) * sx + int64_t(sz) * sz <= 4096) return 0;
+            float hh = cs.erosion->value(ctx, ((bx >> 4) * 2 + 1) * 8, by, ((bz >> 4) * 2 + 1) * 8);
+            return hh > 0.25f ? 1 : hh >= -0.0625f ? 2 : hh < -0.21875f ? 3 : 4;
+        }
+        TargetPoint tp{quantize_coord(cs.temperature->value(ctx, bx, by, bz)), quantize_coord(cs.vegetation->value(ctx, bx, by, bz)), quantize_coord(cs.continents->value(ctx, bx, by, bz)),
+                       quantize_coord(cs.erosion->value(ctx, bx, by, bz)), quantize_coord(cs.depth->value(ctx, bx, by, bz)), quantize_coord(cs.ridges->value(ctx, bx, by, bz))};
+        return climate.list->find_value(tp);
+    }
     int biome_value(int qx, int qy, int qz) const {
+        if (is3) return biome_point3(qx, qy, qz);
         if (opt.dim == 2) {   // TheEndBiomeSource
             int bx = qx * 4, by = qy * 4, bz = qz * 4;
             int cx = bx >> 4, cz = bz >> 4;
@@ -257,9 +384,26 @@ struct VanillaGen::Impl {
     }
 
     // BIOMES + NOISE + SURFACE + CARVERS of one chunk
+    void build3(Proto& p) {
+        auto bg = chunk_biomes3(p.cx, p.cz);
+        p.biomes = *bg;
+        for (uint8_t v : p.biomes) p.present.insert(v);
+        const int min_q = dim_min_y >> 2;
+        std::function<int(int, int, int)> lookup = [&](int qx, int qy, int qz) {
+            int dx = qx - p.cx * 4, dz = qz - p.cz * 4;
+            if (dx >= 0 && dx < 4 && dz >= 0 && dz < 4) return int(p.biomes[(size_t(std::clamp(qy - min_q, 0, int(quart_rows) - 1)) * 4 + size_t(dz)) * 4 + size_t(dx)]);
+            return biome_cell3(qx, qy, qz);
+        };
+        auto nc = t3->make_chunk(p.cx, p.cz, nullptr);
+        t3->do_fill(*nc, p.blocks);
+        if (opt.stage != "noise") t3->build_surface(*nc, p.blocks, lookup);
+        p.built = true;
+    }
+
     void build(Proto& p) {
         std::lock_guard<std::mutex> l(p.mu);
         if (p.built) return;
+        if (is3) { build3(p); return; }
         auto t0 = std::chrono::steady_clock::now();
         auto lap = [&](const char* what) { if (!std::getenv("PAINITE_PROF")) return; auto t1 = std::chrono::steady_clock::now(); fprintf(stderr, "  [prof] %s %.1f ms\n", what, std::chrono::duration<double, std::milli>(t1 - t0).count()); t0 = t1; };
         p.biomes.assign(quart_rows * 16, 0);
@@ -340,7 +484,7 @@ struct VanillaGen::Impl {
         const int min_q = dim_min_y >> 2;
         Proto* const (&g)[9] = reinterpret_cast<Proto* const (&)[9]>(grid);
         Level level(*bd, cx, cz, chunks, GenRange{grid[4]->blocks.min_y, grid[4]->blocks.height}, [&](int x, int y, int z) {
-            return surface->biome_with(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
+            return zoom_biome(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
         });
         if (opt.stage == "structures") biomes.clear();   // structures only: no biome feature runs
         FeatureEnv env{level, reg, feature_shared, [this](int biome, const std::string& id) { return decorator->biome_has_feature(biome, id); }};
@@ -375,7 +519,7 @@ struct VanillaGen::Impl {
         const int min_q = dim_min_y >> 2;
         Proto* const (&g)[9] = reinterpret_cast<Proto* const (&)[9]>(grid);
         Level level(*bd, cx, cz, chunks, GenRange{center.blocks.min_y, center.blocks.height}, [&](int x, int y, int z) {
-            return surface->biome_with(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
+            return zoom_biome(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
         });
         std::vector<std::array<int, 3>> marks;
         marks.swap(center.blocks.post_marks);
