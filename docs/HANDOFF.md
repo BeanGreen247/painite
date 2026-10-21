@@ -1,4 +1,6 @@
-# Painite handoff (written 2026-10-15, for whoever continues: another Claude session, Kimi, DeepSeek, a human)
+# Painite handoff
+
+> 2026-10-21 evening: gameplay (survival, mobs, redstone, random ticks, cache command, performance) moved on a lot, see `docs/NEXT.md` for the current state and what to assess next. The sections below describe the worldgen port and the first gameplay core. (written 2026-10-15, for whoever continues: another Claude session, Kimi, DeepSeek, a human)
 
 Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~/claude-memory-bank/projects/painite.md` if you have it.
 

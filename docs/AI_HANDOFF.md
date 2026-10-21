@@ -1,5 +1,7 @@
 # AI continuation notes
 
+> Superseded for the current state by `docs/NEXT.md` (2026-10-21): pickup, drops, health, mobs, redstone and random ticks are all implemented now; the "Current boundaries" list below is historical.
+
 Updated 2026-10-15 after entity simulation wiring (`e16ce9c`). This is an implementation-oriented handoff for coding assistants. `docs/HANDOFF.md` remains the broader project status and verification reference; `docs/COPILOT_PROMPT.md` records the owner's project rules and ordered gameplay plan.
 
 ## Start here
