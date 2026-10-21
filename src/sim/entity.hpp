@@ -6,11 +6,17 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace pn::sim {
 
 class Entity;
+
+// "Can a body of this size stand / fit in this cell": the same answers are asked for by every path search of a tick, so they are kept for the tick
+struct CellCache {
+    std::unordered_map<uint64_t, bool> clear, stand;
+};
 
 // What entities ask of the world around them
 class EntityWorld : public CollisionSource {
@@ -34,6 +40,7 @@ public:
     virtual void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) {}
     virtual void hurt_player(uint64_t gid, float amount, const std::string& source, const Vec3& knockback) {}
     virtual void mob_died(Entity& e, bool by_player) {}
+    virtual CellCache* cell_cache(int size_key) { return nullptr; }   // valid until the end of the tick; null: no sharing
     virtual bool can_see_sky(int x, int y, int z) const { return false; }
     virtual void explode(const Vec3& at, float power, Entity* source) {}
     virtual void teleport_owner(uint64_t gid, const Vec3& to) {}   // an ender pearl landed
@@ -55,6 +62,7 @@ public:
     float step_height = 0.0f;
     bool on_ground = false, horizontal_collision = false, vertical_collision = false, vertical_collision_below = false;
     bool no_physics = false, no_gravity = false, removed = false, needs_sync = false;
+    bool velocity_dirty = false;          // a push (knockback, explosion) the clients must be told about; walking mobs are followed by their position changes alone
     std::vector<int> pending_events;      // entity event statuses (2 hurt, 3 death ...) for the game to send to the players who see the entity
     virtual bool is_living() const { return false; }
     int tick_count = 0;

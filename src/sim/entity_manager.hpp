@@ -47,6 +47,7 @@ public:
     int64_t day_time_value = 0;
     std::function<void(uint64_t, float, const std::string&, const Vec3&)> on_hurt_player;
     std::function<void(uint64_t, const Vec3&)> on_teleport_owner;
+    CellCache* cell_cache(int size_key) override { return &cell_caches_[size_key]; }
     void teleport_owner(uint64_t gid, const Vec3& to) override { if (on_teleport_owner) on_teleport_owner(gid, to); }
     int min_build_y() const override;
     int max_build_y() const override;
@@ -63,6 +64,7 @@ private:
     bool chunk_loaded(int x, int z) const;
 
     int dim_ = 0;
+    std::unordered_map<int, CellCache> cell_caches_;   // by body size; emptied every tick
     World& world_;
     std::atomic<int64_t>& game_time_;
     std::atomic<int>& next_id_;

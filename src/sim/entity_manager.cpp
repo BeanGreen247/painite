@@ -202,6 +202,7 @@ void EntityManager::explode(const Vec3& at, float power, Entity* source) {
         le->hurt(d.first, &at);
         Vec3 dir = (Vec3(le->pos.x, le->pos.y + le->height * 0.9, le->pos.z) - at).normalize().scale(d.second * (1.0 - le->knockback_resistance));
         le->delta = le->delta + dir;
+        le->velocity_dirty = true;
     }
     // destroyed blocks drop their loot, each with a 1 in `power` chance of surviving the blast (the loot tables' survives_explosion)
     int drops = 0;
@@ -295,6 +296,7 @@ Entity* EntityManager::add_entity(std::unique_ptr<Entity> entity) {
 }
 
 void EntityManager::tick() {
+    for (auto& kv : cell_caches_) { kv.second.clear.clear(); kv.second.stand.clear(); }   // blocks may have changed since the last tick
     const size_t tick_count = entities_.size();
     for (size_t i = 0; i < tick_count; ++i) {
         Entity* entity = entities_[i].get();

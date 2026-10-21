@@ -54,6 +54,7 @@ void LivingEntity::knockback(double strength, double dx, double dz) {
     double nx = dx / len * strength, nz = dz / len * strength;
     delta = Vec3(delta.x / 2.0 - nx, on_ground ? std::min(0.4, delta.y / 2.0 + strength) : delta.y, delta.z / 2.0 - nz);
     needs_sync = true;
+    velocity_dirty = true;
 }
 
 bool LivingEntity::hurt(float amount, const Vec3* from, uint64_t attacker_gid, bool by_player) {

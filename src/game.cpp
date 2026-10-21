@@ -830,7 +830,7 @@ void Game::tick() {
                 if (turned) { track.yaw = entity.yaw; track.pitch = entity.pitch; }
                 if (entity.on_ground != track.on_ground) track.on_ground = entity.on_ground;
 
-                if (!(entity.delta == track.delta)) {
+                if (!(entity.delta == track.delta) && (!entity.is_living() || entity.velocity_dirty)) {   // as ServerEntity: only pushes and projectiles/items send velocity
                     for (uint64_t gid : track.viewers) {
                         auto viewer = players_.find(gid);
                         if (viewer == players_.end()) continue;
@@ -841,6 +841,7 @@ void Game::tick() {
                         queue_event(viewer->second.id, std::move(event));
                     }
                     track.delta = entity.delta;
+                    entity.velocity_dirty = false;
                 }
                 for (int status : entity.pending_events)
                     for (uint64_t gid : track.viewers) {

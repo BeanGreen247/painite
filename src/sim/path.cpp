@@ -13,8 +13,15 @@ struct Cell { int x, y, z; };
 struct Search {
     EntityWorld& w;
     double hw, height;
-    std::unordered_map<uint64_t, bool> clear_cache, stand_cache;
-    Search(EntityWorld& world, double width, double h) : w(world), hw(std::min(width, 0.9) / 2.0 - 0.001), height(h - 0.002) {}
+    CellCache own;
+    std::unordered_map<uint64_t, bool>& clear_cache;
+    std::unordered_map<uint64_t, bool>& stand_cache;
+    static CellCache* shared(EntityWorld& world, double width, double h, CellCache& fallback) {
+        int size_key = int(std::min(width, 0.9) * 100.0) * 1000 + int(h * 100.0);
+        CellCache* c = world.cell_cache(size_key);
+        return c ? c : &fallback;
+    }
+    Search(EntityWorld& world, double width, double h, CellCache* c) : w(world), hw(std::min(width, 0.9) / 2.0 - 0.001), height(h - 0.002), clear_cache(c->clear), stand_cache(c->stand) {}
 
     static uint64_t key(int x, int y, int z) { return (uint64_t(uint32_t(x) & 0x3FFFFFF) << 38) | (uint64_t(uint32_t(z) & 0x3FFFFFF) << 12) | uint64_t(uint32_t(y + 2048) & 0xFFF); }
 
@@ -50,7 +57,8 @@ struct Node { int x, y, z; float g; int parent; };
 }  // namespace
 
 std::vector<Vec3> find_path(EntityWorld& world, const Vec3& from, const Vec3& to, double width, double height, int max_nodes, int max_fall) {
-    Search s(world, width, height);
+    CellCache fallback;
+    Search s(world, width, height, Search::shared(world, width, height, fallback));
     int sx = int(std::floor(from.x)), sy = int(std::floor(from.y + 0.001)), sz = int(std::floor(from.z));
     int gx = int(std::floor(to.x)), gy = int(std::floor(to.y + 0.001)), gz = int(std::floor(to.z));
     if (sx == gx && sy == gy && sz == gz) return {};
