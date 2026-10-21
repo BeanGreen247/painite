@@ -64,6 +64,22 @@ const std::set<std::string>& Registry::tag_members(const std::string& kind, cons
     return *slot;
 }
 
+std::vector<std::string> Registry::tag_ordered(const std::string& kind, const std::string& id) const {
+    std::string name = id;
+    if (!name.empty() && name[0] == '#') name = name.substr(1);
+    Json j = Json::parse_file(dir_ + "/data/minecraft/tags/" + kind + "/" + strip(name) + ".json");
+    std::vector<std::string> out;
+    for (auto& v : j.at("values").arr) {
+        std::string e = v.is_str() ? v.str : v.at("id").str;
+        if (!e.empty() && e[0] == '#') { for (auto& m : tag_ordered(kind, e)) if (std::find(out.begin(), out.end(), m) == out.end()) out.push_back(m); }
+        else {
+            if (e.rfind("minecraft:", 0) != 0) e = "minecraft:" + e;
+            if (std::find(out.begin(), out.end(), e) == out.end()) out.push_back(e);
+        }
+    }
+    return out;
+}
+
 static void walk(const std::string& base, const std::string& rel, std::vector<std::string>& out) {
     std::string dir = rel.empty() ? base : base + "/" + rel;
     DIR* d = opendir(dir.c_str());

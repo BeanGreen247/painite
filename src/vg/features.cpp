@@ -174,6 +174,58 @@ bool place_disk(FeatureEnv& env, const Json& config, Rng& random, const BlockPos
     return placed_any;
 }
 
+// MossyCarpetBlock.placeAt (pale moss carpet with an optional topper layer)
+namespace {
+const int kMcX[4] = {0, 1, 0, -1};
+const int kMcZ[4] = {-1, 0, 1, 0};
+const char* const kMcName[4] = {"north", "east", "south", "west"};
+const int kMcSturdy[4] = {3, 5, 2, 4};   // the neighbour's face towards us: south, west, north, east (sturdy flag order: down up north south east west)
+
+uint16_t mossy_updated_state(FeatureEnv& env, uint16_t state, const BlockPos& pos, bool create_sides) {
+    const BlockData& bd = env.bd();
+    Level& lv = env.level;
+    const bool base = bd.prop(state, "bottom") == "true";
+    create_sides |= base;
+    uint16_t above = 0, below = 0;
+    bool have_above = false, have_below = false;
+    for (int d = 0; d < 4; d++) {
+        std::string side = "none";
+        if (bd.sturdy(lv.get(pos.offset(kMcX[d], 0, kMcZ[d])), kMcSturdy[d])) side = create_sides ? "low" : bd.prop(state, kMcName[d]);
+        if (side == "low") {
+            if (!have_above) { above = lv.get(pos.above()); have_above = true; }
+            if (bd.name(above) == "minecraft:pale_moss_carpet" && bd.prop(above, kMcName[d]) != "none" && bd.prop(above, "bottom") != "true") side = "tall";
+            if (!base) {
+                if (!have_below) { below = lv.get(pos.offset(0, -1, 0)); have_below = true; }
+                if (bd.name(below) == "minecraft:pale_moss_carpet" && bd.prop(below, kMcName[d]) == "none") side = "none";
+            }
+        }
+        state = bd.with(state, kMcName[d], side);
+    }
+    return state;
+}
+
+void place_mossy_carpet(FeatureEnv& env, const BlockPos& pos, Rng& random) {
+    const BlockData& bd = env.bd();
+    Level& lv = env.level;
+    uint16_t simple = bd.default_state("minecraft:pale_moss_carpet");
+    uint16_t adjusted = mossy_updated_state(env, simple, pos, true);
+    lv.set(pos, adjusted);
+    // createTopperWithSideChance
+    BlockPos up = pos.above();
+    uint16_t prev = lv.get(up);
+    bool carpet_above = bd.name(prev) == "minecraft:pale_moss_carpet";
+    if ((carpet_above && bd.prop(prev, "bottom") == "true") || (!carpet_above && !bd.replaceable(prev))) return;
+    uint16_t top = mossy_updated_state(env, bd.with(simple, "bottom", "false"), up, true);
+    for (int d = 0; d < 4; d++)
+        if (bd.prop(top, kMcName[d]) != "none" && !random.next_boolean()) top = bd.with(top, kMcName[d], "none");
+    bool faces = false;
+    for (int d = 0; d < 4; d++) faces |= bd.prop(top, kMcName[d]) != "none";
+    if (!faces || top == prev) return;
+    lv.set(up, top);
+    lv.set(pos, mossy_updated_state(env, adjusted, pos, true));
+}
+}  // namespace
+
 bool place_simple_block(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
     Level& lv = env.level;
     const BlockData& bd = env.bd();
@@ -188,7 +240,7 @@ bool place_simple_block(FeatureEnv& env, const Json& config, Rng& random, const 
         lv.set(origin, lower);
         lv.set(origin.above(), upper);
     } else if (!cls.empty() && cls[0] == "MossyCarpetBlock") {
-        throw std::runtime_error("mossy carpet placement is not ported yet");
+        place_mossy_carpet(env, origin, random);
     } else {
         lv.set(origin, st);
     }

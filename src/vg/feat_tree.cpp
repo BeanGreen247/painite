@@ -821,6 +821,49 @@ void run_decorator(DecoCtx& c, const Json& d) {
                 if (st != kNoState) t.set_decoration(pp, st);
             }
         }
+    } else if (type == "pale_moss") {
+        float leaves_p = d.at("leaves_probability").float_value(), trunk_p = d.at("trunk_probability").float_value(), ground_p = d.at("ground_probability").float_value();
+        std::vector<BlockPos> shuffled = c.logs;
+        shuffle(shuffled, r);
+        if (shuffled.empty()) return;
+        BlockPos origin = shuffled[0];
+        for (auto& p : shuffled) if (p.y < origin.y) origin = p;
+        if (r.next_float() < ground_p) {
+            Json ref;
+            ref.type = Json::String;
+            ref.str = "minecraft:pale_moss_patch";
+            place_configured_feature(t.env, resolve_ref(t.env, "configured_feature", ref), r, origin.above());
+        }
+        auto hanger = [&](BlockPos pos) {
+            const uint16_t moss = bd.default_state("minecraft:pale_hanging_moss");
+            while (c.is_air(rel(pos, DOWN)) && !(double(r.next_float()) < 0.5)) {
+                t.set_decoration(pos, bd.with(moss, "tip", "false"));
+                pos = rel(pos, DOWN);
+            }
+            t.set_decoration(pos, bd.with(moss, "tip", "true"));
+        };
+        for (auto& pos : c.logs) {
+            BlockPos down = rel(pos, DOWN);
+            if (r.next_float() < trunk_p && c.is_air(down)) hanger(down);
+        }
+        for (auto& pos : c.leaves) {
+            BlockPos down = rel(pos, DOWN);
+            if (r.next_float() < leaves_p && c.is_air(down)) hanger(down);
+        }
+    } else if (type == "creaking_heart") {
+        float prob = d.at("probability").float_value();
+        if (c.logs.empty()) return;
+        if (r.next_float() >= prob) return;
+        std::vector<BlockPos> placements = c.logs;
+        shuffle(placements, r);
+        for (auto& pos : placements) {
+            bool all_logs = true;
+            for (int k = 0; k < 6 && all_logs; k++) all_logs = bd.in_tag(t.get(rel(pos, Dir(k))), "minecraft:logs");
+            if (!all_logs) continue;
+            uint16_t heart = bd.with(bd.with(bd.default_state("minecraft:creaking_heart"), "creaking_heart_state", "dormant"), "natural", "true");
+            t.set_decoration(pos, heart);
+            break;
+        }
     } else {
         throw std::runtime_error("tree decorator not ported yet: " + type);
     }

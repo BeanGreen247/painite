@@ -32,6 +32,7 @@ struct FeatureEnv {
     int sea_level = 63;
     int64_t seed = 0;    // the world seed
     const BlockData& bd() const { return level.bd(); }
+    class TemplateManager* templates = nullptr;   // structure templates for the template feature
     const std::string* top_feature = nullptr;   // the placed feature being placed (for the biome filter)
 };
 

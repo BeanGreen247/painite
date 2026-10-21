@@ -12,7 +12,7 @@ namespace {
 ServerOpts game_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=creative\nlevel-type=flat\n";
-    o.ops = {"Bobby", "Bobbyb", "Rob"};
+    o.ops = {"Bobby", "Bobbyb", "Bobbyc", "Rob"};
     return o;
 }
 
@@ -222,6 +222,11 @@ void reg_java_game(Registry& reg) {
     b.opts = game_opts;
     b.tests.push_back({"two-bots", [](Ctx& t, Env& e) { game(t, e, "26.2", "Aliciab", "Bobbyb", "iron_block"); }});
     reg.push_back(std::move(b));
+    Group b1;
+    b1.name = "game-26.1";
+    b1.opts = game_opts;
+    b1.tests.push_back({"two-bots", [](Ctx& t, Env& e) { game(t, e, "26.1", "Aliciac", "Bobbyc", "copper_block"); }});
+    reg.push_back(std::move(b1));
     Group c;
     c.name = "region";
     c.opts = game_opts;

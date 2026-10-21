@@ -346,9 +346,11 @@ void Worker::finish_login(JConn& c) {
         w.boolean(!p.signature.empty());
         if (!p.signature.empty()) w.str(p.signature);
     }
-    static thread_local std::mt19937_64 rng{std::random_device{}()};
-    uint64_t sid[2] = {rng(), rng()};
-    w.raw(sid, 16);  // session id
+    if (c.vd->protocol >= 776) {   // 26.2 added the session id to the login finished packet
+        static thread_local std::mt19937_64 rng{std::random_device{}()};
+        uint64_t sid[2] = {rng(), rng()};
+        w.raw(sid, 16);
+    }
     send(c, w.b);
 }
 
@@ -452,8 +454,8 @@ void Worker::start_play(JConn& c) {
     w.boolean(true);
     w.boolean(false);
     write_spawn_info(c, w);
-    w.boolean(false);
-    w.boolean(false);
+    if (vd.protocol >= 776) w.boolean(false);   // online mode (26.2)
+    w.boolean(false);   // enforces secure chat
     send(c, w.b);
 
     Wr ab;

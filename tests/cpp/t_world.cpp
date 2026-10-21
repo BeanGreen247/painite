@@ -163,7 +163,7 @@ void layouts(Ctx& t, Env& e) {
             q.skip(q.varint());
             uint32_t np = q.varint();
             for (uint32_t i = 0; i < np && !q.bad; i++) { q.skip(q.varint()); q.skip(q.varint()); if (q.u8()) q.skip(q.varint()); }
-            t.check(!q.bad && q.left() == 16, base + " (protocol " + std::to_string(proto) + ") login_finished_sample");
+            t.check(!q.bad && q.left() == (proto >= 776 ? 16u : 0u), base + " (protocol " + std::to_string(proto) + ") login_finished_sample");
         }
         if (have("play_login_sample")) {
             Rd q(blobs["play_login_sample"]);
@@ -179,7 +179,7 @@ void layouts(Ctx& t, Env& e) {
             q.skip(2);
             if (q.u8()) { q.skip(q.varint()); q.skip(8); }
             q.varint(); q.varint();
-            q.skip(2);
+            q.skip(proto >= 776 ? 2 : 1);
             t.check(!q.bad && q.left() == 0, base + " (protocol " + std::to_string(proto) + ") play_login_sample");
         }
         static const std::pair<const char*, size_t> fixed[] = {{"play_player_position", 61}, {"play_game_event", 5}, {"play_player_abilities", 9}, {"play_set_default_spawn_position", 36}};

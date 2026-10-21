@@ -18,6 +18,8 @@ public:
     bool exists(const std::string& kind, const std::string& id) const;
     const Json& tag(const std::string& id) const;   // tags/worldgen/<id>.json, e.g. "biome/has_structure/village_plains"
     // every block (or fluid) a tag holds, nested tags resolved: "minecraft:base_stone_overworld" or "#minecraft:base_stone_overworld"; kind is "block" or "fluid"
+    // the same in the order Mojang's tag loader gives (file order, nested tags expanded in place), as HolderSet.getRandomElement indexes it
+    std::vector<std::string> tag_ordered(const std::string& kind, const std::string& id) const;
     const std::set<std::string>& tag_members(const std::string& kind, const std::string& id) const;
     std::vector<std::string> list(const std::string& kind) const;
     const std::string& dir() const { return dir_; }

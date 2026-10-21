@@ -12,8 +12,8 @@ struct Env {
     std::string binary, data_dir, test_world, tmp;
     Server* srv = nullptr;
     int port() const { return srv ? srv->port : 0; }
-    std::shared_ptr<Ids> ids(const std::string& version) const;     // "26.3" or "26.2"
-    int protocol(const std::string& version) const { return version == "26.2" ? 776 : 777; }
+    std::shared_ptr<Ids> ids(const std::string& version) const;     // "26.3", "26.2" or "26.1"
+    int protocol(const std::string& version) const { return version == "26.1" ? 775 : version == "26.2" ? 776 : 777; }
 };
 
 struct Ctx {

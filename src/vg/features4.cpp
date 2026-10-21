@@ -1,5 +1,6 @@
 // Nether features: glowstone, fungus-forest vegetation, vines.
 #include "feature.hpp"
+#include "template.hpp"
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -743,10 +744,220 @@ bool place_iceberg(FeatureEnv& env, const Json& config, Rng& random, BlockPos or
     return true;
 }
 
+// TemplateFeature: a weighted structure template, rotated at random, placed with its centre on the origin
+bool place_template_feature(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    if (!env.templates) throw std::runtime_error("template feature without a template manager");
+    const Json& list = config.at("templates");
+    int total = 0;
+    for (auto& e : list.arr) total += int(e.get_int("weight", 1));
+    if (total == 0) throw std::runtime_error("Weighted list has no elements");
+    int sel = random.next_int(total);
+    const Json* entry = nullptr;
+    for (auto& e : list.arr) {
+        sel -= int(e.get_int("weight", 1));
+        if (sel < 0) { entry = &e.at("data"); break; }
+    }
+    std::vector<Rotation> rotations;
+    if (entry->has("rotations")) {
+        for (auto& r : entry->at("rotations").arr) {
+            std::string n = Registry::strip(r.string(""));
+            rotations.push_back(n == "clockwise_90" ? Rotation::CLOCKWISE_90 : n == "180" || n == "clockwise_180" ? Rotation::CLOCKWISE_180 : n == "counterclockwise_90" ? Rotation::COUNTERCLOCKWISE_90 : Rotation::NONE);
+        }
+    } else {
+        rotations = {Rotation::NONE, Rotation::CLOCKWISE_90, Rotation::CLOCKWISE_180, Rotation::COUNTERCLOCKWISE_90};
+    }
+    Rotation rotation = rotations[size_t(random.next_int(int(rotations.size())))];
+    const StructureTemplate* tmpl = env.templates->get(entry->get_string("id"));
+    if (!tmpl) throw std::runtime_error("missing structure template " + entry->get_string("id"));
+    // getRotatedOffset: rotation.rotate(axis.getNegative()) (west for X, north for Z) times half the unrotated size
+    auto rot = [&](int x, int z, int& rx, int& rz) {
+        switch (rotation) {
+            case Rotation::CLOCKWISE_90: rx = -z; rz = x; break;
+            case Rotation::CLOCKWISE_180: rx = -x; rz = -z; break;
+            case Rotation::COUNTERCLOCKWISE_90: rx = z; rz = -x; break;
+            default: rx = x; rz = z; break;
+        }
+    };
+    int ax, az, bx, bz;
+    rot(-1, 0, ax, az);
+    rot(0, -1, bx, bz);
+    BlockPos pos = origin.offset(ax * (tmpl->size_x / 2), 0, az * (tmpl->size_x / 2)).offset(bx * (tmpl->size_z / 2), 0, bz * (tmpl->size_z / 2));
+    PlaceSettings settings;
+    settings.rotation = rotation;
+    settings.random = &random;
+    settings.level_seed = env.seed;
+    return tmpl->place_with(env.level, env.bd(), env.templates, pos, pos, settings, random);
+}
+
+// ---------------------------------------------------------------- corals (CoralFeature and its three shapes)
+
+enum CDir { C_NORTH = 0, C_EAST = 1, C_SOUTH = 2, C_WEST = 3 };   // Direction.Plane.HORIZONTAL order
+const int kCX[4] = {0, 1, 0, -1};
+const int kCZ[4] = {-1, 0, 1, 0};
+const char* const kCName[4] = {"north", "east", "south", "west"};
+
+void shuffle_dirs(std::vector<int>& v, Rng& r) {
+    for (int i = int(v.size()); i > 1; i--) std::swap(v[size_t(i - 1)], v[size_t(r.next_int(i))]);
+}
+
+struct Coral {
+    FeatureEnv& env;
+    Rng& r;
+    Level& lv;
+    const BlockData& bd;
+    Coral(FeatureEnv& e, Rng& rr) : env(e), r(rr), lv(e.level), bd(e.bd()) {}
+
+    std::string random_of(const char* tag) {
+        std::vector<std::string> m = env.reg.tag_ordered("block", tag);
+        return m[size_t(r.next_int(int(m.size())))];
+    }
+    bool is_water(const BlockPos& p) { return bd.name(lv.get(p)) == "minecraft:water"; }
+
+    bool place_block(const BlockPos& pos, uint16_t state) {
+        BlockPos above = pos.above();
+        uint16_t target = lv.get(pos);
+        if ((bd.name(target) != "minecraft:water" && !bd.in_tag(target, "minecraft:corals")) || !is_water(above)) return false;
+        lv.set(pos, state);
+        if (r.next_float() < 0.25f) {
+            lv.set(above, bd.default_state(random_of("corals")));
+        } else if (r.next_float() < 0.05f) {
+            lv.set(above, bd.with(bd.default_state("minecraft:sea_pickle"), "pickles", std::to_string(r.next_int(4) + 1)));
+        }
+        for (int d = 0; d < 4; d++) {
+            if (!(r.next_float() < 0.2f)) continue;
+            BlockPos rel = pos.offset(kCX[d], 0, kCZ[d]);
+            if (!is_water(rel)) continue;
+            lv.set(rel, bd.with(bd.default_state(random_of("wall_corals")), "facing", kCName[d]));
+        }
+        return true;
+    }
+};
+
+bool place_coral_feature(FeatureEnv& env, const std::string& type, Rng& random, const BlockPos& origin) {
+    Coral c(env, random);
+    uint16_t state = env.bd().default_state(c.random_of("coral_blocks"));
+    BlockPos mut = origin;
+    if (type == "coral_tree") {
+        int trunk = random.next_int(3) + 1;
+        for (int i = 0; i < trunk; i++) {
+            if (!c.place_block(mut, state)) return true;
+            mut = mut.above();
+        }
+        BlockPos top = mut;
+        int branches = random.next_int(3) + 2;
+        std::vector<int> dirs = {C_NORTH, C_EAST, C_SOUTH, C_WEST};
+        shuffle_dirs(dirs, random);
+        for (int b = 0; b < branches; b++) {
+            int bd_ = dirs[size_t(b)];
+            mut = top.offset(kCX[bd_], 0, kCZ[bd_]);
+            int height = random.next_int(5) + 2;
+            int segment = 0;
+            for (int j = 0; j < height && c.place_block(mut, state); j++) {
+                mut = mut.above();
+                if (j != 0 && (++segment < 2 || !(random.next_float() < 0.25f))) continue;
+                mut = mut.offset(kCX[bd_], 0, kCZ[bd_]);
+                segment = 0;
+            }
+        }
+        return true;
+    }
+    if (type == "coral_mushroom") {
+        int height = random.next_int(3) + 3, width = random.next_int(3) + 3, length = random.next_int(3) + 3, sink = random.next_int(3) + 1;
+        for (int x = 0; x <= width; x++)
+            for (int y = 0; y <= height; y++)
+                for (int z = 0; z <= length; z++) {
+                    BlockPos p(x + origin.x, y + origin.y - sink, z + origin.z);
+                    if ((x != 0 && x != width || y != 0 && y != height) && (z != 0 && z != length || y != 0 && y != height) && (x != 0 && x != width || z != 0 && z != length) &&
+                        (x == 0 || x == width || y == 0 || y == height || z == 0 || z == length) && !(random.next_float() < 0.1f))
+                        c.place_block(p, state);
+                }
+        return true;
+    }
+    // coral_claw
+    if (!c.place_block(origin, state)) return false;
+    int claw = random.next_int(4);
+    int branches = random.next_int(2) + 2;
+    std::vector<int> possible = {claw, (claw + 1) & 3, (claw + 3) & 3};
+    shuffle_dirs(possible, random);
+    for (int bi = 0; bi < branches; bi++) {
+        int branch = possible[size_t(bi)];
+        mut = origin;
+        int sideways = random.next_int(2) + 1;
+        mut = mut.offset(kCX[branch], 0, kCZ[branch]);
+        int seg_x, seg_y, seg_z, inway;
+        if (branch == claw) {
+            seg_x = kCX[claw]; seg_y = 0; seg_z = kCZ[claw];
+            inway = random.next_int(3) + 2;
+        } else {
+            mut = mut.above();
+            bool up = random.next_int(2) == 1;   // Util.getRandom({branchDirection, UP}): index 1 is UP
+            seg_x = up ? 0 : kCX[branch]; seg_y = up ? 1 : 0; seg_z = up ? 0 : kCZ[branch];
+            inway = random.next_int(3) + 3;
+        }
+        for (int i = 0; i < sideways && c.place_block(mut, state); i++) mut = mut.offset(seg_x, seg_y, seg_z);
+        mut = mut.offset(-seg_x, -seg_y, -seg_z);
+        mut = mut.above();
+        for (int i = 0; i < inway; i++) {
+            mut = mut.offset(kCX[claw], 0, kCZ[claw]);
+            if (!c.place_block(mut, state)) break;
+            if (!(random.next_float() < 0.25f)) continue;
+            mut = mut.above();
+        }
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------- fossil
+
+bool place_fossil(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    if (!env.templates) throw std::runtime_error("fossil feature without a template manager");
+    Level& lv = env.level;
+    Rotation rotation = static_cast<Rotation>(random.next_int(4));
+    const Json& bases = config.at("fossil_structures");
+    const Json& overlays = config.at("overlay_structures");
+    int index = random.next_int(int(bases.arr.size()));
+    const StructureTemplate* base = env.templates->get(bases.arr[size_t(index)].string());
+    const StructureTemplate* overlay = env.templates->get(overlays.arr[size_t(index)].string());
+    if (!base || !overlay) throw std::runtime_error("missing fossil template");
+    int cx = origin.x >> 4, cz = origin.z >> 4;
+    BoundingBox chunk_box(cx * 16 - 16, lv.min_y(), cz * 16 - 16, cx * 16 + 15 + 16, lv.max_y(), cz * 16 + 15 + 16);
+    PlaceSettings settings;
+    settings.rotation = rotation;
+    settings.has_bb = true;
+    settings.bb = chunk_box;
+    settings.random = &random;
+    settings.level_seed = env.seed;
+    int sx, sy, sz;
+    base->size(rotation, sx, sy, sz);
+    BlockPos low(origin.x - sx / 2, origin.y, origin.z - sz / 2);
+    int lowest = origin.y;
+    for (int xs = 0; xs < sx; xs++)
+        for (int zs = 0; zs < sz; zs++) lowest = std::min(lowest, lv.height(OCEAN_FLOOR_WG, low.x + xs, low.z + zs));
+    int target_y = std::max(lowest - 15 - random.next_int(10), lv.min_y() + 10);
+    BlockPos target = zero_position_with_transform(BlockPos(low.x, target_y, low.z), Mirror::NONE, rotation, base->size_x, base->size_z);
+    BoundingBox box = base->bounding_box(target, rotation, settings.pivot, Mirror::NONE);
+    int empty = 0;
+    for (int i = 0; i < 8; i++) {
+        BlockPos corner(i & 1 ? box.x1 : box.x0, i & 2 ? box.y1 : box.y0, i & 4 ? box.z1 : box.z0);
+        uint16_t st = lv.get(corner);
+        const std::string& n = env.bd().name(st);
+        if (env.bd().air(st) || n == "minecraft:lava" || n == "minecraft:water") empty++;
+    }
+    if (empty > int(config.at("max_empty_corners_allowed").int_value())) return false;
+    settings.processors = env.templates->processors_from(config.at("fossil_processors"));
+    base->place_with(lv, env.bd(), env.templates, target, target, settings, random);
+    settings.processors = env.templates->processors_from(config.at("overlay_processors"));
+    overlay->place_with(lv, env.bd(), env.templates, target, target, settings, random);
+    return true;
+}
+
 }  // namespace
 
 bool place_feature_type4(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled) {
     handled = true;
+    if (type == "coral_tree" || type == "coral_mushroom" || type == "coral_claw") return place_coral_feature(env, type, random, origin);
+    if (type == "fossil") return place_fossil(env, config, random, origin);
+    if (type == "template") return place_template_feature(env, config, random, origin);
     if (type == "huge_fungus") return place_huge_fungus(env, config, random, origin);
     if (type == "end_spike") return place_end_spike(env, config, random, origin);
     if (type == "end_platform") return place_end_platform(env, config, random, origin);

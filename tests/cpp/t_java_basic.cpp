@@ -45,7 +45,7 @@ void smoke(Ctx& t, Env& e, const std::string& version) {
     t.check(pong, "ping/pong");
 
     JClient c;
-    const std::string name = version == "26.3" ? "SmokeTest" : "SmokeTest262";
+    const std::string name = version == "26.3" ? "SmokeTest" : version == "26.2" ? "SmokeTest262" : "SmokeTest261";
     Bytes success = java_login(c, e.port(), proto, name, Bytes(16, 0));
     t.check(success.size() == 16 + 1 + name.size() + 1 + 16 || success.size() == 16 + 1 + name.size() + 1,
             "login success length " + std::to_string(success.size()) + " (compression " + (c.threshold >= 0 ? "on" : "off") + ")");
@@ -308,6 +308,7 @@ void reg_java_basic(Registry& reg) {
     a.opts = ref_opts;
     a.tests.push_back({"smoke-26.3", [](Ctx& t, Env& e) { smoke(t, e, "26.3"); }});
     a.tests.push_back({"smoke-26.2", [](Ctx& t, Env& e) { smoke(t, e, "26.2"); }});
+    a.tests.push_back({"smoke-26.1", [](Ctx& t, Env& e) { smoke(t, e, "26.1"); }});
     reg.push_back(std::move(a));
     Group b;
     b.name = "ref-chunks";

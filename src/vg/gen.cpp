@@ -5,6 +5,7 @@
 #include "climate.hpp"
 #include "decorate.hpp"
 #include "structure.hpp"
+#include "template.hpp"
 #include "beardifier.hpp"
 #include "shape.hpp"
 #include "noisegen.hpp"
@@ -43,6 +44,7 @@ struct VanillaGen::Impl {
     std::vector<std::string> structure_biome_names;   // "minecraft:<name>" per climate value
     std::vector<BiomeInfo> biome_infos;
     FeatureShared feature_shared;
+    std::unique_ptr<TemplateManager> feature_templates;
     size_t quart_rows = 0;                   // quart cells per column over the dimension's height
 
     // a chunk on its way through the generation steps
@@ -116,6 +118,7 @@ struct VanillaGen::Impl {
         // surface rules
         const Blocks& BB = Blocks::get();
         bd = std::make_unique<BlockData>(data_dir + "/worldgen/" + o.version + "/blockflags.txt", data_dir + "/worldgen/" + o.version + "/blockclasses.txt", reg);
+        feature_templates = std::make_unique<TemplateManager>(reg, *bd);
         std::vector<SurfaceBiome> sb;
         for (auto& name : climate.biomes) {
             SurfaceBiome b;
@@ -342,6 +345,7 @@ struct VanillaGen::Impl {
         if (opt.stage == "structures") biomes.clear();   // structures only: no biome feature runs
         FeatureEnv env{level, reg, feature_shared, [this](int biome, const std::string& id) { return decorator->biome_has_feature(biome, id); }};
         env.biomes = &biome_infos;
+        env.templates = feature_templates.get();
         env.sea_level = ns.sea_level;
         env.seed = opt.seed;
         std::vector<std::shared_ptr<const StructureStart>> touching;
