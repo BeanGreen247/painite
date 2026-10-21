@@ -301,7 +301,9 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
     if (type == "random_neighbor_spread") {
         Level& lv = env.level;
         const BlockData& bd = env.bd();
-        lv.set(origin, provide_state(env, config.at("block"), random, origin));
+        const Json& blk = config.at("block");
+        auto block_at = [&](const BlockPos& at) { return blk.has("type") ? provide_state(env, blk, random, at) : bd.state(blk); };
+        lv.set(origin, block_at(origin));
         int attempts = sample_int(config.at("attempts"), random);
         for (int i = 0; i < attempts; i++) {
             int dx = sample_int(config.at("xz_offset"), random);
@@ -315,9 +317,8 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
                 if (neighbours > 1) break;
             }
             if (neighbours != 1) continue;
-            lv.set(place, provide_state(env, config.at("block"), random, place));
+            lv.set(place, block_at(place));
         }
-        (void)bd;
         return true;
     }
     if (type == "sequence") {
