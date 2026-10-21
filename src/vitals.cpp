@@ -44,6 +44,22 @@ float Game::health_of(uint64_t gid) {
     return it == players_.end() ? 0.0f : it->second.v.health;
 }
 
+// CombatRules.getDamageAfterAbsorb: the armor and toughness of the worn pieces (their attribute modifiers) soak up part of a hit
+static void armor_values(sim::PlayerSim& s, double& armor, double& tough) {
+    armor = tough = 0.0;
+    for (sim::EquipmentSlot slot : {sim::EquipmentSlot::FEET, sim::EquipmentSlot::LEGS, sim::EquipmentSlot::CHEST, sim::EquipmentSlot::HEAD}) {
+        sim::ItemStack& st = s.inv.equipment_at(slot);
+        if (st.is_empty()) continue;
+        const vg::Json* mods = st.item()->component("minecraft:attribute_modifiers");
+        if (!mods || !mods->is_arr()) continue;
+        for (const vg::Json& m : mods->arr) {
+            if (!m.has("type") || !m.has("amount")) continue;
+            if (m.at("type").str == "minecraft:armor") armor += m.at("amount").float_value();
+            else if (m.at("type").str == "minecraft:armor_toughness") tough += m.at("amount").float_value();
+        }
+    }
+}
+
 // LivingEntity.hurtServer: a hit inside the 10 ticks after another only counts by how much it exceeds the last one
 void Game::hurt_locked(PState& p, float amount, const std::string& source) {
     if (p.v.dead || amount <= 0.0f) return;
@@ -59,6 +75,24 @@ void Game::hurt_locked(PState& p, float amount, const std::string& source) {
     } else if (!bypass) {
         p.v.last_hurt = amount;
         p.v.invulnerable = 20;
+    }
+    bool soaked = !bypass && source != "fall" && source != "starve" && source != "drown";
+    if (soaked && p.sim) {
+        double armor, tough;
+        armor_values(*p.sim, armor, tough);
+        if (armor > 0.0) {
+            double f = 2.0 + tough / 4.0, g = std::max(armor * 0.2, std::min(20.0, armor - real / f));
+            float before = real;
+            real = float(real * (1.0 - g / 25.0));
+            int wear = std::max(1, int(before / 4.0f));   // each piece loses durability
+            for (sim::EquipmentSlot slot : {sim::EquipmentSlot::FEET, sim::EquipmentSlot::LEGS, sim::EquipmentSlot::CHEST, sim::EquipmentSlot::HEAD}) {
+                sim::ItemStack& st = p.sim->inv.equipment_at(slot);
+                if (st.is_empty() || !st.damageable()) continue;
+                int d = st.damage_value() + wear;
+                if (d >= st.item()->max_damage) st.shrink(st.count()); else st.set_damage_value(d);
+            }
+            p.sim->inventory_menu->broadcast_changes();
+        }
     }
     p.v.health -= real;
     add_exhaustion_locked(p, 0.1f);
@@ -97,7 +131,10 @@ void Game::die_locked(PState& p, const std::string& source) {
     GEvent d;
     d.kind = GEvent::Death;
     d.id = p.id;
-    if (key.rfind("mob:", 0) == 0) {   // "mob:minecraft:zombie": <player> was slain by <mob>
+    if (key.rfind("arrow:", 0) == 0 || key.rfind("explosion:", 0) == 0) {   // shot by / blown up by <mob>
+        std::string t = key.substr(key.find(':') + 1);
+        d.text = std::string("{\"translate\":\"") + (key[0] == 'a' ? "death.attack.arrow" : "death.attack.explosion.player") + "\",\"with\":[{\"text\":\"" + p.id->name + "\"},{\"translate\":\"entity.minecraft." + t.substr(t.find(':') + 1) + "\"}]}";
+    } else if (key.rfind("mob:", 0) == 0) {   // "mob:minecraft:zombie": <player> was slain by <mob>
         std::string t = key.substr(4);
         d.text = "{\"translate\":\"death.attack.mob\",\"with\":[{\"text\":\"" + p.id->name + "\"},{\"translate\":\"entity.minecraft." + t.substr(t.find(':') + 1) + "\"}]}";
     } else

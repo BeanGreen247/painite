@@ -34,6 +34,8 @@ public:
     virtual void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) {}
     virtual void hurt_player(uint64_t gid, float amount, const std::string& source, const Vec3& knockback) {}
     virtual void mob_died(Entity& e, bool by_player) {}
+    virtual bool can_see_sky(int x, int y, int z) const { return false; }
+    virtual void explode(const Vec3& at, float power, Entity* source) {}
     virtual int difficulty() const { return 2; }
     virtual int64_t day_time() const { return 0; }
 };

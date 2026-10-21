@@ -1,6 +1,9 @@
 #include "entity_manager.hpp"
 #include "data.hpp"
 #include "loot.hpp"
+#include "mob.hpp"
+#include <array>
+#include <set>
 #include "../blocks.hpp"
 #include "../dimension.hpp"
 #include <algorithm>
@@ -103,6 +106,65 @@ void EntityManager::mob_died(Entity& e, bool by_player) {
         item->set_default_pickup_delay();
         add_entity(std::move(item));
     }
+}
+
+bool EntityManager::can_see_sky(int x, int y, int z) const {
+    if (!chunk_loaded(x, z)) return false;
+    return world_.top_y(x, z) < y;
+}
+
+// Explosion.explode: rays eat through blocks by their blast resistance, entities in range get hurt and pushed
+void EntityManager::explode(const Vec3& at, float power, Entity* source) {
+    const Blocks& B = Blocks::get();
+    std::set<std::array<int, 3>> blocks;
+    for (int j = 0; j < 16; ++j)
+        for (int k = 0; k < 16; ++k)
+            for (int l = 0; l < 16; ++l) {
+                if (j != 0 && j != 15 && k != 0 && k != 15 && l != 0 && l != 15) continue;
+                double dx = j / 15.0 * 2.0 - 1.0, dy = k / 15.0 * 2.0 - 1.0, dz = l / 15.0 * 2.0 - 1.0;
+                double len = std::sqrt(dx * dx + dy * dy + dz * dz);
+                dx /= len; dy /= len; dz /= len;
+                float intensity = power * (0.7f + random_.next_float() * 0.6f);
+                double x = at.x, y = at.y, z = at.z;
+                for (; intensity > 0.0f; intensity -= 0.22500001f) {
+                    int bx = int(std::floor(x)), by = int(std::floor(y)), bz = int(std::floor(z));
+                    if (chunk_loaded(bx, bz)) {
+                        const BlockInfo& bi = B.info(block_at(bx, by, bz));
+                        if (!bi.air) {
+                            const BlockProps* bp = BlockTable::get().find(bi.name);
+                            float resist = bp ? bp->explosion_resistance : 0.0f;
+                            intensity -= (resist + 0.3f) * 0.3f;
+                            if (intensity > 0.0f) blocks.insert({bx, by, bz});
+                        }
+                    }
+                    x += dx * 0.3; y += dy * 0.3; z += dz * 0.3;
+                }
+            }
+    double q = double(power) * 2.0;
+    auto damage_of = [&](double dist) {
+        double impact = 1.0 - dist / q;
+        return std::pair<float, double>(float(int((impact * impact + impact) / 2.0 * 7.0 * q + 1.0)), impact);
+    };
+    for (PlayerRef& pl : players) {   // players: the ones near enough (exposure is taken as 1)
+        Vec3 c(pl.pos.x, pl.pos.y + 0.9, pl.pos.z);
+        double dist = (c - at).length();
+        if (dist > q || !pl.targetable) continue;
+        auto d = damage_of(dist);
+        Vec3 dir = (Vec3(pl.pos.x, pl.pos.y + 1.62, pl.pos.z) - at).normalize().scale(d.second);
+        if (on_hurt_player) on_hurt_player(pl.gid, d.first, source ? "explosion:" + source->type : "explosion", dir);
+    }
+    for (auto& e : entities_) {
+        if (e.get() == source || e->removed) continue;
+        auto* le = dynamic_cast<LivingEntity*>(e.get());
+        if (!le || le->dead) continue;
+        double dist = (Vec3(le->pos.x, le->pos.y + le->height / 2, le->pos.z) - at).length();
+        if (dist > q) continue;
+        auto d = damage_of(dist);
+        le->hurt(d.first, &at);
+        Vec3 dir = (Vec3(le->pos.x, le->pos.y + le->height * 0.9, le->pos.z) - at).normalize().scale(d.second * (1.0 - le->knockback_resistance));
+        le->delta = le->delta + dir;
+    }
+    for (auto& b : blocks) set_block_state(b[0], b[1], b[2], B.air());
 }
 
 int EntityManager::min_build_y() const { return dim_info(dim_).min_y; }

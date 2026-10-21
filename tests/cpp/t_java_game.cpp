@@ -214,7 +214,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2"};
     return o;
 }
 
@@ -372,6 +372,44 @@ void natural(Ctx& t, Env& e) {
     t.check(B.count("add_entity") >= 1, "animals spawn around a player (" + std::to_string(B.count("add_entity")) + " seen)");
 }
 
+// creeper blast, skeleton arrows, zombies burning in the sun
+void mobs2(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Hunter2");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    int px = int(B.pos[0]), py = int(B.pos[1]), pz = int(B.pos[2]);
+    auto at = [&](int dx, int dz) { return std::to_string(px + dx) + " " + std::to_string(py) + " " + std::to_string(pz + dz); };
+    // zombies burn in daylight: a hurt animation without anybody hitting it (the player is in creative, so it is no target)
+    B.command("gamemode creative");
+    B.pump(150);
+    B.log.clear();
+    B.command("summon zombie " + at(10, 0));
+    B.until([&] { for (auto& en : B.log) if (en.first == "entity_event") { Rd r(en.second); r.be32(); if (r.u8() == 2) return true; } return false; }, 8000);
+    bool burnt = false;
+    for (auto& en : B.log) if (en.first == "entity_event") { Rd r(en.second); r.be32(); if (r.u8() == 2) burnt = true; }
+    t.check(burnt, "a zombie in the sun catches fire and gets hurt");
+    // a skeleton shoots: the arrow shows up as an entity and the skeleton holds a bow
+    B.command("gamemode survival");
+    B.pump(150);
+    B.log.clear();
+    B.command("summon skeleton " + at(0, 9));
+    B.until([&] { for (auto& en : B.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == ids->entity_types.at("arrow")) return true; } return false; }, 8000);
+    bool arrow = false;
+    for (auto& en : B.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == ids->entity_types.at("arrow")) arrow = true; }
+    t.check(arrow, "a skeleton shoots arrows");
+    t.check(B.count("set_equipment") >= 1, "the skeleton is shown holding a bow");
+    // a creeper next to a survival player blows up: damage and blocks gone
+    B.command("kill @e");
+    B.log.clear();
+    B.command("summon creeper " + at(-3, 0));
+    B.until([&] { return B.count("player_combat_kill") >= 1 || (B.count("set_health") >= 1 && B.count("block_update") >= 1); }, 6000);
+    t.check(B.count("block_update") >= 1, "the creeper explosion removes blocks");
+    float lowest = 20;
+    for (auto& en : B.log) if (en.first == "set_health") { Rd r(en.second); lowest = std::min(lowest, r.f32()); }
+    t.check(lowest < 20.0f || B.count("player_combat_kill") >= 1, "the creeper explosion hurts the player");
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -402,6 +440,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"health-and-death", vitals});
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"mobs", mobs});
+    d.tests.push_back({"mobs-more", mobs2});
     d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));
 }

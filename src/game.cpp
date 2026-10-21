@@ -778,6 +778,13 @@ void Game::tick() {
                 event.entity_data = track.data;
                 event.block = entity.block_state_id() < 0 ? 0 : static_cast<uint16_t>(entity.block_state_id());
                 queue_event(viewer->second.id, std::move(event));
+                if (auto* living = dynamic_cast<sim::LivingEntity*>(&entity); living && !living->main_hand.is_empty()) {
+                    GEvent eq;
+                    eq.kind = GEvent::EntityEquip;
+                    eq.entity_id = entity.id;
+                    eq.stack = living->main_hand;
+                    queue_event(viewer->second.id, std::move(eq));
+                }
             }
 
             if (!first) {

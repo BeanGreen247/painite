@@ -430,6 +430,13 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             }
             break;
         }
+        case GEvent::EntityEquip:
+            w.varint(vd.packet("play/c/set_equipment"));
+            w.varint(ev.entity_id);
+            w.u8(0);   // main hand, the last entry
+            write_stack(w, ev.stack, vd);
+            send(c, w.b);
+            break;
         case GEvent::EntityEvent:
             w.varint(vd.packet("play/c/entity_event"));
             w.be32(static_cast<uint32_t>(ev.entity_id));

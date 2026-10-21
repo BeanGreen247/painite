@@ -36,6 +36,8 @@ public:
     void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) override;
     void hurt_player(uint64_t gid, float amount, const std::string& source, const Vec3& knockback) override { if (on_hurt_player) on_hurt_player(gid, amount, source, knockback); }
     void mob_died(Entity& e, bool by_player) override;
+    bool can_see_sky(int x, int y, int z) const override;
+    void explode(const Vec3& at, float power, Entity* source) override;
     int difficulty() const override { return difficulty_value; }
     int64_t day_time() const override { return day_time_value; }
     std::vector<PlayerRef> players;                  // set by the game once a tick
