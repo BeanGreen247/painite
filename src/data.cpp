@@ -213,4 +213,6 @@ bool load_vanilla_file(const std::string& bin, VanillaData& v, std::string& err)
     return true;
 }
 
+std::string g_gameplay_version;
+
 }  // namespace pn

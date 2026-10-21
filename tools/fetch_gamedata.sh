@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Copies the gameplay data (loot tables, recipes, tags, enchantments, damage types, item components, block and entity facts) out of Mojang's server jar
 # into data/game/<version>/. Needs tools/fetch_worldgen.sh to have downloaded the jar, and JDK 25 on PATH (see docs/HANDOFF.md).
-# usage: tools/fetch_gamedata.sh [VERSION]      (default 26.2)
+# usage: tools/fetch_gamedata.sh [VERSION]      (default 26.3)
 set -eu
 cd "$(dirname "$(readlink -f "$0")")/.."
-v=${1:-26.2}
+v=${1:-26.3}
 out=data/game/$v
 [ -f "$out/.done" ] && { echo "$v: already there"; exit 0; }
 jar=build/mojang/server-$v.jar

@@ -215,10 +215,24 @@ bool Server::start(std::string& err) {
     if (cfg.workers_min < 1) cfg.workers_min = 1;
     if (cfg.workers_min > cfg.workers_max) cfg.workers_min = cfg.workers_max;
 
-    {   // gameplay data (items, loot tables, recipes ...): data/game/26.2, made by tools/fetch_gamedata.sh
+    {   // gameplay data (items, loot tables, recipes ...): the newest data/game/<version>, made by tools/fetch_gamedata.sh
         std::string err2;
-        for (std::string d : {cfg.data_dir + "/game/26.2", std::string("data/game/26.2"), exe_dir + "/data/game/26.2", exe_dir + "/../data/game/26.2"}) {
-            if (access((d + "/.done").c_str(), R_OK) != 0) continue;
+        auto vkey = [](const std::string& v) { int a = 0, b = 0; sscanf(v.c_str(), "%d.%d", &a, &b); return a * 1000 + b; };
+        std::vector<std::pair<int, std::string>> cands;   // version key, directory
+        std::vector<std::string> roots = {cfg.data_dir + "/game", "data/game", exe_dir + "/data/game", exe_dir + "/../data/game"};
+        for (auto& root : roots) {
+            if (DIR* dp = opendir(root.c_str())) {
+                while (dirent* e = readdir(dp)) {
+                    std::string n = e->d_name;
+                    if (n[0] != '.' && access((root + "/" + n + "/.done").c_str(), R_OK) == 0) cands.emplace_back(vkey(n), root + "/" + n);
+                }
+                closedir(dp);
+            }
+        }
+        std::stable_sort(cands.begin(), cands.end(), [](auto& a, auto& b) { return a.first > b.first; });
+        for (auto& cand : cands) {
+            const std::string& d = cand.second;
+            g_gameplay_version = d.substr(d.rfind('/') + 1);
             if (sim::Items::load(d, err2)) {
                 sim::Tags::set_dir(d);
                 sim::LootTables::set_dir(d);
@@ -229,7 +243,7 @@ bool Server::start(std::string& err) {
             }
             warn("gameplay data unusable: " + err2);
         }
-        if (sim::Items::get().size() == 0) warn("no gameplay data (data/game/26.2): inventories and survival rules are off. Run tools/fetch_gamedata.sh 26.2");
+        if (sim::Items::get().size() == 0) warn("no gameplay data (data/game/<version>): inventories and survival rules are off. Run tools/fetch_gamedata.sh <version>");
     }
     auto bins = list_vanilla_bins(cfg.data_dir, exe_dir);
     if (bins.empty()) { err = "no protocol data found (data/vanilla-*.bin). Run: python3 tools/fetch_vanilla_data.py"; return false; }
@@ -241,15 +255,15 @@ bool Server::start(std::string& err) {
     }
     if (data.empty()) { err = "none of the protocol data files could be loaded"; return false; }
     std::sort(data.begin(), data.end(), [](auto& a, auto& b) { return a.protocol < b.protocol; });
-    for (auto& v : data) if (v.version == "26.2") sim::Registries::set_dynamic(v.dyn);   // enchantment, damage type, ... ids of the version the gameplay data is for
+    for (auto& v : data) if (v.version == g_gameplay_version) sim::Registries::set_dynamic(v.dyn);   // enchantment, damage type, ... ids of the version the gameplay data is for
     {
         std::vector<std::pair<int, std::string>> files;
         for (auto it = data.rbegin(); it != data.rend(); ++it) files.emplace_back(it->protocol, it->blocks_path);  // newest first
         if (!Blocks::get().load(files, err)) { err = "block data: " + err + " (run tools/fetch_vanilla_data.py again)"; return false; }
-        std::string shape_states = find_data_file(cfg.data_dir, exe_dir, "game/26.2/blockshapes_states.txt");
-        std::string shape_boxes = find_data_file(cfg.data_dir, exe_dir, "game/26.2/blockshapes.txt");
+        std::string shape_states = find_data_file(cfg.data_dir, exe_dir, "game/" + g_gameplay_version + "/blockshapes_states.txt");
+        std::string shape_boxes = find_data_file(cfg.data_dir, exe_dir, "game/" + g_gameplay_version + "/blockshapes.txt");
         if (shape_states.empty() || shape_boxes.empty()) {
-            warn("no block collision shapes (run tools/fetch_gamedata.sh 26.2): simulated entities will not collide with blocks");
+            warn("no block collision shapes (run tools/fetch_gamedata.sh <version>): simulated entities will not collide with blocks");
         } else {
             std::string shape_error;
             if (!sim::BlockCollisionShapes::get().load(shape_states, shape_boxes, shape_error))

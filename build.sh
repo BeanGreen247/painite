@@ -120,6 +120,7 @@ if [ "$DATA" = 1 ]; then
   (cd /tmp && python3 -I "$ROOT/tools/fetch_bedrock_data.py" --out "$ROOT/data")
   say "extracting Mojang's world generation data for 26.3 (needs Java 25 on PATH; without it new worlds use the built-in approximate generator)"
   "$ROOT/tools/fetch_worldgen.sh" 26.3 || echo "note: world generation data not extracted; see tools/fetch_worldgen.sh"
+  "$ROOT/tools/fetch_gamedata.sh" 26.3 || echo "note: gameplay data not extracted; see tools/fetch_gamedata.sh"
   say "mapping Java blocks to Bedrock runtime ids (downloads Geyser's block palette, MIT)"
   (cd /tmp && python3 -I "$ROOT/tools/fetch_bedrock_blocks.py" --out "$ROOT/data")
 fi

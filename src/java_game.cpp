@@ -159,7 +159,7 @@ static void write_stack(Wr& w, const sim::ItemStack& st, const VanillaData& vd) 
     if (id < 0) { w.varint(0); return; }
     w.varint(st.count());
     w.varint(id);
-    if (vd.version == "26.2") {
+    if (vd.version == g_gameplay_version) {
         w.varint(static_cast<int32_t>(st.patch().added.size()));
         w.varint(static_cast<int32_t>(st.patch().removed.size()));
         for (auto& kv : st.patch().added) { w.varint(kv.first); w.raw(kv.second.data(), kv.second.size()); }
@@ -557,7 +557,7 @@ void Worker::on_creative_slot(JConn& c, Rd& r) {
             st = sim::ItemStack(t, count);
             int pos = peek.varint(), neg = peek.varint();
             if (peek.bad || pos < 0 || neg < 0) return;
-            if (c.vd->version == "26.2") {   // component values are only kept for the data version Painite loaded
+            if (c.vd->version == g_gameplay_version) {   // component values are only kept for the data version Painite loaded
                 for (int i = 0; i < pos && !peek.bad; i++) {
                     int type = peek.varint(), len = peek.varint();
                     if (peek.bad || len < 0 || static_cast<size_t>(len) > peek.left()) return;

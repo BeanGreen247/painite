@@ -89,6 +89,9 @@ def main():
     if yesno("Copy an existing world (Paper/vanilla 26.x) into the server", False):
         world = os.path.expanduser(ask("World folder to copy", "", lambda s: None if os.path.isdir(os.path.expanduser(s)) else "not a folder"))
     gen = choice("Chunks that are not on disk (auto: the world type's generator in a new world, void in an existing one; terrain: the built-in approximation of vanilla)", ["auto", "terrain", "flat", "void"], "auto")
+    wgdir = os.path.join(ROOT, "data", "worldgen")
+    wgvers = sorted((d for d in os.listdir(wgdir) if os.path.isdir(os.path.join(wgdir, d))), key=lambda v: [int(x) for x in v.split(".") if x.isdigit()]) if os.path.isdir(wgdir) else []
+    wgver = choice("Minecraft version whose terrain and structures new chunks follow (clients of every supported version can still join)", wgvers[::-1], wgvers[-1]) if len(wgvers) > 1 else (wgvers[0] if wgvers else "26.3")
     autosave = ask("Autosave every N seconds", "300", num(10, 86400))
     adv = yesno("Change CPU/worker/memory settings", False)
     cores, maxw, memcap = "all", "0", "1024"
@@ -121,6 +124,7 @@ def main():
         return re.sub(rf"^({re.escape(key)}\s*=\s*)(.*?)(\s*#.*)?$", lambda m: m.group(1) + val + (m.group(3) or ""), text, count=1, flags=re.M)
     toml = setkey(toml, "bedrock", "true" if bedrock else "false")
     toml = setkey(toml, "generator", f'"{gen}"')
+    toml = setkey(toml, "worldgen_version", f'"{wgver}"')
     toml = setkey(toml, "autosave_s", autosave)
     toml = setkey(toml, "cores", f'"{cores}"')
     toml = setkey(toml, "max", maxw)
