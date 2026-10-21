@@ -8,6 +8,7 @@ namespace pn::vg {
 // Height range of the thing being generated (WorldGenerationContext): anchors resolve against it
 struct GenRange {
     int min_y = -64, height = 384;
+    int sea_level = 63;   // for relative_to_sea_level anchors (26.3)
 };
 
 int resolve_anchor(const Json& anchor, const GenRange& r);                   // {"absolute": n} | {"above_bottom": n} | {"below_top": n}

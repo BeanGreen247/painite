@@ -445,7 +445,8 @@ struct LazyXZ : MCond {
     virtual bool compute(MCtx& c) const = 0;
 };
 
-int resolve_anchor(const Json& a, int min_y, int height) {
+int resolve_anchor(const Json& a, int min_y, int height, int sea_level = 63) {
+    if (a.has("relative_to_sea_level")) return sea_level + int(a.at("relative_to_sea_level").int_value());
     if (a.has("absolute")) return int(a.at("absolute").int_value());
     if (a.has("above_bottom")) return min_y + int(a.at("above_bottom").int_value());
     if (a.has("below_top")) return height - 1 + min_y - int(a.at("below_top").int_value());
@@ -607,7 +608,7 @@ const MCond* Terrain3::Impl::parse_cond(const Json& j) {
     if (type == "minecraft:stone_depth")
         return keep(std::make_unique<StoneDepth>(id, int(j.at("offset").int_value()), j.at("add_surface_depth").boolean(), int(j.at("secondary_depth_range").int_value()), j.at("surface_type").str == "ceiling"));
     if (type == "minecraft:y_above")
-        return keep(std::make_unique<YAbove>(id, resolve_anchor(j.at("anchor"), T.ns_.min_y, T.ns_.height), int(j.at("surface_depth_multiplier").int_value()), j.at("add_stone_depth").boolean()));
+        return keep(std::make_unique<YAbove>(id, resolve_anchor(j.at("anchor"), T.ns_.min_y, T.ns_.height, T.ns_.sea_level), int(j.at("surface_depth_multiplier").int_value()), j.at("add_stone_depth").boolean()));
     if (type == "minecraft:water")
         return keep(std::make_unique<WaterCond>(id, int(j.at("offset").int_value()), int(j.at("surface_depth_multiplier").int_value()), j.at("add_stone_depth").boolean()));
     if (type == "minecraft:biome") {
@@ -631,7 +632,7 @@ const MCond* Terrain3::Impl::parse_cond(const Json& j) {
         return keep(std::move(cond));
     }
     if (type == "minecraft:vertical_gradient")
-        return keep(std::make_unique<VerticalGradient>(id, resolve_anchor(j.at("true_at_and_below"), T.ns_.min_y, T.ns_.height), resolve_anchor(j.at("false_at_and_above"), T.ns_.min_y, T.ns_.height),
+        return keep(std::make_unique<VerticalGradient>(id, resolve_anchor(j.at("true_at_and_below"), T.ns_.min_y, T.ns_.height, T.ns_.sea_level), resolve_anchor(j.at("false_at_and_above"), T.ns_.min_y, T.ns_.height, T.ns_.sea_level),
                                                        &T.rs_->random_factory(j.at("random_name").str)));
     if (type == "minecraft:steep") return keep(std::make_unique<Steep>(id));
     if (type == "minecraft:hole") return keep(std::make_unique<Hole>(id));

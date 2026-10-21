@@ -59,7 +59,7 @@ commands = [
 ]
 
 [world]
-worldgen_version = "26.2"  # which Mojang version's terrain, structures and features to reproduce: 26.1 | 26.2 (clients of every supported version can still join)
+worldgen_version = "26.3"  # which Mojang version's terrain, structures and features to reproduce: 26.1 | 26.2 | 26.3 (clients of every supported version can still join)
 generator   = "auto"   # for chunks not on disk: auto (terrain or flat for a new world as set by level-type, void when region files exist) | terrain | flat | void
 # name      = "world"
 # level_type = "normal"  # normal | flat | void | large_biomes | amplified

@@ -260,7 +260,7 @@ int main(int argc, char** argv) {
         if (!load_vanilla_file("data/vanilla-26.3.bin", vd, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
         if (!Blocks::get().load({{vd.protocol, vd.blocks_path}}, err)) { fprintf(stderr, "%s\n", err.c_str()); return 1; }
         BlockData bd("data/worldgen/26.3/blockflags.txt", "data/worldgen/26.3/blockclasses.txt", reg);
-        int dim_min = settings == "overworld" ? -64 : 0, dim_h = settings == "overworld" ? 384 : 256;
+        bool nether_end = settings == "nether" || settings == "end"; int dim_min = nether_end ? 0 : -64, dim_h = nether_end ? 256 : 384;
         v3::Terrain3 terrain(reg, bd, seed, settings, {}, dim_min, dim_h);
         const Blocks& B = Blocks::get();
         for (int c = 0; c < count; c++) {

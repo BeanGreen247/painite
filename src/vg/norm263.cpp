@@ -12,6 +12,7 @@ bool file_exists(const std::string& p) { struct stat st; return stat(p.c_str(), 
 
 bool is_state(const Json& j) {
     if (!j.is_obj() || !j.has("id") || !j.at("id").is_str()) return false;
+    if (j.at("id").str.find('/') != std::string::npos) return false;   // structure template ids are paths; block ids never are
     for (auto& kv : j.obj) if (kv.first != "id" && kv.first != "properties") return false;
     return true;
 }

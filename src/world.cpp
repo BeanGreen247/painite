@@ -124,7 +124,7 @@ bool World::open(const std::string& d, const std::string& generator, const std::
     if (kind == "terrain" && (lt == "flat" || lt == "void")) gk = lt == "flat" ? GenKind::Flat : GenKind::Void;
     seed = stored_seed.empty() ? seed_from_string(seed_str) : static_cast<uint64_t>(strtoll(stored_seed.c_str(), nullptr, 10));
     gen = std::make_unique<WorldGen>(gk, seed, biome_names);
-    if (generator == "vanilla" && (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified))
+    if ((generator == "vanilla" || generator == "auto" || generator == "terrain") && (gk == GenKind::Normal || gk == GenKind::LargeBiomes || gk == GenKind::Amplified))
         vgen = make_vanilla_gen(gen_version, 0, seed, lt, biome_names);
     gen_name = gk == GenKind::Void ? "void" : gk == GenKind::Flat ? "flat" : gk == GenKind::LargeBiomes ? "large_biomes" : gk == GenKind::Amplified ? "amplified" : "normal";
     if (!existing && gk != GenKind::Void) {

@@ -33,6 +33,7 @@ int resolve_anchor(const Json& a, const GenRange& r) {
     if (const Json* v = a.find("absolute")) return int(v->int_value());
     if (const Json* v = a.find("above_bottom")) return r.min_y + int(v->int_value());
     if (const Json* v = a.find("below_top")) return r.height - 1 + r.min_y - int(v->int_value());
+    if (const Json* v = a.find("relative_to_sea_level")) return r.sea_level + int(v->int_value());
     throw std::runtime_error("bad vertical anchor");
 }
 

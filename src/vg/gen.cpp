@@ -203,7 +203,7 @@ struct VanillaGen::Impl {
                 per_biome.push_back(list);
             }
             int lo = std::max(ns.min_y, dim_min_y);
-            carvers3 = std::make_unique<v3::Carvers3>(reg, *bd, o.seed, GenRange{lo, std::min(ns.min_y + ns.height, dim_min_y + dim_height) - lo}, std::move(per_biome));
+            carvers3 = std::make_unique<v3::Carvers3>(reg, *bd, o.seed, GenRange{lo, std::min(ns.min_y + ns.height, dim_min_y + dim_height) - lo, ns.sea_level}, std::move(per_biome));
         }
         decorator = std::make_unique<Decorator>(reg, o.seed, climate.biomes);
         make_structures();
@@ -520,7 +520,7 @@ struct VanillaGen::Impl {
         }
         const int min_q = dim_min_y >> 2;
         Proto* const (&g)[9] = reinterpret_cast<Proto* const (&)[9]>(grid);
-        Level level(*bd, cx, cz, chunks, GenRange{grid[4]->blocks.min_y, grid[4]->blocks.height}, [&](int x, int y, int z) {
+        Level level(*bd, cx, cz, chunks, GenRange{grid[4]->blocks.min_y, grid[4]->blocks.height, ns.sea_level}, [&](int x, int y, int z) {
             return zoom_biome(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
         });
         if (opt.stage == "structures") biomes.clear();   // structures only: no biome feature runs
@@ -556,7 +556,7 @@ struct VanillaGen::Impl {
         for (int i = 0; i < 9; i++) chunks[i] = &grid[i]->blocks;
         const int min_q = dim_min_y >> 2;
         Proto* const (&g)[9] = reinterpret_cast<Proto* const (&)[9]>(grid);
-        Level level(*bd, cx, cz, chunks, GenRange{center.blocks.min_y, center.blocks.height}, [&](int x, int y, int z) {
+        Level level(*bd, cx, cz, chunks, GenRange{center.blocks.min_y, center.blocks.height, ns.sea_level}, [&](int x, int y, int z) {
             return zoom_biome(x, y, z, [&](int qx, int qy, int qz) { return proto_biome(g, cx, cz, qx, qy, qz, min_q); });
         });
         std::vector<std::array<int, 3>> marks;
