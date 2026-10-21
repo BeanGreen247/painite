@@ -23,6 +23,7 @@ LivingEntity::LivingEntity(const std::string& t, EntityWorld* w) : Entity(t, w) 
     attack_damage = attr(p, "attack_damage", 0.0);
     attack_knockback = attr(p, "attack_knockback", 0.0);
     knockback_resistance = attr(p, "knockback_resistance", 0.0);
+    follow_range = attr(p, "follow_range", 16.0);
     jump_power = float(attr(p, "jump_strength", 0.42));
     step_height = float(attr(p, "step_height", 0.6));
     yaw = 0;
@@ -205,24 +206,23 @@ void Mob::wander() {
 }
 
 const EntityWorld::PlayerRef* Mob::pick_target(double range, double& dist2) {
-    std::vector<EntityWorld::PlayerRef> near;
+    thread_local std::vector<EntityWorld::PlayerRef> near;   // reused: this runs for every hostile mob every tick
+    near.clear();
     level->players_near(pos, range, near);
-    static thread_local std::vector<EntityWorld::PlayerRef> keep;
-    keep.clear();
     const EntityWorld::PlayerRef* best = nullptr;
     double best_d = 1e30;
     for (auto& p : near) {
         if (!p.targetable) continue;
         double d = (p.pos.x - pos.x) * (p.pos.x - pos.x) + (p.pos.y - pos.y) * (p.pos.y - pos.y) + (p.pos.z - pos.z) * (p.pos.z - pos.z);
-        if (d < best_d) { best_d = d; keep.assign(1, p); best = &keep[0]; }
+        if (d < best_d) { best_d = d; best = &p; }
     }
     dist2 = best_d;
-    return best;
+    return best;   // valid until the next call on this thread
 }
 
 void Mob::melee() {
     double best_d;
-    const EntityWorld::PlayerRef* best = pick_target(attr(EntityTable::get().find(type), "follow_range", 16.0), best_d);
+    const EntityWorld::PlayerRef* best = pick_target(follow_range, best_d);
     if (attack_cooldown > 0) --attack_cooldown;
     if (!best) { target_gid = 0; return; }
     target_gid = best->gid;

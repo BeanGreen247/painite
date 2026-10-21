@@ -9,6 +9,7 @@ class LivingEntity : public Entity {
 public:
     LivingEntity(const std::string& type, EntityWorld* w);
     float health = 20.0f, max_health = 20.0f;
+    double follow_range = 16.0;   // looked up once, not by name every tick
     double base_speed = 0.1, speed = 0.1, attack_damage = 0.0, attack_knockback = 0.0, knockback_resistance = 0.0;
     float jump_power = 0.42f;
     float flying_speed = 0.02f;
