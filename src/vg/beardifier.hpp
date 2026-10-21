@@ -11,6 +11,7 @@ public:
     Beardifier(const std::vector<std::shared_ptr<const StructureStart>>& starts, int chunk_x, int chunk_z);
     bool empty() const { return !has_box_; }
     double compute(int x, int y, int z) const;
+    float compute_f(int x, int y, int z) const;   // the 26.3 version: single precision throughout
 private:
     std::vector<Rigid> pieces_;
     std::vector<PieceJunction> junctions_;

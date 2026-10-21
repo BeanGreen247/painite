@@ -111,4 +111,47 @@ double Beardifier::compute(int x, int y, int z) const {
     return noise;
 }
 
+float Beardifier::compute_f(int x, int y, int z) const {
+    if (!has_box_ || !affected_.inside(x, y, z)) return 0.0f;
+    auto bury_f = [](float dx, float dy, float dz) {
+        float d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 >= 36.0f) return 0.0f;
+        return 1.0f - float(std::sqrt(double(d2))) / 6.0f;
+    };
+    auto beard_f = [](int dx, int dy, int dz, int y_to_ground) {
+        int xi = dx + 12, yi = dy + 12, zi = dz + 12;
+        if (!(in_range(xi) && in_range(yi) && in_range(zi))) return 0.0f;
+        float dy_off = float(y_to_ground) + 0.5f;
+        float d2 = float(dx) * float(dx) + dy_off * dy_off + float(dz) * float(dz);
+        float value = -dy_off * float(fast_inv_sqrt(double(d2 / 2.0f))) / 2.0f;
+        return value * g_kernel[zi * 24 * 24 + xi * 24 + yi];
+    };
+    float noise = 0.0f;
+    for (auto& r : pieces_) {
+        const BoundingBox& box = r.box;
+        int dx = std::max(0, std::max(box.x0 - x, x - box.x1));
+        int dz = std::max(0, std::max(box.z0 - z, z - box.z1));
+        int ground_y = box.y0 + r.ground_level_delta;
+        int dy_to_ground = y - ground_y;
+        int dy = 0;
+        switch (r.adjustment) {
+            case 3: case 1: dy = dy_to_ground; break;
+            case 2: dy = std::max(0, std::max(ground_y - y, y - box.y1)); break;
+            case 4: dy = std::max(0, std::max(box.y0 - y, y - box.y1)); break;
+            default: break;
+        }
+        switch (r.adjustment) {
+            case 3: noise += bury_f(float(dx), float(dy) / 2.0f, float(dz)); break;
+            case 1: case 2: noise += beard_f(dx, dy, dz, dy_to_ground) * 0.8f; break;
+            case 4: noise += bury_f(float(dx) / 2.0f, float(dy) / 2.0f, float(dz) / 2.0f) * 0.8f; break;
+            default: break;
+        }
+    }
+    for (auto& j : junctions_) {
+        int dx = x - j.source_x, dy = y - j.source_ground_y, dz = z - j.source_z;
+        noise += beard_f(dx, dy, dz, dy) * 0.4f;
+    }
+    return noise;
+}
+
 }  // namespace pn::vg

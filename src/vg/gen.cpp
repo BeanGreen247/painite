@@ -11,6 +11,7 @@
 #include "noisegen.hpp"
 #include "surface.hpp"
 #include "terrain3.hpp"
+#include "carver3.hpp"
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
@@ -50,6 +51,7 @@ struct VanillaGen::Impl {
     // 26.3: the generator engine of net.minecraft.world.level.levelgen was rewritten (float density, material rules); this path replaces the noise, surface and biome parts
     bool is3 = false;
     std::unique_ptr<v3::Terrain3> t3;
+    std::unique_ptr<v3::Carvers3> carvers3;
     std::mutex bc_mu;
     std::map<std::pair<int, int>, std::shared_ptr<const std::vector<uint8_t>>> bc_cache;
 
@@ -188,6 +190,19 @@ struct VanillaGen::Impl {
         ns.min_y = ts.min_y; ns.height = ts.height; ns.sea_level = ts.sea_level;
         feature_templates = std::make_unique<TemplateManager>(reg, *bd);
         quart_rows = size_t(dim_height / 4);
+        if (o.dim != 2) {
+            std::vector<std::vector<std::string>> per_biome;
+            for (auto& name : climate.biomes) {
+                std::vector<std::string> list;
+                if (const Json* cj = reg.get("biome", name).find("carvers")) {
+                    if (cj->is_arr()) for (auto& e : cj->arr) list.push_back(e.str);
+                    else if (cj->is_str()) list.push_back(cj->str);
+                }
+                per_biome.push_back(list);
+            }
+            int lo = std::max(ns.min_y, dim_min_y);
+            carvers3 = std::make_unique<v3::Carvers3>(reg, *bd, o.seed, GenRange{lo, std::min(ns.min_y + ns.height, dim_min_y + dim_height) - lo}, std::move(per_biome));
+        }
         decorator = std::make_unique<Decorator>(reg, o.seed, climate.biomes);
         make_structures();
     }
@@ -384,6 +399,15 @@ struct VanillaGen::Impl {
     }
 
     // BIOMES + NOISE + SURFACE + CARVERS of one chunk
+    // the Beardifier as a density sampler (the context's beardifier field)
+    struct BeardSampler : v3::Sampler {
+        std::unique_ptr<Beardifier> b;
+        float value(v3::SamplerCtx&, int x, int y, int z) const override { return b->compute_f(x, y, z); }
+        void volume(v3::SamplerCtx&, float* out, const v3::Volume& v) const override {
+            for (int z = 0; z < v.sz; z++) for (int x = 0; x < v.sx; x++) for (int y = 0; y < v.sy; y++) out[v.index(x, y, z)] = b->compute_f(v.block_x(x), v.block_y(y), v.block_z(z));
+        }
+    };
+
     void build3(Proto& p) {
         auto bg = chunk_biomes3(p.cx, p.cz);
         p.biomes = *bg;
@@ -394,9 +418,16 @@ struct VanillaGen::Impl {
             if (dx >= 0 && dx < 4 && dz >= 0 && dz < 4) return int(p.biomes[(size_t(std::clamp(qy - min_q, 0, int(quart_rows) - 1)) * 4 + size_t(dz)) * 4 + size_t(dx)]);
             return biome_cell3(qx, qy, qz);
         };
-        auto nc = t3->make_chunk(p.cx, p.cz, nullptr);
+        BeardSampler beard;
+        if (structures && structures->has_structures()) {
+            beard.b = std::make_unique<Beardifier>(structures->starts_touching(p.cx, p.cz), p.cx, p.cz);
+            if (beard.b->empty()) beard.b.reset();
+        }
+        auto nc = t3->make_chunk(p.cx, p.cz, beard.b ? &beard : nullptr);
         t3->do_fill(*nc, p.blocks);
         if (opt.stage != "noise") t3->build_surface(*nc, p.blocks, lookup);
+        if (carvers3 && opt.stage != "noise" && opt.stage != "surface")
+            carvers3->carve(*t3, *nc, p.blocks, p.cx, p.cz, [this](int qx, int qz) { return carver_biome(qx, qz); }, lookup);
         p.built = true;
     }
 
