@@ -33,6 +33,11 @@ Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~
   - Entities created by structures (witch, drowned, elder guardian, chest minecart, ...) are saved as minimal NBT in `ChunkBlocks::entities`; block entities (chests with LootTable + LootTableSeed, spawners, ...) in `ChunkBlocks::block_entities`. Block entities are now copied into `Chunk::extra["block_entities"]` (sent to clients by jchunk.cpp, saved with the chunk); entities go to `Chunk::gen_entities`, which nothing consumes yet (no entity system).
   - Structure starts are not saved in chunk NBT (`structures.starts` / `References`) yet; `/locate` does not use them.
 
+## Versions (2026-10-21)
+`docs/VERSIONS.md` is the current picture: Java 26.1, 26.2 and 26.3 clients all join; `worldgen_version` in `painite.toml` picks 26.1 or 26.2 terrain
+(26.3 terrain is still the 26.2 generator, the 26.3 engine is not ported); Bedrock data and block palettes are loaded per protocol but only 2193 is
+captured. Dev tools added: `painite_gensweep` (generate an area, list biomes, count blocks), `tools/fetch_bedrock_data.py --bds-version`.
+
 ## Gameplay core (new, `src/sim/`, namespace `pn::sim`)
 Protocol independent rules, ported from Mojang's classes, tested without a server by `painite_simtest` (`tests/sim/simtest.cpp`, needs `data/game/26.2`: run `tools/fetch_gamedata.sh 26.2` with JDK 25 on PATH).
 - `item.*`: `Items` registry (from the data generator's item component reports), `Registries` (protocol ids of every registry from `registries.json`; dynamic ones like enchantments come from the recorded config packets via `set_dynamic`), `ItemStack` (a stack keeps its component patch as the network encodings of the changed components, so stacks round trip byte for byte), wire read/write.

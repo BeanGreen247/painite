@@ -93,7 +93,7 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 
 ## What works
 
-- Java 26.3 (protocol 777) and 26.2 (776) handshake, status/ping, online and offline login (RSA + AES/CFB8, session-server check), configuration, play join, chunk streaming, movement-driven chunk loading, keep-alive, chat, a client command tree.
+- Java 26.3 (protocol 777), 26.2 (776) and 26.1 (775) handshake, status/ping, online and offline login (RSA + AES/CFB8, session-server check), configuration, play join, chunk streaming, movement-driven chunk loading, keep-alive, chat, a client command tree.
 - **Real worlds.** Region files are read and written in the 26.x format (palette entries as strings or compounds, block states mapped by name and properties between versions), with skylight and block light computed for the client. Chunks Painite saves load in Mojang's own server (the roundtrip test in `tests/cpp/t_world.cpp`). Chunks missing on disk come from the world generator for a new world (`level-type`, `level-seed`) and are void in an existing world (`[world] generator`). Players spawn at their saved position (`players/data/<uuid>.dat`, updated on leave and on autosave) or the world spawn.
 - **Editing.** Players break and place blocks (creative building from the hotbar, survival breaking without drops), `/setblock` and `/fill` work, changes are broadcast to everybody who can see the chunk and are saved (autosave every `[world] autosave_s`, on `/save-all` and at shutdown). Placement derives log axis, stairs, slabs, torches and facing from where you click and look.
 - **Game loop and regions.** A 20 Hz tick thread owns world time, the player registry, visibility between players, movement relay, autosave and unloading of idle chunks. Block updates are scheduled per 512 x 512 block region and the regions that have work run in parallel on `tick_threads` threads (like Folia): sand, gravel and concrete powder fall, plants, torches, rails and carpets pop off when their ground goes, tall plants lose their other half. Water and lava do not flow yet.
@@ -107,13 +107,14 @@ See `docs/COMPAT.md` for how Paper, Spigot and Cuberite handle this.
 
 - No inventory: Java creative players can place what they pick, survival players cannot build or collect drops; Bedrock players can break blocks but not place them (their creative inventory is server-authoritative).
 - No mobs, no physics beyond what the clients simulate, no fluids flowing or redstone, no block entities (chests and signs are not sent to clients, so they are invisible; their data is kept in the world files), no weather, Nether and End exist with portals.
+- Versions: terrain of 26.1 and 26.2 can be reproduced (`[world] worldgen_version`); 26.3 terrain and Bedrock versions other than 26.50 are not done, see `docs/VERSIONS.md`.
 - Terrain: `world.generator = "vanilla"` is a bit-exact port of Mojang's generator (noise, biomes, surface, carvers, features, Nether and End; about 0.9 % of blocks still differ because of decoration order). The older approximate generator remains the default. Structures are not vanilla-exact yet, see `docs/HANDOFF.md` for the plan.
 - Real-Mojang online login for Java and Microsoft login for Bedrock are untested against the live services (tests use local fakes).
 - Anti-xray, Velocity/BungeeCord forwarding, io_uring.
 - Java plugins and mods. Painite is native code and does not load Paper/Spigot/Bukkit plugins or Forge/Fabric mods; keep using Paper for those.
 
 Tests: `tests/run_all.sh` builds and runs everything (about 20 seconds). The suite is one C++ program, `build/painite_tests` (`tests/cpp/`); every group of tests starts its own
-Painite server in a temporary folder and the groups run in parallel. It covers Java joins and chunks (26.2 and 26.3), chunks equal to Mojang's, block entities, two-bot games,
+Painite server in a temporary folder and the groups run in parallel. It covers Java joins and chunks (26.1, 26.2 and 26.3), chunks equal to Mojang's, block entities, two-bot games,
 scheduled block updates, bans/whitelist/icon, dimensions and portals, Bedrock joins, dimensions and a lossy link, Java and Bedrock together, online mode against local fake
 session and Xbox services, and Mojang's own server loading a world Painite saved. `--filter text`, `--verbose` and `--serial` narrow or slow it down; `painite_tests proxy L T LOSS DELAY`
 runs the lossy UDP relay on its own. The reference world is built once by Mojang's server (`tools/make_test_world.py`) and cached in `build/test-world`.
