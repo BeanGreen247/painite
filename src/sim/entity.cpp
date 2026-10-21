@@ -1,4 +1,5 @@
 #include "entity.hpp"
+#include "../blocks.hpp"
 #include <cstring>
 #include <chrono>
 
@@ -155,6 +156,44 @@ void ItemEntity::collect_data(std::vector<DataItem>& out) const {
     d.serializer = 7;   // ITEM_STACK
     item.write(d.value);
     out.push_back(std::move(d));
+}
+
+FallingBlockEntity::FallingBlockEntity(EntityWorld* w, double x, double y, double z, uint16_t st) : Entity("minecraft:falling_block", w), state(st) {
+    width = 0.98; height = 0.98; eye_height = 0.833;
+    set_pos(x, y + (1.0 - height) / 2.0, z);   // FallingBlockEntity.fall
+    delta = Vec3(0, 0, 0);
+}
+
+void FallingBlockEntity::drop_as_item() {
+    const BlockInfo& bi = Blocks::get().info(state);
+    if (const ItemType* t = Items::get().by_name(bi.name)) level->add_entity(std::make_unique<ItemEntity>(level, pos.x, pos.y, pos.z, ItemStack(t, 1)));
+}
+
+void FallingBlockEntity::tick() {
+    const Blocks& B = Blocks::get();
+    if (B.info(state).air) { discard(); return; }
+    Entity::tick();
+    time++;
+    apply_gravity();
+    move_self(delta);
+    if (removed) return;
+    int bx = block_x(), by = block_y(), bz = block_z();
+    if (!on_ground) {
+        if ((time > 100 && (by <= level->min_build_y() || by > level->max_build_y())) || time > 600) { drop_as_item(); discard(); return; }
+    } else {
+        delta = delta.multiply(0.7, -0.5, 0.7);
+        const BlockInfo& here = B.info(level->block_state(bx, by, bz));
+        const BlockInfo& below = B.info(level->block_state(bx, by - 1, bz));
+        bool free_below = below.air || below.fluid || below.replaceable;   // FallingBlock.isFree: keep falling through water and plants
+        if (free_below && by > level->min_build_y()) { on_ground = false; }
+        else if (here.air || here.fluid || here.replaceable) {
+            level->set_block_state(bx, by, bz, state);
+            discard();
+            return;
+        } else { drop_as_item(); discard(); return; }
+    }
+    delta = delta.scale(0.98);
+    needs_sync = true;
 }
 
 }  // namespace pn::sim

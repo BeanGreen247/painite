@@ -1,6 +1,7 @@
 #include "entity_manager.hpp"
 #include "data.hpp"
 #include "../blocks.hpp"
+#include "../dimension.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -12,7 +13,7 @@ static uint64_t uuid_seed(uint64_t world_seed, int dim) {
 }
 
 EntityManager::EntityManager(World& world, std::atomic<int64_t>& game_time, std::atomic<int>& next_id, int dim)
-    : world_(world), game_time_(game_time), next_id_(next_id),
+    : dim_(dim), world_(world), game_time_(game_time), next_id_(next_id),
       random_(static_cast<int64_t>(world.seed) ^ (static_cast<int64_t>(dim) * 0x9e3779b97f4a7c15LL)),
       uuid_random_(uuid_seed(world.seed, dim)) {}
 
@@ -36,6 +37,45 @@ float EntityManager::block_friction(int x, int y, int z) const {
 bool EntityManager::is_full_block(int x, int y, int z) const {
     return BlockCollisionShapes::get().is_full_block(block_at(x, y, z));
 }
+
+// Entity.updateFluidHeightAndDoFluidPushing's height: how far above the bottom of the box the fluid in the blocks it touches reaches (0 when dry).
+// A fluid block is as high as its level says (source 8/9, flowing 8-level over 9, falling 1) unless the same fluid is above it, and a waterlogged block holds water.
+double EntityManager::fluid_height(const AABB& box, bool lava) const {
+    const Blocks& B = Blocks::get();
+    const char* want = lava ? "minecraft:lava" : "minecraft:water";
+    AABB b = box.deflate(0.001);
+    int x0 = int(std::floor(b.min_x)), x1 = int(std::ceil(b.max_x)), y0 = int(std::floor(b.min_y)), y1 = int(std::ceil(b.max_y)), z0 = int(std::floor(b.min_z)), z1 = int(std::ceil(b.max_z));
+    auto amount = [&](const BlockInfo& bi) -> int {   // FluidState amount 0..8 of the wanted fluid in a block state
+        if (bi.name == want) {
+            size_t p = bi.props.find("level=");
+            int lvl = p == std::string::npos ? 0 : atoi(bi.props.c_str() + p + 6);
+            return lvl == 0 || lvl >= 8 ? 8 : 8 - lvl;
+        }
+        if (!lava && bi.props.find("waterlogged=true") != std::string::npos) return 8;
+        return 0;
+    };
+    double result = 0.0;
+    for (int y = y0; y < y1; ++y)
+        for (int z = z0; z < z1; ++z)
+            for (int x = x0; x < x1; ++x) {
+                if (!chunk_loaded(x, z)) continue;
+                int a = amount(B.info(block_at(x, y, z)));
+                if (a == 0) continue;
+                double h = amount(B.info(block_at(x, y + 1, z))) > 0 ? 1.0 : a / 9.0;   // FlowingFluid.getHeight: full when the same fluid is above
+                double top = y + h;
+                if (top >= box.min_y) result = std::max(result, top - box.min_y);
+            }
+    return result;
+}
+
+bool EntityManager::set_block_state(int x, int y, int z, uint16_t state) {
+    if (!chunk_loaded(x, z) || !world_.set_block(x, y, z, state)) return false;
+    if (on_block_changed) on_block_changed(x, y, z, state);
+    return true;
+}
+
+int EntityManager::min_build_y() const { return dim_info(dim_).min_y; }
+int EntityManager::max_build_y() const { return dim_info(dim_).min_y + dim_info(dim_).height; }
 
 void EntityManager::block_collisions(const AABB& area, std::vector<AABB>& out) const {
     const int min_x = static_cast<int>(std::floor(area.min_x));

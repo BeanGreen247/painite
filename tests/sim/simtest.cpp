@@ -19,6 +19,27 @@ struct TestPlayer : MenuPlayer {
     PlayerInventory& inventory() override { return inv; }
 };
 
+
+// a small column world for entity tests: stone at y <= floor_y, everything else air
+struct ColumnWorld : EntityWorld {
+    int floor_y = 0;
+    std::vector<std::pair<int, uint16_t>> placed;   // set_block_state calls (y, state)
+    pn::vg::LegacyRandom rnd{1};
+    uint16_t stone = pn::Blocks::get().default_state("minecraft:stone");
+    int64_t game_time() const override { return 0; }
+    pn::vg::Rng& random() override { return rnd; }
+    uint16_t block_state(int x, int y, int z) const override { return y <= floor_y ? stone : 0; }
+    bool set_block_state(int x, int y, int z, uint16_t st) override { placed.emplace_back(y, st); return true; }
+    int min_build_y() const override { return -64; }
+    void block_collisions(const AABB& a, std::vector<AABB>& out) const override {
+        for (int y = int(std::floor(a.min_y)); y <= int(std::ceil(a.max_y)) - 1; y++)
+            if (y <= floor_y) out.push_back(AABB(a.min_x - 1, y, a.min_z - 1, a.max_x + 1, y + 1, a.max_z + 1));
+    }
+    void entities_in_box(const AABB&, const Entity*, std::vector<Entity*>&) override {}
+    Entity* add_entity(std::unique_ptr<Entity> e) override { spawned.push_back(std::move(e)); return spawned.back().get(); }
+    std::vector<std::unique_ptr<Entity>> spawned;
+};
+
 int main(int argc, char** argv) {
     std::string dir = argc > 1 ? argv[1] : "data/game/26.2";
     std::string err;
@@ -93,6 +114,22 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> w;
     t.write(w);
     CHECK(!w.empty());
+    {   // a falling sand block drops from y 10 onto stone at y 0 and is placed on y 1 after about 12 ticks (0.04 gravity, 0.98 drag)
+        ColumnWorld cw;
+        uint16_t sand = pn::Blocks::get().default_state("minecraft:sand");
+        FallingBlockEntity fb(&cw, 0.5, 10, 0.5, sand);
+        int ticks = 0;
+        while (!fb.removed && ticks < 200) { fb.tick(); ticks++; }
+        CHECK(fb.removed);
+        CHECK(cw.placed.size() == 1 && cw.placed[0].first == 1 && cw.placed[0].second == sand);
+        CHECK(ticks > 10 && ticks < 30);
+        // above water-free air with nothing below it never lands before the build limit rule: it is dropped as an item after 600 ticks at the latest
+        ColumnWorld deep;
+        deep.floor_y = -1000;
+        FallingBlockEntity fall(&deep, 0.5, 10, 0.5, sand);
+        for (int i = 0; i < 700 && !fall.removed; i++) fall.tick();
+        CHECK(fall.removed && deep.placed.empty());
+    }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;
 }

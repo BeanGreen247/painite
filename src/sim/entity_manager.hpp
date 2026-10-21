@@ -3,6 +3,7 @@
 #include "entity.hpp"
 #include "../world.hpp"
 #include <atomic>
+#include <functional>
 #include <random>
 #include <unordered_map>
 
@@ -29,6 +30,12 @@ public:
     vg::Rng& random() override { return random_; }
     float block_friction(int x, int y, int z) const override;
     bool is_full_block(int x, int y, int z) const override;
+    double fluid_height(const AABB& box, bool lava) const override;
+    uint16_t block_state(int x, int y, int z) const override { return block_at(x, y, z); }
+    bool set_block_state(int x, int y, int z, uint16_t state) override;
+    int min_build_y() const override;
+    int max_build_y() const override;
+    std::function<void(int, int, int, uint16_t)> on_block_changed;   // set by the game: sends the change to the players
     void block_collisions(const AABB& area, std::vector<AABB>& out) const override;
     void entities_in_box(const AABB& box, const Entity* except, std::vector<Entity*>& out) override;
     Entity* add_entity(std::unique_ptr<Entity> entity) override;
@@ -40,6 +47,7 @@ private:
     uint16_t block_at(int x, int y, int z) const;
     bool chunk_loaded(int x, int z) const;
 
+    int dim_ = 0;
     World& world_;
     std::atomic<int64_t>& game_time_;
     std::atomic<int>& next_id_;

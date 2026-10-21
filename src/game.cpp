@@ -20,7 +20,10 @@ void Game::start() {
     day_time_ = s_.world.day_time;
     last_autosave_ = now_ms();
     for (int dim = 0; dim < 3; ++dim)
+    {
         entity_managers_[dim] = std::make_unique<sim::EntityManager>(s_.dim(dim), game_time_, s_.next_entity, dim);
+        entity_managers_[dim]->on_block_changed = [this, dim](int x, int y, int z, uint16_t id) { block_changed(dim, x, y, z, id); };
+    }
     ticker_.start(s_.cfg.tick_threads > 0 ? s_.cfg.tick_threads : std::max(1, std::min(4, static_cast<int>(s_.cores.size()) / 2)));
     th_ = std::thread([this] { loop(); });
 }
@@ -637,6 +640,7 @@ void Game::tick() {
                 event.pos.ground = entity.on_ground;
                 event.entity_velocity = entity.delta;
                 event.entity_data = track.data;
+                event.block = entity.block_state_id() < 0 ? 0 : static_cast<uint16_t>(entity.block_state_id());
                 queue_event(viewer->second.id, std::move(event));
             }
 

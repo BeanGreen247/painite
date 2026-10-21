@@ -397,7 +397,7 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.u8(angle_byte(ev.pos.pitch));
             w.u8(angle_byte(ev.pos.yaw));
             w.u8(angle_byte(ev.pos.head));
-            w.varint(0);
+            w.varint(type_name == "falling_block" ? Blocks::get().proto_state(vd.protocol, ev.block) : 0);   // object data: the block state of a falling block
             send(c, w.b);
             if (!ev.entity_data.empty()) {
                 Wr data;

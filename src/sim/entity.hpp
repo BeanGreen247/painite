@@ -22,6 +22,10 @@ public:
     // 0..1 height of the fluid the box stands in at (x, z), the largest over the blocks it touches; 0 when dry
     virtual double fluid_height(const AABB& box, bool lava) const { return 0.0; }
     virtual bool is_full_block(int x, int y, int z) const { return false; }   // BlockState.isCollisionShapeFullBlock
+    virtual uint16_t block_state(int x, int y, int z) const { return 0; }
+    virtual bool set_block_state(int x, int y, int z, uint16_t state) { return false; }   // tells the players who see it
+    virtual int min_build_y() const { return -64; }
+    virtual int max_build_y() const { return 320; }
     virtual bool no_collision(const AABB& box) const { std::vector<AABB> v; block_collisions(box, v); return v.empty(); }
     virtual void entities_in_box(const AABB& box, const Entity* except, std::vector<Entity*>& out) = 0;
     virtual Entity* add_entity(std::unique_ptr<Entity> e) = 0;
@@ -63,6 +67,20 @@ public:
     // entity data (SynchedEntityData) as the wire carries it: (index, serializer id, value bytes); filled by subclasses
     struct DataItem { int index; int serializer; std::vector<uint8_t> value; };
     virtual void collect_data(std::vector<DataItem>& out) const;
+    virtual int block_state_id() const { return -1; }   // the "data" of the add entity packet for entities that carry a block state (falling block)
+};
+
+// FallingBlockEntity: a block that lost its support. Falls with gravity 0.04 and 0.98 drag, lands back as a block or as an item.
+class FallingBlockEntity : public Entity {
+public:
+    FallingBlockEntity(EntityWorld* w, double x, double y, double z, uint16_t state);
+    uint16_t state;
+    int time = 0;
+    void tick() override;
+    double default_gravity() const override { return 0.04; }
+    int block_state_id() const override { return state; }
+private:
+    void drop_as_item();
 };
 
 class ItemEntity : public Entity {

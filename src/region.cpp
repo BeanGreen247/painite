@@ -2,6 +2,7 @@
 #include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
+#include "sim/entity.hpp"
 #include <algorithm>
 #include <cmath>
 #include <pthread.h>
@@ -150,11 +151,8 @@ void RegionTicker::process_block(int dim, int x, int y, int z) {
     };
     if (bi.falling) {
         if (!free_below(x, y, z)) return;
-        int ly = y;
-        while (free_below(x, ly, z)) ly--;
-        if (ly == y) return;
-        set(x, y, z, 0);
-        set(x, ly, z, id);
+        if (!set(x, y, z, 0)) return;
+        s_.game.add_entity(dim, std::make_unique<sim::FallingBlockEntity>(nullptr, x + 0.5, y, z + 0.5, id));   // it falls tick by tick and lands as a block (or an item)
         return;
     }
     if (bi.needs_floor) {
