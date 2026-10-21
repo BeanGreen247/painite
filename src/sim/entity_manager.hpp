@@ -33,6 +33,15 @@ public:
     double fluid_height(const AABB& box, bool lava) const override;
     uint16_t block_state(int x, int y, int z) const override { return block_at(x, y, z); }
     bool set_block_state(int x, int y, int z, uint16_t state) override;
+    void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) override;
+    void hurt_player(uint64_t gid, float amount, const std::string& source, const Vec3& knockback) override { if (on_hurt_player) on_hurt_player(gid, amount, source, knockback); }
+    void mob_died(Entity& e, bool by_player) override;
+    int difficulty() const override { return difficulty_value; }
+    int64_t day_time() const override { return day_time_value; }
+    std::vector<PlayerRef> players;                  // set by the game once a tick
+    int difficulty_value = 2;
+    int64_t day_time_value = 0;
+    std::function<void(uint64_t, float, const std::string&, const Vec3&)> on_hurt_player;
     int min_build_y() const override;
     int max_build_y() const override;
     std::function<void(int, int, int, uint16_t)> on_block_changed;   // set by the game: sends the change to the players

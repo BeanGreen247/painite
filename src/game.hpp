@@ -4,6 +4,7 @@
 #include "auth.hpp"
 #include "region.hpp"
 #include "sim/entity_manager.hpp"
+#include "sim/mob.hpp"
 #include "sim/player.hpp"
 #include <atomic>
 #include <condition_variable>
@@ -48,7 +49,7 @@ struct GPos {
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
                 Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose,
-                EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
+                EntityEvent, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -115,6 +116,9 @@ public:
     void start_eating(uint64_t gid);             // use_item with food in the hand
     void stop_eating(uint64_t gid);
     float health_of(uint64_t gid);
+    // --- mobs (mobs.cpp) ---
+    bool summon(const std::string& type, int dim, double x, double y, double z);   // game thread (commands)
+    void attack_entity(uint64_t gid, int entity_id);                               // any thread
     void inv_sync(uint64_t gid);                            // send the whole inventory again (join, dimension change)
 
     // world clock
@@ -171,6 +175,10 @@ private:
     void queue_event(const std::shared_ptr<const GIdentity>& to, GEvent ev);   // tick only: batched per worker
     void flush_events();
     void broadcast_time();
+    void refresh_entity_world();   // tick, players_ not locked: what mobs can see of the players
+    void spawn_tick();             // tick, players_ locked: natural spawning and despawning
+    std::unique_ptr<sim::LivingEntity> make_mob(const std::string& type, double x, double y, double z);
+    bool gamemode_survival(const PState& p) const { return p.gamemode == 0 || p.gamemode == 2; }
     void vitals_tick();    // tick, players_ locked: regeneration, hunger, starvation, drowning, void, eating
     void hurt_locked(PState& p, float amount, const std::string& source);
     void die_locked(PState& p, const std::string& source);

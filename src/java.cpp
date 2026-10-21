@@ -712,6 +712,10 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
     } else if (pid == c.vd->packet("play/s/client_command")) {
         int action = r.varint();
         if (!r.bad && action == 0 && c.gid) s_.game.respawn(c.gid);   // "Respawn" on the death screen
+    } else if (pid == c.vd->packet("play/s/interact")) {
+        int target = r.varint();
+        int action = r.varint();   // 0 interact, 1 attack, 2 interact at
+        if (!r.bad && action == 1 && c.gid) s_.game.attack_entity(c.gid, target);
     } else if (pid == c.vd->packet("play/s/use_item")) {
         int hand = r.varint();
         if (!r.bad && hand == 0 && c.gid) s_.game.start_eating(c.gid);

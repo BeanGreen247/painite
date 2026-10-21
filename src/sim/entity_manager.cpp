@@ -1,5 +1,6 @@
 #include "entity_manager.hpp"
 #include "data.hpp"
+#include "loot.hpp"
 #include "../blocks.hpp"
 #include "../dimension.hpp"
 #include <algorithm>
@@ -72,6 +73,36 @@ bool EntityManager::set_block_state(int x, int y, int z, uint16_t state) {
     if (!chunk_loaded(x, z) || !world_.set_block(x, y, z, state)) return false;
     if (on_block_changed) on_block_changed(x, y, z, state);
     return true;
+}
+
+void EntityManager::players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) {
+    for (const PlayerRef& r : players) {
+        double dx = r.pos.x - p.x, dy = r.pos.y - p.y, dz = r.pos.z - p.z;
+        if (dx * dx + dy * dy + dz * dz <= range * range) out.push_back(r);
+    }
+}
+
+// LivingEntity.dropAllDeathLoot: the entity's loot table, rolled when it dies
+void EntityManager::mob_died(Entity& e, bool by_player) {
+    const LootTable* table = LootTables::get("minecraft:entities/" + e.type.substr(e.type.find(':') + 1));
+    if (!table) return;
+    LootEntityInfo info;
+    info.type = e.type;
+    LootParams lp;
+    lp.this_entity = &info;
+    lp.killed_by_player = by_player;
+    lp.has_origin = true;
+    lp.ox = e.pos.x; lp.oy = e.pos.y; lp.oz = e.pos.z;
+    ItemStack none;
+    lp.tool = &none;
+    std::vector<ItemStack> out;
+    table->get_random_items(lp, random().next_long(), out);
+    for (ItemStack& st : out) {
+        if (st.is_empty()) continue;
+        auto item = std::make_unique<ItemEntity>(this, e.pos.x, e.pos.y + 0.5, e.pos.z, st);
+        item->set_default_pickup_delay();
+        add_entity(std::move(item));
+    }
 }
 
 int EntityManager::min_build_y() const { return dim_info(dim_).min_y; }

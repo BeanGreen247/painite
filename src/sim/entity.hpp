@@ -29,6 +29,13 @@ public:
     virtual bool no_collision(const AABB& box) const { std::vector<AABB> v; block_collisions(box, v); return v.empty(); }
     virtual void entities_in_box(const AABB& box, const Entity* except, std::vector<Entity*>& out) = 0;
     virtual Entity* add_entity(std::unique_ptr<Entity> e) = 0;
+    // players, for mob AI and attacks
+    struct PlayerRef { uint64_t gid; Vec3 pos; bool targetable; };
+    virtual void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) {}
+    virtual void hurt_player(uint64_t gid, float amount, const std::string& source, const Vec3& knockback) {}
+    virtual void mob_died(Entity& e, bool by_player) {}
+    virtual int difficulty() const { return 2; }
+    virtual int64_t day_time() const { return 0; }
 };
 
 class Entity {
@@ -45,6 +52,8 @@ public:
     float step_height = 0.0f;
     bool on_ground = false, horizontal_collision = false, vertical_collision = false, vertical_collision_below = false;
     bool no_physics = false, no_gravity = false, removed = false, needs_sync = false;
+    std::vector<int> pending_events;      // entity event statuses (2 hurt, 3 death ...) for the game to send to the players who see the entity
+    virtual bool is_living() const { return false; }
     int tick_count = 0;
     float fall_distance = 0;
     std::unique_ptr<vg::LegacyRandom> rng;

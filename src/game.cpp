@@ -24,6 +24,17 @@ void Game::start() {
     for (int dim = 0; dim < 3; ++dim)
     {
         entity_managers_[dim] = std::make_unique<sim::EntityManager>(s_.dim(dim), game_time_, s_.next_entity, dim);
+        entity_managers_[dim]->on_hurt_player = [this](uint64_t gid, float amount, const std::string& source, const sim::Vec3& kb) {
+            damage(gid, amount, source);
+            std::lock_guard<std::mutex> l(mu_);
+            auto it = players_.find(gid);
+            if (it == players_.end()) return;
+            GEvent e;
+            e.kind = GEvent::EntityMotion;   // the client moves its own player from this
+            e.entity_id = it->second.id->eid;
+            e.entity_velocity = kb;
+            send_event(it->second.id, e);
+        };
         entity_managers_[dim]->on_block_changed = [this, dim](int x, int y, int z, uint16_t id) { block_changed(dim, x, y, z, id); };
     }
     ticker_.start(s_.cfg.tick_threads > 0 ? s_.cfg.tick_threads : std::max(1, std::min(4, static_cast<int>(s_.cores.size()) / 2)));
@@ -587,6 +598,7 @@ void Game::tick() {
     PN_PERF("tick.total");
     game_time_++;
     { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
+    refresh_entity_world();
     { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
     day_time_++;
     portal_tick();
@@ -816,6 +828,17 @@ void Game::tick() {
                     }
                     track.delta = entity.delta;
                 }
+                for (int status : entity.pending_events)
+                    for (uint64_t gid : track.viewers) {
+                        auto viewer = players_.find(gid);
+                        if (viewer == players_.end()) continue;
+                        GEvent event;
+                        event.kind = GEvent::EntityEvent;
+                        event.entity_id = entity.id;
+                        event.value = status;
+                        queue_event(viewer->second.id, std::move(event));
+                    }
+                entity.pending_events.clear();
                 std::vector<sim::Entity::DataItem> data;
                 entity.collect_data(data);
                 bool changed = data.size() != track.data.size();
@@ -843,6 +866,7 @@ void Game::tick() {
     }
     pickup_items();
     vitals_tick();
+    spawn_tick();
     for (auto it = entity_tracks_.begin(); it != entity_tracks_.end();) {
         if (live_entities.count(it->first)) { ++it; continue; }
         for (uint64_t gid : it->second.viewers) {

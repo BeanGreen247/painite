@@ -97,7 +97,11 @@ void Game::die_locked(PState& p, const std::string& source) {
     GEvent d;
     d.kind = GEvent::Death;
     d.id = p.id;
-    d.text = "{\"translate\":\"death.attack." + key + "\",\"with\":[{\"text\":\"" + p.id->name + "\"}]}";
+    if (key.rfind("mob:", 0) == 0) {   // "mob:minecraft:zombie": <player> was slain by <mob>
+        std::string t = key.substr(4);
+        d.text = "{\"translate\":\"death.attack.mob\",\"with\":[{\"text\":\"" + p.id->name + "\"},{\"translate\":\"entity.minecraft." + t.substr(t.find(':') + 1) + "\"}]}";
+    } else
+        d.text = "{\"translate\":\"death.attack." + key + "\",\"with\":[{\"text\":\"" + p.id->name + "\"}]}";
     send_event(p.id, d);
 }
 

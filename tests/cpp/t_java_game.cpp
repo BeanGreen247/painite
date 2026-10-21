@@ -214,7 +214,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter"};
     return o;
 }
 
@@ -321,6 +321,57 @@ void eating(Ctx& t, Env& e) {
     t.check(sat > 10.0f, "eating a golden apple raises the saturation (" + std::to_string(sat) + ")");
 }
 
+// a summoned zombie walks to the player, takes sword hits and dies
+void mobs(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Hunter");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    B.command("gamemode creative");
+    B.pump(200);
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at("netherite_sword"))).varint(0).varint(0).b);
+    B.send("set_carried_item", Wr().be16(0).b);
+    B.pump(100);
+    B.command("gamemode survival");
+    B.pump(150);
+    B.log.clear();
+    B.command("summon zombie " + std::to_string(int(B.pos[0]) + 4) + " " + std::to_string(int(B.pos[1])) + " " + std::to_string(int(B.pos[2])));
+    B.until([&] { return B.count("add_entity") >= 1; }, 3000);
+    int zombie = -1;
+    for (auto& en : B.log) if (en.first == "add_entity") {
+        Rd r(en.second);
+        zombie = int(r.varint());
+        r.take(16);
+        t.check(int(r.varint()) == ids->entity_types.at("zombie"), "a zombie is added to the world");
+        break;
+    }
+    t.check(zombie >= 0, "/summon zombie spawns an entity");
+    B.until([&] { return B.count("move_entity_pos") + B.count("move_entity_pos_rot") >= 3; }, 4000);
+    t.check(B.count("move_entity_pos") + B.count("move_entity_pos_rot") >= 3, "the zombie moves");
+    B.log.clear();
+    auto zombie_died = [&] { for (auto& en : B.log) if (en.first == "entity_event") { Rd r(en.second); r.be32(); if (r.u8() == 3) return true; } return false; };
+    for (int i = 0; i < 8 && !zombie_died(); i++) {   // hit, wait out the hurt time, hit again
+        B.send("interact", Wr().varint(uint32_t(zombie)).varint(1).u8(0).b);
+        B.pump(700);
+    }
+    bool hurt = false, died = false;
+    for (auto& en : B.log) if (en.first == "entity_event") { Rd r(en.second); r.be32(); int st = r.u8(); if (st == 2) hurt = true; if (st == 3) died = true; }
+    t.check(hurt, "hitting the zombie plays its hurt animation");
+    t.check(died, "three netherite sword hits kill the zombie (death animation)");
+    B.until([&] { return B.count("remove_entities") >= 1; }, 3000);
+    t.check(B.count("remove_entities") >= 1, "the dead zombie is removed");
+}
+
+// animals appear around a player on grass by themselves
+void natural(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Walker");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.log.clear();
+    B.until([&] { return B.count("add_entity") >= 1; }, 20000);
+    t.check(B.count("add_entity") >= 1, "animals spawn around a player (" + std::to_string(B.count("add_entity")) + " seen)");
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -350,6 +401,8 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"dig-and-pickup", survival});
     d.tests.push_back({"health-and-death", vitals});
     d.tests.push_back({"eating", eating});
+    d.tests.push_back({"mobs", mobs});
+    d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));
 }
 

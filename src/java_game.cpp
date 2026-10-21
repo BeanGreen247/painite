@@ -35,7 +35,7 @@ static void put_entry(Wr& w, const GIdentity& id, int gamemode) {
 struct CmdDef { const char* name; int level; };
 static const CmdDef kCommands[] = {{"help", 0}, {"list", 0}, {"players", 0}, {"whois", 0}, {"playerinfo", 0}, {"tps", 0}, {"me", 0}, {"tell", 0}, {"msg", 0}, {"w", 0}, {"version", 0}, {"info", 0}, {"painite", 0}, {"pn", 0}, {"say", 2}, {"tp", 2},
     {"teleport", 2}, {"execute", 2}, {"locate", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
-    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}, {"kill", 2}};
+    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}, {"kill", 2}, {"summon", 2}};
 
 // Command tree for the client: every command is a literal with one greedy text argument, so tab completion and highlighting
 // know the names; the server does the parsing.
@@ -430,6 +430,12 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             }
             break;
         }
+        case GEvent::EntityEvent:
+            w.varint(vd.packet("play/c/entity_event"));
+            w.be32(static_cast<uint32_t>(ev.entity_id));
+            w.u8(static_cast<uint8_t>(ev.value));
+            send(c, w.b);
+            break;
         case GEvent::EntityRemove:
             w.varint(vd.packet("play/c/remove_entities"));
             w.varint(1);
