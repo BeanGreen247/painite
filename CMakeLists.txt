@@ -54,7 +54,7 @@ target_link_libraries(painite_genstats PRIVATE OpenSSL::Crypto ZLIB::ZLIB Thread
 
 # End-to-end test suite in one binary: cmake --build build --target painite_tests && build/painite_tests
 file(GLOB PAINITE_TEST_SOURCES CONFIGURE_DEPENDS tests/cpp/*.cpp)
-list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/refgen.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/vgcheck.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/gencmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/gensweep.cpp)
+list(REMOVE_ITEM PAINITE_TEST_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/load.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/refgen.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/vgcheck.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/gencmp.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/gensweep.cpp ${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp/v3check.cpp)
 add_executable(painite_tests EXCLUDE_FROM_ALL ${PAINITE_TEST_SOURCES})
 target_include_directories(painite_tests PRIVATE tests/cpp)
 target_link_libraries(painite_tests PRIVATE OpenSSL::SSL OpenSSL::Crypto ZLIB::ZLIB Threads::Threads)
@@ -79,6 +79,12 @@ add_executable(painite_vgcheck EXCLUDE_FROM_ALL tests/cpp/vgcheck.cpp ${PAINITE_
 target_include_directories(painite_vgcheck PRIVATE src)
 target_link_libraries(painite_vgcheck PRIVATE OpenSSL::Crypto)
 target_compile_options(painite_vgcheck PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
+
+set(PAINITE_V3_CORE src/vg/noise3.cpp src/vg/df3.cpp src/vg/random.cpp src/vg/registry.cpp src/vg/json.cpp)
+add_executable(painite_v3check EXCLUDE_FROM_ALL tests/cpp/v3check.cpp ${PAINITE_V3_CORE})
+target_include_directories(painite_v3check PRIVATE src)
+target_link_libraries(painite_v3check PRIVATE OpenSSL::Crypto)
+target_compile_options(painite_v3check PRIVATE -O2 -ffp-contract=off -Wall -Wextra -Wno-unused-parameter)
 
 add_executable(painite_gencmp EXCLUDE_FROM_ALL tests/cpp/gencmp.cpp ${PAINITE_VG_SOURCES} src/world.cpp src/worldgen.cpp src/worldgen_dims.cpp src/structures.cpp src/structures_stronghold.cpp src/structures_village.cpp src/structures_misc.cpp
   src/blocks.cpp src/data.cpp src/nbt.cpp src/anvil.cpp src/log.cpp src/hash.cpp)

@@ -5,7 +5,14 @@
 
 namespace pn::vg {
 
-std::string Registry::path_of(const std::string& kind, const std::string& id) const {
+std::string Registry::path_of(const std::string& kind_in, const std::string& id) const {
+    // 26.3 renamed two registries: configured_feature -> feature, configured_carver -> carver
+    std::string kind = kind_in;
+    if (kind == "configured_feature" || kind == "configured_carver") {
+        std::string alt = kind == "configured_feature" ? "feature" : "carver";
+        struct stat st0;
+        if (stat((dir_ + "/data/minecraft/worldgen/" + alt).c_str(), &st0) == 0) kind = alt;
+    }
     std::string rel = "/data/minecraft/worldgen/" + kind + "/" + strip(id) + ".json";
     if (!overlay_.empty()) {
         struct stat st;
