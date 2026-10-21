@@ -14,7 +14,8 @@ static const char* kFiles[4] = {"whitelist.json", "banned-players.json", "banned
 
 static int64_t mtime_of(const char* p) {
     struct stat st;
-    return stat(p, &st) == 0 ? static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec : 0;
+    // the size is folded in because file timestamps are coarse: a rewrite within the same tick keeps the mtime
+    return stat(p, &st) == 0 ? static_cast<int64_t>(st.st_mtim.tv_sec) * 1000000000 + st.st_mtim.tv_nsec + static_cast<int64_t>(static_cast<uint64_t>(st.st_size) * 0x9E3779B97F4A7C15ull) : 0;
 }
 
 static std::string jesc(const std::string& s) {
@@ -110,7 +111,8 @@ void Lists::reload_if_changed() {
         int64_t m = mtime_of(kFiles[i]);
         if (m != mt_[i]) {
             std::vector<ListEntry> v;
-            if (read_file(kFiles[i], v, i)) *t[i] = std::move(v);
+            if (!read_file(kFiles[i], v, i)) continue;  // half written: look again on the next poll
+            *t[i] = std::move(v);
             mt_[i] = m;
         }
     }
