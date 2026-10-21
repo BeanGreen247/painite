@@ -88,7 +88,7 @@ def main():
     world = ""
     if yesno("Copy an existing world (Paper/vanilla 26.x) into the server", False):
         world = os.path.expanduser(ask("World folder to copy", "", lambda s: None if os.path.isdir(os.path.expanduser(s)) else "not a folder"))
-    gen = choice("Chunks that are not on disk (auto: flat in a new world, void in an existing one)", ["auto", "flat", "void"], "auto")
+    gen = choice("Chunks that are not on disk (auto: the world type's generator in a new world, void in an existing one; terrain: the built-in approximation of vanilla)", ["auto", "terrain", "flat", "void"], "auto")
     autosave = ask("Autosave every N seconds", "300", num(10, 86400))
     adv = yesno("Change CPU/worker/memory settings", False)
     cores, maxw, memcap = "all", "0", "1024"
