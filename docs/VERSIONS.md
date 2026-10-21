@@ -24,7 +24,7 @@ and a browser user agent, one request per second (the site answers 403 to bursts
 |---|---|---|---|
 | Java client login, play, chunks, movement, blocks | yes (tests `smoke-26.1`, `game-26.1`) | yes | yes |
 | Item components in inventories | dropped (ids are translated by name) | kept | dropped |
-| Terrain, structures and features of that version | `worldgen_version = "26.1"`: 1.236 % of blocks differ from Mojang's server over 338 chunks, seed 12345 | `"26.2"` (default): 1.255 % over the same area (the decoration order family, see HANDOFF) | `"26.3"`: ported engine, see below (0.54 % of blocks differ at the features stage in the interior, 0.012 % with structures only) |
+| Terrain, structures and features of that version | `worldgen_version = "26.1"`: 1.236 % of blocks differ from Mojang's server over 338 chunks, seed 12345 | `"26.2"` (default): 1.255 % over the same area (the decoration order family, see HANDOFF) | `"26.3"`: ported engine, see below (overworld features stage 0.52 % of blocks differ in the interior, nether 0.12 %, end 0 %; 0.012 % with structures only) |
 | Bedrock clients | protocols 944 and 975 | 1001, 2168, 2169 | 2193 |
 
 The server holds one world. `worldgen_version` in `painite.toml` chooses whose terrain it reproduces; clients of every
@@ -64,7 +64,7 @@ Checked against Mojang's own code or server (seed 12345, `build/painite_v3check`
 | Surface (material rules, ore veins) | 0.002 % of blocks, all of them water that Mojang's server settled after generation |
 | Carvers | the same 0.002 % plus 1 block |
 | Structures (starts and pieces) | all starts and about 1,700 pieces match: mineshaft, shipwreck, ruined portal, ocean ruin, ancient city, village, trial chambers; block level 0.012 % |
-| Features (all), inside the area | 0.54 % of blocks; the ore, grass and lush-cave features each match once decorated in the same order, the rest is the decoration order family (neighbouring features overlap and Mojang's server decorates in its own order) |
+| Features (all), inside the area | overworld 0.52 %, nether 0.12 % (without the lava Mojang's server settles), end 0 % in the central chunks; ore, grass and cave features each match when run alone, the rest is the decoration order family (neighbouring features overlap and Mojang's server decorates in its own order) and `MossyCarpetBlock.placeAt`, which Mojang seeds from the level's own random |
 
 Not checked: the nether and end beyond the fill, Bedrock translation of 26.3 chunks, large biomes and amplified, the End island noise in features.
 Gotchas found on the way: density cache cells start empty (`NaN`), the climate sampler of structures is built with caches on, `blocktransforms.txt` and
