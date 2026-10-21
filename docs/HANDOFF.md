@@ -12,7 +12,7 @@ Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~
 ## Environment you need (all free, local)
 - Mojang 26.x jars are Java 25 class files; the box has Java 21. Download Temurin 25 (`https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse`) and put its `bin` first on `PATH` before running `tools/fetch_worldgen.sh`, `tools/oracle/*.java`, `tools/fetch_vanilla_data.py`.
 - Data is git-ignored and per checkout: `tools/fetch_worldgen.sh 26.2` (writes `data/worldgen/26.2`, incl. `blockflags.txt`), and `cd /tmp && python3 -I <repo>/tools/fetch_vanilla_data.py --version 26.2 --out <repo>/data`.
-- **The vanilla generator targets 26.2** (`src/world.cpp:51` sets `o.version = "26.2"`). 26.3 changed the noise engine (`DensityVolume`, `DensitySampler`, no `size_horizontal` in noise_settings) and is a separate to-do ("26.3 engine"). Always generate and decompile **26.2**, not 26.3.
+- **`worldgen_version` picks the generator**: `"26.2"` is the default, `"26.1"` and `"26.3"` work too. 26.3 runs through the new engine in `src/vg/*3.*` (see the 26.3 section of docs/VERSIONS.md); decompile the version you are porting.
 - Reading Mojang's source: the jar is unobfuscated. `build/mojang/inner-26.2.jar` + CFR (`https://github.com/leibnitz27/cfr/releases/download/0.152/cfr-0.152.jar`):
   `unzip` the packages you want into a dir, `jar cf x.jar net`, then `java -jar cfr.jar x.jar --extraclasspath build/mojang/inner-26.2.jar --outputdir src --silent true`.
   (The first decompile this session used 26.3 by mistake; structure placement code was identical in the parts read, but re-read anything noise related from 26.2.)
@@ -35,7 +35,7 @@ Read this first, then `README.md`, `docs/DESIGN.md`, and the memory bank note `~
 
 ## Versions (2026-10-21)
 `docs/VERSIONS.md` is the current picture: Java 26.1, 26.2 and 26.3 clients all join; `worldgen_version` in `painite.toml` picks 26.1 or 26.2 terrain
-(26.3 terrain is still the 26.2 generator, the 26.3 engine is not ported); Bedrock data and block palettes are loaded per protocol but only 2193 is
+(`"26.3"` runs the ported 26.3 engine: `noise3`/`df3` (float density), `terrain3` (aquifer, fill, material rules), `carver3`, float Beardifier, `norm263` data normaliser; see docs/VERSIONS.md for the measured parity); Bedrock data and block palettes are loaded per protocol but only 2193 is
 captured. Dev tools added: `painite_gensweep` (generate an area, list biomes, count blocks), `tools/fetch_bedrock_data.py --bds-version`.
 
 ## Gameplay core (new, `src/sim/`, namespace `pn::sim`)
@@ -64,7 +64,7 @@ Protocol independent rules, ported from Mojang's classes, tested without a serve
 3. Performance: `starts_touching` computes up to 289 start lookups per chunk, chunk generation holds a global decoration lock; measure and fix.
 4. Make `generator = "vanilla"` the default once gencmp is clean; fix the 0.9 % decoration-order diff.
 5. **Gameplay** (model on Cuberite first, then Mojang; Cuberite source: github.com/cuberite/cuberite): entity persistence and generated entities from chunk NBT, player pickup and entity interactions, block entities to clients, inventory and containers, drops/tools/damage/health/hunger, mob AI/spawning, fluids flowing, random ticks (crops, leaves, fire), weather, redstone, loot tables/recipes/advancements, `/locate`.
-6. Later: 26.3 engine, Bedrock parity, live-service login tests (only when the owner says).
+6. Later: 26.3 leftovers (nether/end stage checks, fluid settling, decoration order), Bedrock parity, live-service login tests (only when the owner says).
 
 ## Gotchas
 - `rm -rf` may be denied in some harnesses; use fresh dirs. Never `pkill -f` patterns that match your own command line.

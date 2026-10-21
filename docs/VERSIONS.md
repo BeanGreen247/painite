@@ -24,7 +24,7 @@ and a browser user agent, one request per second (the site answers 403 to bursts
 |---|---|---|---|
 | Java client login, play, chunks, movement, blocks | yes (tests `smoke-26.1`, `game-26.1`) | yes | yes |
 | Item components in inventories | dropped (ids are translated by name) | kept | dropped |
-| Terrain, structures and features of that version | `worldgen_version = "26.1"`: 1.236 % of blocks differ from Mojang's server over 338 chunks, seed 12345 | `"26.2"` (default): 1.255 % over the same area (the decoration order family, see HANDOFF) | **not ported** (the 26.3 engine) |
+| Terrain, structures and features of that version | `worldgen_version = "26.1"`: 1.236 % of blocks differ from Mojang's server over 338 chunks, seed 12345 | `"26.2"` (default): 1.255 % over the same area (the decoration order family, see HANDOFF) | `"26.3"`: ported engine, see below (0.54 % of blocks differ at the features stage in the interior, 0.012 % with structures only) |
 | Bedrock clients | protocols 944 and 975 | 1001, 2168, 2169 | 2193 |
 
 The server holds one world. `worldgen_version` in `painite.toml` chooses whose terrain it reproduces; clients of every
@@ -46,13 +46,29 @@ Found by decompiling both server jars (CFR, `net/minecraft/network` and `net/min
   `EndCityPieces`), processors (`BlockAge`, `BlockIgnore`, `BlockRot`, `Capped`, `BlackstoneReplace`), `SurfaceRules`, `NoiseChunk`.
   The decompiled trees are what `/tmp/.../scratchpad/dc` held; regenerate with the CFR steps in HANDOFF.
 
-## Java 26.3 (to do)
+## Java 26.3 (ported)
 
-26.3 is a rewrite of the generation code, not a delta: `configured_feature` became `feature`, carvers have a new framework
-(`ConfiguredWorldCarver`, `CarvingContext`, `CarverOutput`), `DensityFunctions`/`DensityFunction` changed, 43 network packet
-classes changed (`MovementPacket`, `VecDelta`, swing/punch packets, `AddTransientBlock`). Painite already speaks the 26.3
-protocol; terrain still comes from the 26.2 generator. Plan: port stage by stage (noise, surface, carvers, features,
-structures) with `painite_refgen --version 26.3` reference worlds and `painite_gencmp` at each stage.
+26.3 is a rewrite of the generation code, not a delta: float density with volume sampling, `feature` instead of `configured_feature`, material
+rules instead of `surface_rule`, carvers that fill a mask, block states as `{id, properties}` and flat feature configs. Select it with
+`worldgen_version = "26.3"`. Files: `noise3`, `df3` (noise and density functions), `terrain3` (aquifer, chunk fill, material rules, surface),
+`carver3`, `Beardifier::compute_f`, `norm263` (rewrites the 26.3 data files into the shape the 26.2-era feature code reads), `climate` (19 children
+per R-tree node, the search keeps its last result per thread like Mojang's, so exact ties follow the fill order).
+
+Checked against Mojang's own code or server (seed 12345, `build/painite_v3check`, `painite_gencmp` on staged `painite_refgen` worlds):
+
+| Stage | Result |
+|---|---|
+| Noise, density functions (8 router functions) | 0 mismatches over 800,000 floats, point and volume (`v3check --what all`) |
+| Climate lists and chunk biomes | 0 of 884,736 biome cells differ |
+| Aquifer and fill (overworld, nether, end) | 0 mismatches over about 10 million blocks (`v3check --what fill`) |
+| Surface (material rules, ore veins) | 0.002 % of blocks, all of them water that Mojang's server settled after generation |
+| Carvers | the same 0.002 % plus 1 block |
+| Structures (starts and pieces) | all starts and about 1,700 pieces match: mineshaft, shipwreck, ruined portal, ocean ruin, ancient city, village, trial chambers; block level 0.012 % |
+| Features (all), inside the area | 0.54 % of blocks; the ore, grass and lush-cave features each match once decorated in the same order, the rest is the decoration order family (neighbouring features overlap and Mojang's server decorates in its own order) |
+
+Not checked: the nether and end beyond the fill, Bedrock translation of 26.3 chunks, large biomes and amplified, the End island noise in features.
+Gotchas found on the way: density cache cells start empty (`NaN`), the climate sampler of structures is built with caches on, `blocktransforms.txt` and
+`blockentities.txt` must exist for 26.3 (`tools/fetch_worldgen.sh 26.3`), pool aliases and `fallback` keys must not go through the state normaliser.
 
 ## Bedrock protocol groups (Cloudburst `bedrock-codec`, branch 3.0)
 
