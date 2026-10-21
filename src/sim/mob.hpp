@@ -80,10 +80,22 @@ public:
     ArrowEntity(EntityWorld* w, const std::string& shooter_type, const Vec3& at, const Vec3& velocity);
     std::string shooter_type;
     Entity* shooter = nullptr;
+    uint64_t owner_gid = 0;      // a player's arrow hurts mobs (and drops their loot to that player) but not players
     int stuck_ticks = 0;
     bool stuck = false;
     void tick() override;
     double default_gravity() const override { return 0.05; }
+};
+
+// A thrown snowball, egg or ender pearl: gravity 0.03, drag 0.99; pushes what it hits, an egg may hatch chickens, a pearl takes its thrower along
+class ThrownEntity : public Entity {
+public:
+    ThrownEntity(EntityWorld* w, const std::string& type, const Vec3& at, const Vec3& velocity, uint64_t owner);
+    uint64_t owner_gid;
+    void tick() override;
+    double default_gravity() const override { return 0.03; }
+private:
+    void hit(LivingEntity* target);
 };
 
 // A mob for an entity type, or null when Painite has no behaviour for it

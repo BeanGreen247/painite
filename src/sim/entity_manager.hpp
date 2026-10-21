@@ -44,6 +44,8 @@ public:
     int difficulty_value = 2;
     int64_t day_time_value = 0;
     std::function<void(uint64_t, float, const std::string&, const Vec3&)> on_hurt_player;
+    std::function<void(uint64_t, const Vec3&)> on_teleport_owner;
+    void teleport_owner(uint64_t gid, const Vec3& to) override { if (on_teleport_owner) on_teleport_owner(gid, to); }
     int min_build_y() const override;
     int max_build_y() const override;
     std::function<void(int, int, int, uint16_t)> on_block_changed;   // set by the game: sends the change to the players

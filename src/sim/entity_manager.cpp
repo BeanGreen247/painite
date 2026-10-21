@@ -141,15 +141,40 @@ void EntityManager::explode(const Vec3& at, float power, Entity* source) {
                 }
             }
     double q = double(power) * 2.0;
-    auto damage_of = [&](double dist) {
-        double impact = 1.0 - dist / q;
+    // Explosion.getSeenPercent: the share of a grid of points in the box that the blast can see without a block in between
+    auto seen = [&](const AABB& box) {
+        double dx = 1.0 / ((box.max_x - box.min_x) * 2.0 + 1.0), dy = 1.0 / ((box.max_y - box.min_y) * 2.0 + 1.0), dz = 1.0 / ((box.max_z - box.min_z) * 2.0 + 1.0);
+        double ox = (1.0 - std::floor(1.0 / dx) * dx) / 2.0, oz = (1.0 - std::floor(1.0 / dz) * dz) / 2.0;
+        int hit = 0, total = 0;
+        for (double fx = 0.0; fx <= 1.0; fx += dx)
+            for (double fy = 0.0; fy <= 1.0; fy += dy)
+                for (double fz = 0.0; fz <= 1.0; fz += dz) {
+                    Vec3 p(box.min_x + fx * (box.max_x - box.min_x) + ox, box.min_y + fy * (box.max_y - box.min_y), box.min_z + fz * (box.max_z - box.min_z) + oz);
+                    Vec3 d = at - p;
+                    int steps = std::max(1, int(d.length() / 0.3));
+                    bool clear = true;
+                    for (int i = 0; i <= steps && clear; ++i) {
+                        Vec3 s = p + d.scale(double(i) / steps);
+                        std::vector<AABB> hits;
+                        block_collisions(AABB(s.x - 0.001, s.y - 0.001, s.z - 0.001, s.x + 0.001, s.y + 0.001, s.z + 0.001), hits);
+                        clear = hits.empty();
+                    }
+                    hit += clear;
+                    ++total;
+                }
+        return total ? double(hit) / total : 0.0;
+    };
+    auto damage_of = [&](double dist, double exposure) {
+        double impact = (1.0 - dist / q) * exposure;
         return std::pair<float, double>(float(int((impact * impact + impact) / 2.0 * 7.0 * q + 1.0)), impact);
     };
     for (PlayerRef& pl : players) {   // players: the ones near enough (exposure is taken as 1)
         Vec3 c(pl.pos.x, pl.pos.y + 0.9, pl.pos.z);
         double dist = (c - at).length();
         if (dist > q || !pl.targetable) continue;
-        auto d = damage_of(dist);
+        double exposure = seen(AABB(pl.pos.x - 0.3, pl.pos.y, pl.pos.z - 0.3, pl.pos.x + 0.3, pl.pos.y + 1.8, pl.pos.z + 0.3));
+        if (exposure <= 0.0) continue;
+        auto d = damage_of(dist, exposure);
         Vec3 dir = (Vec3(pl.pos.x, pl.pos.y + 1.62, pl.pos.z) - at).normalize().scale(d.second);
         if (on_hurt_player) on_hurt_player(pl.gid, d.first, source ? "explosion:" + source->type : "explosion", dir);
     }
@@ -159,12 +184,48 @@ void EntityManager::explode(const Vec3& at, float power, Entity* source) {
         if (!le || le->dead) continue;
         double dist = (Vec3(le->pos.x, le->pos.y + le->height / 2, le->pos.z) - at).length();
         if (dist > q) continue;
-        auto d = damage_of(dist);
+        double exposure = seen(le->bounding_box());
+        if (exposure <= 0.0) continue;
+        auto d = damage_of(dist, exposure);
         le->hurt(d.first, &at);
         Vec3 dir = (Vec3(le->pos.x, le->pos.y + le->height * 0.9, le->pos.z) - at).normalize().scale(d.second * (1.0 - le->knockback_resistance));
         le->delta = le->delta + dir;
     }
-    for (auto& b : blocks) set_block_state(b[0], b[1], b[2], B.air());
+    // destroyed blocks drop their loot, each with a 1 in `power` chance of surviving the blast (the loot tables' survives_explosion)
+    int drops = 0;
+    for (auto& b : blocks) {
+        uint16_t state = block_at(b[0], b[1], b[2]);
+        const BlockInfo& bi = B.info(state);
+        set_block_state(b[0], b[1], b[2], B.air());
+        if (drops >= 150 || bi.fluid || bi.air) continue;
+        const LootTable* table = LootTables::get("minecraft:blocks/" + bi.name.substr(bi.name.find(':') + 1));
+        if (!table) continue;
+        LootBlockState bs;
+        bs.name = bi.name;
+        for (size_t p = 0; p < bi.props.size();) {
+            size_t end = bi.props.find(',', p);
+            if (end == std::string::npos) end = bi.props.size();
+            size_t eq = bi.props.find('=', p);
+            if (eq != std::string::npos && eq < end) bs.props[bi.props.substr(p, eq - p)] = bi.props.substr(eq + 1, end - eq - 1);
+            p = end + 1;
+        }
+        ItemStack none;
+        LootParams lp;
+        lp.tool = &none;
+        lp.block_state = &bs;
+        lp.has_origin = true;
+        lp.ox = b[0] + 0.5; lp.oy = b[1] + 0.5; lp.oz = b[2] + 0.5;
+        lp.explosion_radius = power;
+        std::vector<ItemStack> out;
+        table->get_random_items(lp, random_.next_long(), out);
+        for (ItemStack& st : out) {
+            if (st.is_empty() || drops >= 150) continue;
+            auto item = std::make_unique<ItemEntity>(this, b[0] + 0.5 + random_.next_double() * 0.5 - 0.25, b[1] + 0.5 - 0.125 + random_.next_double() * 0.5 - 0.25, b[2] + 0.5 + random_.next_double() * 0.5 - 0.25, st);
+            item->set_default_pickup_delay();
+            add_entity(std::move(item));
+            ++drops;
+        }
+    }
 }
 
 int EntityManager::min_build_y() const { return dim_info(dim_).min_y; }

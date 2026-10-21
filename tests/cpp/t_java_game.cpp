@@ -214,7 +214,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer"};
     return o;
 }
 
@@ -410,6 +410,65 @@ void mobs2(Ctx& t, Env& e) {
     t.check(lowest < 20.0f || B.count("player_combat_kill") >= 1, "the creeper explosion hurts the player");
 }
 
+// a summoned mob is still there after the server restarts
+void persist(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    int px, py, pz;
+    {
+        JBot B(e.port(), 777, ids, "Keeper");
+        B.until([&] { return B.has_pos; }, 5000);
+        B.settle(150, 1500);
+        px = int(B.pos[0]); py = int(B.pos[1]); pz = int(B.pos[2]);
+        B.command("summon armadillo " + std::to_string(px + 3) + " " + std::to_string(py) + " " + std::to_string(pz));
+        B.until([&] { return B.count("add_entity") >= 1; }, 3000);
+        t.check(B.count("add_entity") >= 1, "the armadillo is summoned");
+    }
+    e.srv->stop();
+    e.srv->restart();
+    JBot C(e.port(), 777, ids, "Keeper");
+    C.until([&] { return C.has_pos; }, 8000);
+    C.until([&] { for (auto& en : C.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == ids->entity_types.at("armadillo")) return true; } return false; }, 5000);
+    bool back = false;
+    for (auto& en : C.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == ids->entity_types.at("armadillo")) back = true; }
+    t.check(back, "the armadillo is still there after a restart");
+}
+
+// a player draws a bow and throws a snowball
+void ranged(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Archer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    int px = int(std::floor(B.pos[0])), py = int(std::floor(B.pos[1])), pz = int(std::floor(B.pos[2]));
+    B.send("move_player_pos_rot", Wr().f64(px + 0.5).f64(B.pos[1]).f64(pz + 0.5).f32(0.0f).f32(0.0f).u8(1).b);   // facing +z
+    B.command("gamemode creative");
+    B.pump(150);
+    auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
+    give(36, "bow", 1); give(37, "arrow", 16); give(38, "snowball", 16);
+    B.pump(100);
+    B.command("gamemode survival");
+    B.pump(150);
+    B.log.clear();
+    B.command("summon cow " + std::to_string(px + 0.5) + " " + std::to_string(py) + " " + std::to_string(pz + 6.5));
+    B.until([&] { return B.count("add_entity") >= 1; }, 3000);
+    B.send("set_carried_item", Wr().be16(0).b);
+    B.pump(100);
+    auto entity_types_seen = [&](int type) { int n = 0; for (auto& en : B.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == type) n++; } return n; };
+    auto hurt_seen = [&] { for (auto& en : B.log) if (en.first == "entity_event") { Rd r(en.second); r.be32(); if (r.u8() == 2) return true; } return false; };
+    B.send("use_item", Wr().varint(0).varint(1).f32(0).f32(0).b);
+    B.pump(1200);
+    B.send("player_action", Wr().varint(5).be64(block_pos(0, 0, 0)).u8(0).varint(2).b);   // release
+    B.until([&] { return entity_types_seen(ids->entity_types.at("arrow")) >= 1; }, 3000);
+    t.check(entity_types_seen(ids->entity_types.at("arrow")) >= 1, "a drawn bow shoots an arrow entity");
+    B.until([&] { return hurt_seen(); }, 3000);
+    t.check(hurt_seen(), "the arrow hurts the cow in front of the player");
+    B.send("set_carried_item", Wr().be16(2).b);
+    B.pump(100);
+    B.send("use_item", Wr().varint(0).varint(3).f32(0).f32(0).b);
+    B.until([&] { return entity_types_seen(ids->entity_types.at("snowball")) >= 1; }, 3000);
+    t.check(entity_types_seen(ids->entity_types.at("snowball")) >= 1, "using a snowball throws it");
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -441,8 +500,14 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
+    d.tests.push_back({"bow-and-snowball", ranged});
     d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));
+    Group f;
+    f.name = "persist";
+    f.opts = survival_opts;
+    f.tests.push_back({"mobs-survive-restart", persist});
+    reg.push_back(std::move(f));
 }
 
 }  // namespace pt

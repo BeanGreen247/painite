@@ -149,6 +149,7 @@ private:
         int sent_food = 20;
         int food = 20, food_timer = 0, invulnerable = 0, air = 300, drown_timer = 0, eating = -1;   // eating: ticks left, -1 when not
         bool dead = false;
+        int64_t bow_start = -1;   // game time the bow was drawn
     };
     struct PState {
         Vitals v;
@@ -176,7 +177,9 @@ private:
     void flush_events();
     void broadcast_time();
     void refresh_entity_world();   // tick, players_ not locked: what mobs can see of the players
-    void spawn_tick();             // tick, players_ locked: natural spawning and despawning
+    void spawn_tick();
+    void save_entities();
+    void load_entities();             // tick, players_ locked: natural spawning and despawning
     std::unique_ptr<sim::LivingEntity> make_mob(const std::string& type, double x, double y, double z);
     bool gamemode_survival(const PState& p) const { return p.gamemode == 0 || p.gamemode == 2; }
     void vitals_tick();    // tick, players_ locked: regeneration, hunger, starvation, drowning, void, eating

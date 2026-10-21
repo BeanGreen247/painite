@@ -322,7 +322,7 @@ std::unique_ptr<LivingEntity> make_living(const std::string& type, EntityWorld* 
     const EntityProps* p = EntityTable::get().find(type);
     if (!p || type == "minecraft:player" || type == "minecraft:item") return nullptr;
     if (p->attributes.find("minecraft:max_health") == p->attributes.end()) return nullptr;   // not a living entity
-    static const char* melee[] = {"minecraft:zombie", "minecraft:husk", "minecraft:zombie_villager", "minecraft:drowned", "minecraft:spider", "minecraft:cave_spider", "minecraft:silverfish", "minecraft:endermite"};
+    static const char* melee[] = {"minecraft:zombie", "minecraft:husk", "minecraft:zombie_villager", "minecraft:drowned", "minecraft:zombified_piglin", "minecraft:spider", "minecraft:cave_spider", "minecraft:silverfish", "minecraft:endermite"};
     static const char* still[] = {"minecraft:bat", "minecraft:parrot", "minecraft:bee", "minecraft:allay", "minecraft:vex", "minecraft:ghast", "minecraft:phantom", "minecraft:armor_stand", "minecraft:happy_ghast",
                                   "minecraft:blaze", "minecraft:wither", "minecraft:ender_dragon", "minecraft:breeze", "minecraft:squid", "minecraft:glow_squid"};
     auto m = std::make_unique<Mob>(type, w);
@@ -364,7 +364,7 @@ void ArrowEntity::tick() {
         float damage = float(std::ceil(delta.length() * 2.0));
         Vec3 from_hit = p - delta;
         for (auto& pl : players) {
-            if (!pl.targetable) continue;
+            if (!pl.targetable || owner_gid) continue;
             AABB body(pl.pos.x - 0.3, pl.pos.y, pl.pos.z - 0.3, pl.pos.x + 0.3, pl.pos.y + 1.8, pl.pos.z + 0.3);
             if (!body.intersects(probe)) continue;
             Vec3 kb = delta.normalize().scale(0.15);
@@ -377,7 +377,7 @@ void ArrowEntity::tick() {
         for (Entity* e : near) {
             auto* le = dynamic_cast<LivingEntity*>(e);
             if (!le || le->dead || e == shooter) continue;
-            le->hurt(damage, &from_hit);
+            le->hurt(damage, &from_hit, owner_gid, owner_gid != 0);
             discard();
             return;
         }
@@ -388,6 +388,60 @@ void ArrowEntity::tick() {
     delta = Vec3(delta.x * drag, delta.y * drag - 0.05, delta.z * drag);
     yaw = float(std::atan2(delta.x, delta.z) * 57.2957763671875);
     pitch = float(std::atan2(delta.y, delta.horizontal_distance()) * 57.2957763671875);
+    needs_sync = true;
+}
+
+// ---- thrown items
+
+ThrownEntity::ThrownEntity(EntityWorld* w, const std::string& t, const Vec3& at, const Vec3& v, uint64_t owner) : Entity(t, w), owner_gid(owner) {
+    width = 0.25; height = 0.25; eye_height = 0.0;
+    set_pos(at.x, at.y - height / 2.0, at.z);
+    delta = v;
+}
+
+void ThrownEntity::hit(LivingEntity* target) {
+    if (type == "minecraft:ender_pearl") {
+        if (owner_gid) {
+            level->teleport_owner(owner_gid, Vec3(pos.x, pos.y, pos.z));
+            level->hurt_player(owner_gid, 5.0f, "fall", Vec3());   // ThrownEnderpearl: 5 points of fall damage
+        }
+    } else {
+        if (target) {   // snowballs and eggs do no damage but push and startle
+            target->knockback(0.4, target->pos.x - (pos.x - delta.x), target->pos.z - (pos.z - delta.z));
+            target->pending_events.push_back(2);
+        }
+        if (type == "minecraft:egg" && level->random().next_int(8) == 0) {   // ThrownEgg: a chicken hatches (one in 32 hatches four)
+            int n = level->random().next_int(32) == 0 ? 4 : 1;
+            for (int i = 0; i < n; i++) {
+                auto chick = make_living("minecraft:chicken", level);
+                if (!chick) continue;
+                chick->set_pos(pos.x, pos.y, pos.z);
+                level->add_entity(std::move(chick));
+            }
+        }
+    }
+    discard();
+}
+
+void ThrownEntity::tick() {
+    Entity::tick();
+    if (tick_count > 400) { discard(); return; }
+    Vec3 before = pos;
+    move_self(delta);
+    Vec3 mid((before.x + pos.x) / 2, (before.y + pos.y) / 2, (before.z + pos.z) / 2);
+    for (const Vec3& p : {mid, pos}) {
+        AABB probe(p.x - 0.25, p.y - 0.25, p.z - 0.25, p.x + 0.25, p.y + 0.25, p.z + 0.25);
+        std::vector<Entity*> near;
+        level->entities_in_box(probe, this, near);
+        for (Entity* e : near) {
+            auto* le = dynamic_cast<LivingEntity*>(e);
+            if (le && !le->dead) { hit(le); return; }
+        }
+    }
+    if (horizontal_collision || vertical_collision) { hit(nullptr); return; }
+    bool water = level->fluid_height(bounding_box(), false) > 0.0;
+    double drag = water ? 0.8 : 0.99;
+    delta = Vec3(delta.x * drag, delta.y * drag - 0.03, delta.z * drag);
     needs_sync = true;
 }
 

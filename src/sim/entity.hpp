@@ -36,6 +36,7 @@ public:
     virtual void mob_died(Entity& e, bool by_player) {}
     virtual bool can_see_sky(int x, int y, int z) const { return false; }
     virtual void explode(const Vec3& at, float power, Entity* source) {}
+    virtual void teleport_owner(uint64_t gid, const Vec3& to) {}   // an ender pearl landed
     virtual int difficulty() const { return 2; }
     virtual int64_t day_time() const { return 0; }
 };

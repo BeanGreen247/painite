@@ -1,5 +1,6 @@
 // Mobs in the game: refreshing what they can see of the players, player attacks, /summon, natural spawning and despawning.
 #include "game.hpp"
+#include "anvil.hpp"
 #include "dimension.hpp"
 #include "log.hpp"
 #include "server.hpp"
@@ -78,7 +79,6 @@ void Game::attack_entity(uint64_t gid, int entity_id) {
     });
 }
 
-static int top_solid(World& w, int x, int z) { return w.top_y(x, z); }
 
 // biome file -> spawns of a category: [{type, weight, count (min, max)}]
 struct SpawnEntry { std::string type; int weight, min_count, max_count; };
@@ -137,15 +137,33 @@ static const std::vector<SpawnEntry>& biome_spawns(const std::string& data_dir, 
     return out;
 }
 
+// A floor to spawn on near (x, z): `from_y` downwards (or the surface when from_y is kMinY - 1): solid and dry below, two blocks of air above
+static bool find_floor(World& w, int x, int z, int from_y, int& out_y, bool& sky) {
+    const Blocks& B = Blocks::get();
+    if (!w.chunk_if_loaded(x >> 4, z >> 4)) return false;
+    int top = w.top_y(x, z);
+    int start = from_y < kMinY ? top + 1 : std::min(from_y, kMinY + kHeight - 3);
+    for (int y = start; y > std::max(kMinY + 1, start - 14); --y) {
+        const BlockInfo& below = B.info(w.get_block(x, y - 1, z));
+        if (!below.solid || below.fluid || below.air) continue;
+        if (!B.info(w.get_block(x, y, z)).air || !B.info(w.get_block(x, y + 1, z)).air) continue;
+        out_y = y;
+        sky = top < y;
+        return true;
+    }
+    return false;
+}
+
 void Game::spawn_tick() {
     if (game_time_ % 40 != 0) return;
     const Blocks& B = Blocks::get();
     for (auto& kv : players_) {
         PState& p = kv.second;
-        if (p.v.dead || p.gamemode == 3 || p.pos.dim != 0) continue;   // natural spawning of the Overworld only for now
-        sim::EntityManager* mgr = entity_managers_[0].get();
+        if (p.v.dead || p.gamemode == 3 || p.pos.dim < 0 || p.pos.dim > 1) continue;   // the Overworld and the Nether; the End has only endermen, which have no behaviour yet
+        int dim = p.pos.dim;
+        sim::EntityManager* mgr = entity_managers_[dim].get();
         if (!mgr) continue;
-        World& w = s_.dim(0);
+        World& w = s_.dim(dim);
         // what lives near this player
         int monsters = 0, creatures = 0;
         for (auto& e : mgr->entities()) {
@@ -159,26 +177,26 @@ void Game::spawn_tick() {
         bool night = t >= 13000 && t < 23000;
         int diff = s_.cfg.difficulty >= 0 ? s_.cfg.difficulty : s_.world.difficulty;
         for (int attempt = 0; attempt < 3; attempt++) {
-            bool monster = night && diff > 0 && monsters < 20 && (creatures >= 10 || attempt > 0);
-            if (!monster && creatures >= 10) break;
+            // animals only on the Overworld surface; monsters at night on the surface, in the dark underground (no sky above; without a light engine torches do not count) and in the Nether
+            bool monster = diff > 0 && monsters < 20 && (dim == 1 || creatures >= 10 || attempt > 0);
+            if (!monster && (creatures >= 10 || dim != 0)) break;
             double ang = mgr->random().next_double() * 6.283185307, dist = 24.0 + mgr->random().next_double() * (monster ? 40.0 : 24.0);
             int x = int(std::floor(p.pos.x + std::cos(ang) * dist)), z = int(std::floor(p.pos.z + std::sin(ang) * dist));
-            if (!w.chunk_if_loaded(x >> 4, z >> 4)) continue;
-            int top = top_solid(w, x, z);
-            if (top < kMinY) continue;
-            int y = top + 1;
-            const BlockInfo& below = B.info(w.get_block(x, top, z));
-            if (!below.solid || below.fluid) continue;
-            if (!B.info(w.get_block(x, y, z)).air || !B.info(w.get_block(x, y + 1, z)).air) continue;
+            bool underground_try = monster && (dim == 1 || attempt % 2 == 1);
+            int y = 0;
+            bool sky = false;
+            if (!find_floor(w, x, z, underground_try ? int(p.pos.y) + mgr->random().next_int(25) - 12 : kMinY - 1, y, sky)) continue;
+            if (monster && dim == 0 && sky && !night) continue;      // daylight on the surface
+            const BlockInfo& below = B.info(w.get_block(x, y - 1, z));
             if (!monster && below.name != "minecraft:grass_block") continue;
             // the biome here decides what can spawn
             auto chunk = w.chunk_if_loaded(x >> 4, z >> 4);
             std::string biome = "minecraft:plains";
             {
                 std::lock_guard<std::mutex> cl(chunk->mu);
-                int s = (y - kMinY) >> 4;
-                if (s >= 0 && s < kSections) {
-                    const uint8_t* bm = chunk->sec[s] ? chunk->sec[s]->biome : chunk->air_biomes[s];
+                int sec = (y - kMinY) >> 4;
+                if (sec >= 0 && sec < kSections) {
+                    const uint8_t* bm = chunk->sec[sec] ? chunk->sec[sec]->biome : chunk->air_biomes[sec];
                     int idx = bm[(((y - kMinY) & 15) >> 2) * 16 + (((z & 15) >> 2) * 4) + ((x & 15) >> 2)];
                     if (idx < int(w.biome_names.size())) biome = w.biome_names[idx];
                 }
@@ -186,7 +204,11 @@ void Game::spawn_tick() {
             const auto& list = biome_spawns(s_.cfg.data_dir, s_.world.gen_version, biome, monster ? "monster" : "creature");
             int total = 0;
             std::vector<const SpawnEntry*> usable;
-            for (const SpawnEntry& e : list) if (sim::make_living(e.type, nullptr)) { usable.push_back(&e); total += e.weight; }
+            for (const SpawnEntry& e : list) {
+                auto probe = sim::make_living(e.type, nullptr);
+                auto* pm = dynamic_cast<sim::Mob*>(probe.get());
+                if (pm && (!monster || pm->ai != sim::MobAi::None)) { usable.push_back(&e); total += e.weight; }   // monsters that would only stand there are left out
+            }
             if (total <= 0) continue;
             int roll = mgr->random().next_int(total);
             const SpawnEntry* pick = usable.back();
@@ -194,8 +216,9 @@ void Game::spawn_tick() {
             int count = pick->min_count + (pick->max_count > pick->min_count ? mgr->random().next_int(pick->max_count - pick->min_count + 1) : 0);
             for (int i = 0; i < count; i++) {
                 double sx = x + 0.5 + (i ? mgr->random().next_double() * 6.0 - 3.0 : 0.0), sz = z + 0.5 + (i ? mgr->random().next_double() * 6.0 - 3.0 : 0.0);
-                int sy = top_solid(w, int(std::floor(sx)), int(std::floor(sz))) + 1;
-                if (!w.chunk_if_loaded(int(std::floor(sx)) >> 4, int(std::floor(sz)) >> 4) || sy < kMinY) continue;
+                int sy = y;
+                bool s2 = false;
+                if (i && !find_floor(w, int(std::floor(sx)), int(std::floor(sz)), y + 2, sy, s2)) continue;
                 auto mob = make_mob(pick->type, sx, sy, sz);
                 if (!mob) continue;
                 mob->yaw = float(mgr->random().next_double() * 360.0);
@@ -219,6 +242,60 @@ void Game::spawn_tick() {
             }
         }
     }
+}
+
+// Mobs are kept in painite_entities_<dim>.nbt next to the world: type, position, rotation, health and fire. Items, arrows and falling blocks are not.
+static std::string entity_file(Server& s, int dim) { return s.dim(dim).dir + "/painite_entities_" + std::to_string(dim) + ".nbt"; }
+
+void Game::save_entities() {
+    for (int dim = 0; dim < 3; ++dim) {
+        if (!entity_managers_[dim]) continue;
+        Nbt list = Nbt::list_of(Nbt::Compound);
+        for (auto& e : entity_managers_[dim]->entities()) {
+            auto* m = dynamic_cast<sim::Mob*>(e.get());
+            if (!m || m->dead || m->removed) continue;
+            Nbt c = Nbt::compound();
+            c.put("id", Nbt::str(m->type));
+            Nbt pos = Nbt::list_of(Nbt::Double);
+            for (double v : {m->pos.x, m->pos.y, m->pos.z}) { Nbt d; d.type = Nbt::Double; d.f = v; pos.list.push_back(d); }
+            c.put("Pos", std::move(pos));
+            Nbt rot = Nbt::list_of(Nbt::Float);
+            for (float v : {m->yaw, m->pitch}) { Nbt d; d.type = Nbt::Float; d.f = v; rot.list.push_back(d); }
+            c.put("Rotation", std::move(rot));
+            Nbt h; h.type = Nbt::Float; h.f = m->health;
+            c.put("Health", std::move(h));
+            c.put("Fire", Nbt::make(Nbt::Short, m->fire_ticks));
+            list.list.push_back(std::move(c));
+        }
+        std::string path = entity_file(s_, dim);
+        if (list.list.empty()) { unlink(path.c_str()); continue; }
+        Nbt root = Nbt::compound();
+        root.put("Mobs", std::move(list));
+        if (!write_nbt_file(path, root)) warn("could not save the mobs of dimension " + std::to_string(dim));
+    }
+}
+
+void Game::load_entities() {
+    int loaded = 0;
+    for (int dim = 0; dim < 3; ++dim) {
+        if (!entity_managers_[dim]) continue;
+        Nbt root;
+        if (!read_nbt_file(entity_file(s_, dim), root) || root.type != Nbt::Compound) continue;
+        const Nbt* list = root.get("Mobs");
+        if (!list || list->type != Nbt::List) continue;
+        for (const Nbt& c : list->list) {
+            const Nbt* pos = c.get("Pos");
+            if (!pos || pos->list.size() != 3) continue;
+            auto mob = make_mob(c.gets("id"), pos->list[0].f, pos->list[1].f, pos->list[2].f);
+            if (!mob) continue;
+            if (const Nbt* rot = c.get("Rotation"); rot && rot->list.size() == 2) { mob->yaw = float(rot->list[0].f); mob->pitch = float(rot->list[1].f); }
+            if (const Nbt* h = c.get("Health"); h && h->f > 0) mob->health = std::min(float(h->f), mob->max_health);
+            mob->fire_ticks = int(c.geti("Fire", 0));
+            entity_managers_[dim]->add_entity(std::move(mob));
+            loaded++;
+        }
+    }
+    if (loaded) info("restored " + std::to_string(loaded) + " mob(s)");
 }
 
 }  // namespace pn

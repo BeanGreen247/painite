@@ -165,21 +165,64 @@ void Game::respawn(uint64_t gid) {
     });
 }
 
+// Where a player's gaze points (yaw and pitch in degrees, Minecraft's convention)
+static sim::Vec3 look_vector(const GPos& p) {
+    double yr = double(p.yaw) * 0.017453292519943295, pr = double(p.pitch) * 0.017453292519943295;
+    return sim::Vec3(-std::sin(yr) * std::cos(pr), -std::sin(pr), std::cos(yr) * std::cos(pr));
+}
+
+// use_item: eat or drink, start drawing a bow, throw a snowball, an egg or an ender pearl
 void Game::start_eating(uint64_t gid) {
     std::lock_guard<std::mutex> l(mu_);
     auto it = players_.find(gid);
     if (it == players_.end() || !it->second.sim || it->second.v.dead || it->second.v.eating >= 0) return;
     PState& p = it->second;
     if (p.gamemode == 3) return;
-    const sim::ItemStack& h = p.sim->held_item();
-    if (h.is_empty() || !h.item()->has_food || !(p.v.food < 20 || h.item()->food_can_always_eat)) return;
+    sim::ItemStack& h = p.sim->held_item();
+    if (h.is_empty()) return;
+    const std::string& name = h.item()->name;
+    if (name == "minecraft:bow") { p.v.bow_start = game_time_; return; }
+    if (name == "minecraft:snowball" || name == "minecraft:egg" || name == "minecraft:ender_pearl") {
+        if (p.pos.dim < 0 || p.pos.dim > 2 || !entity_managers_[p.pos.dim]) return;
+        sim::Vec3 dir = look_vector(p.pos), eye(p.pos.x, p.pos.y + 1.62, p.pos.z);
+        auto thrown = std::make_unique<sim::ThrownEntity>(nullptr, name, eye, dir.scale(1.5), gid);
+        add_entity(p.pos.dim, std::move(thrown));
+        if (p.gamemode != 1) { h.shrink(1); p.sim->inventory_menu->broadcast_changes(); }
+        return;
+    }
+    if (!h.item()->has_food || !(p.v.food < 20 || h.item()->food_can_always_eat)) return;
     p.v.eating = std::max(1, int(std::ceil(h.item()->consume_seconds * 20.0f)));
 }
 
+// release use item: a drawn bow shoots (BowItem.releaseUsing)
 void Game::stop_eating(uint64_t gid) {
     std::lock_guard<std::mutex> l(mu_);
     auto it = players_.find(gid);
-    if (it != players_.end()) it->second.v.eating = -1;
+    if (it == players_.end()) return;
+    PState& p = it->second;
+    p.v.eating = -1;
+    if (p.v.bow_start < 0) return;
+    int64_t drawn = game_time_ - p.v.bow_start;
+    p.v.bow_start = -1;
+    if (!p.sim || p.v.dead || p.pos.dim < 0 || p.pos.dim > 2 || !entity_managers_[p.pos.dim]) return;
+    sim::ItemStack& bow = p.sim->held_item();
+    if (bow.is_empty() || bow.item()->name != "minecraft:bow") return;
+    double f = double(drawn) / 20.0;
+    f = (f * f + f * 2.0) / 3.0;
+    if (f < 0.1) return;
+    if (f > 1.0) f = 1.0;
+    if (p.gamemode != 1) {   // an arrow from the inventory is used up
+        sim::ItemStack* arrows = nullptr;
+        for (auto& st : p.sim->inv.items) if (!st.is_empty() && st.item()->name == "minecraft:arrow") { arrows = &st; break; }
+        if (!arrows) return;
+        arrows->shrink(1);
+        if (bow.damageable()) { int d = bow.damage_value() + 1; if (d >= bow.item()->max_damage) bow.shrink(bow.count()); else bow.set_damage_value(d); }
+        p.sim->inventory_menu->broadcast_changes();
+    }
+    sim::Vec3 dir = look_vector(p.pos), eye(p.pos.x, p.pos.y + 1.62, p.pos.z);
+    auto arrow = std::make_unique<sim::ArrowEntity>(nullptr, "minecraft:player", eye, dir.scale(3.0 * f));
+    arrow->owner_gid = gid;
+    add_entity(p.pos.dim, std::move(arrow));
 }
 
 // the effect of the fluid or climbable block a falling player lands in: no fall damage

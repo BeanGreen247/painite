@@ -35,8 +35,14 @@ void Game::start() {
             e.entity_velocity = kb;
             send_event(it->second.id, e);
         };
+        entity_managers_[dim]->on_teleport_owner = [this](uint64_t gid, const sim::Vec3& to) {
+            GPos p = position(gid);
+            p.x = to.x; p.y = to.y; p.z = to.z;
+            teleport(gid, p);
+        };
         entity_managers_[dim]->on_block_changed = [this, dim](int x, int y, int z, uint16_t id) { block_changed(dim, x, y, z, id); };
     }
+    load_entities();
     ticker_.start(s_.cfg.tick_threads > 0 ? s_.cfg.tick_threads : std::max(1, std::min(4, static_cast<int>(s_.cores.size()) / 2)));
     th_ = std::thread([this] { loop(); });
 }
@@ -569,6 +575,7 @@ void Game::save_everything(bool unload) {
         for (auto& kv : players_) gids.push_back(kv.first);
     }
     for (uint64_t g : gids) save_player_data(g);
+    save_entities();
     s_.world.game_time = game_time_;
     s_.world.day_time = day_time_;
     s_.world.save(unload, now_ms());
