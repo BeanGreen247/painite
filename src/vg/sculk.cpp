@@ -284,9 +284,10 @@ bool place_sculk_patch(FeatureEnv& env, const Json& config, Rng& random, const B
         sp.cursors.clear();
     }
     BlockPos below = origin.below();
-    if (random.next_float() <= config.at("catalyst_chance").float_value() && (bd.flags(lv.get(below)) & BF_FULL_COLLISION))
+    // 26.3 moved the catalyst and the shriekers out of the feature into the features that follow it in a sequence
+    if (config.has("catalyst_chance") && random.next_float() <= config.at("catalyst_chance").float_value() && (bd.flags(lv.get(below)) & BF_FULL_COLLISION))
         lv.set(origin, bd.default_state("minecraft:sculk_catalyst"));
-    int extra = sample_int(config.at("extra_rare_growths"), random);
+    int extra = config.has("extra_rare_growths") ? sample_int(config.at("extra_rare_growths"), random) : 0;
     for (int i = 0; i < extra; i++) {
         int dx = random.next_int(5) - 2;
         int dz = random.next_int(5) - 2;

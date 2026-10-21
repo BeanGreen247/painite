@@ -5,6 +5,8 @@
 
 namespace pn::vg {
 
+void normalize_263(const std::string& kind, Json& j, const std::string& dir);
+
 std::string Registry::path_of(const std::string& kind_in, const std::string& id) const {
     // 26.3 renamed two registries: configured_feature -> feature, configured_carver -> carver
     std::string kind = kind_in;
@@ -32,6 +34,7 @@ const Json& Registry::get(const std::string& kind, const std::string& id) const 
     auto it = cache_.find(path);
     if (it != cache_.end()) return *it->second;
     auto j = std::make_unique<Json>(Json::parse_file(path));
+    if (dir_.find("26.3") != std::string::npos) normalize_263(kind, *j, dir_);
     const Json& ref = *j;
     cache_[path] = std::move(j);
     return ref;

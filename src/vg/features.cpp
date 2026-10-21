@@ -19,7 +19,7 @@ uint16_t target_state(FeatureEnv& env, const Json& t) { return env.bd().state(t.
 
 // OreFeature.canPlaceOre
 bool can_place_ore(FeatureEnv& env, uint16_t at_state, Rng& random, const Json& config, const Json& target, const BlockPos& pos) {
-    if (!rule_test(env, target.at("target"), at_state, random)) return false;
+    if (!rule_test(env, target.at("target"), at_state, random, pos)) return false;
     float discard = config.at("discard_chance_on_air_exposure").float_value();
     bool skip_air_check;
     if (discard <= 0.0f) skip_air_check = true;
@@ -143,7 +143,7 @@ bool place_scattered_ore(FeatureEnv& env, const Json& config, Rng& random, const
 
 bool place_replace_single_block(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
     for (auto& t : config.at("targets").arr) {
-        if (rule_test(env, t.at("target"), env.level.get(origin), random)) {
+        if (rule_test(env, t.at("target"), env.level.get(origin), random, origin)) {
             env.level.set(origin, target_state(env, t));
             break;
         }

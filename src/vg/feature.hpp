@@ -47,7 +47,7 @@ bool place_feature_type(FeatureEnv& env, const std::string& type, const Json& co
 
 bool test_predicate(FeatureEnv& env, const Json& predicate, const BlockPos& origin);                    // BlockPredicate.test
 uint16_t provide_state(FeatureEnv& env, const Json& provider, Rng& random, const BlockPos& pos);        // BlockStateProvider.getOptionalState (kNoState = null)
-bool rule_test(FeatureEnv& env, const Json& test, uint16_t state, Rng& random);                         // RuleTest.test
+bool rule_test(FeatureEnv& env, const Json& test, uint16_t state, Rng& random, const BlockPos& pos);                         // RuleTest.test
 bool state_can_survive(FeatureEnv& env, uint16_t state, const BlockPos& pos);                           // BlockState.canSurvive (survive.cpp)
 bool state_in_set(FeatureEnv& env, uint16_t state, const Json& blocks);                                 // "minecraft:x" | ["minecraft:x"] | "#minecraft:tag"
 int heightmap_from_name(const std::string& name);

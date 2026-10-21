@@ -123,10 +123,14 @@ bool test_predicate(FeatureEnv& env, const Json& p, const BlockPos& origin) {
 
 // ---- rule tests (ore targets)
 
-bool rule_test(FeatureEnv& env, const Json& t, uint16_t state, Rng& random) {
+bool rule_test(FeatureEnv& env, const Json& t, uint16_t state, Rng& random, const BlockPos& pos) {
     const std::string type = t.at("predicate_type").str.substr(10);
     const BlockData& bd = env.bd();
     if (type == "always_true") return true;
+    if (type == "all_of") { for (auto& r : t.at("rules").arr) if (!rule_test(env, r, state, random, pos)) return false; return true; }
+    if (type == "any_of") { for (auto& r : t.at("rules").arr) if (rule_test(env, r, state, random, pos)) return true; return false; }
+    if (type == "not") return !rule_test(env, t.at("rule"), state, random, pos);
+    if (type == "height_match") return t.at("min_inclusive").int_value() <= pos.y && pos.y <= t.at("max_inclusive").int_value();
     if (type == "tag_match") return bd.in_tag(state, t.at("tag").str);
     if (type == "block_match") return bd.name(state) == t.at("block").str;
     if (type == "blockstate_match") return state == bd.state(t.at("block_state"));
@@ -239,6 +243,13 @@ struct PlaceRun {
             if (random.next_float() < 1.0f / float(m.at("chance").int_value())) run(i + 1, pos);
         } else if (t == "block_predicate_filter") {
             if (test_predicate(env, m.at("predicate"), pos)) run(i + 1, pos);
+        } else if (t == "offset") {
+            int sx = sample_int(m.at("x"), random);
+            int sy = sample_int(m.at("y"), random);
+            int sz = sample_int(m.at("z"), random);
+            run(i + 1, BlockPos(pos.x + sx, pos.y + sy, pos.z + sz));
+        } else if (t == "random_chance") {
+            if (random.next_float() < m.at("chance").float_value()) run(i + 1, pos);
         } else if (t == "random_offset") {
             int sx = sample_int(m.at("xz_spread"), random);
             int sy = sample_int(m.at("y_spread"), random);
@@ -329,7 +340,12 @@ bool place_placed_feature(FeatureEnv& env, const Json& placed, Rng& random, cons
     const std::string* saved = env.top_feature;
     env.top_feature = top_feature_id;
     PlaceRun run{env, placed.at("placement"), resolve_ref(env, "configured_feature", placed.at("feature")), random};
-    run.run(0, origin);
+    try {
+        run.run(0, origin);
+    } catch (std::exception& e) {
+        if (top_feature_id) throw std::runtime_error(std::string(e.what()) + " (in feature " + *top_feature_id + ")");
+        throw;
+    }
     env.top_feature = saved;
     return run.placed;
 }
