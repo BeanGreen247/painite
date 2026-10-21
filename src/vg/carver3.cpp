@@ -129,7 +129,7 @@ struct Carvers3::Impl {
                 create_room(job, x, y, z, thickness, y_scale, skip);
                 tunnels += random.next_int(4);
             }
-            bool weird = cfg.get_bool("weird_thickness_bias", true);
+            bool weird = cfg.get_bool("weird_thickness_bias", false);
             for (int i = 0; i < tunnels; i++) {
                 float h_rot = random.next_float() * (kPi * 2.0f);
                 float v_rot = (random.next_float() - 0.5f) / 4.0f;
