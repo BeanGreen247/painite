@@ -97,6 +97,18 @@ bool test_predicate(FeatureEnv& env, const Json& p, const BlockPos& origin) {
     if (t == "not") return !test_predicate(env, p.at("predicate"), origin);
     if (t == "all_of") { for (auto& e : p.at("predicates").arr) if (!test_predicate(env, e, origin)) return false; return true; }
     if (t == "any_of") { for (auto& e : p.at("predicates").arr) if (test_predicate(env, e, origin)) return true; return false; }
+    if (t == "volume_match") {   // 26.3: every block of the box around the origin matches
+        const Json &mn = p.at("min"), &mx = p.at("max");
+        for (int ox = int(mn.arr[0].int_value()); ox <= int(mx.arr[0].int_value()); ox++)
+            for (int oz = int(mn.arr[2].int_value()); oz <= int(mx.arr[2].int_value()); oz++)
+                for (int oy = int(mn.arr[1].int_value()); oy <= int(mx.arr[1].int_value()); oy++)
+                    if (!test_predicate(env, p.at("match"), origin.offset(ox, oy, oz))) return false;
+        return true;
+    }
+    if (t == "height_range") {
+        int lo = resolve_anchor(p.at("min_inclusive"), lv.range()), hi = resolve_anchor(p.at("max_inclusive"), lv.range());
+        return origin.y >= lo && origin.y <= hi;
+    }
     BlockPos at = origin;
     {
         BlockPos o = json_offset(p);
@@ -184,6 +196,17 @@ uint16_t provide_state(FeatureEnv& env, const Json& p, Rng& random, const BlockP
         if (!bd.has_prop(s, prop)) return s;
         return bd.with(s, prop, std::to_string(sample_int(p.at("values"), random)));
     }
+    if (t == "random_block") {   // RandomBlockProvider: a random member of the block set, default state
+        const Json& blocks = p.at("blocks");
+        std::vector<std::string> members;
+        auto add = [&](const std::string& e) {
+            if (!e.empty() && e[0] == '#') { auto m = env.reg.tag_ordered("block", e); members.insert(members.end(), m.begin(), m.end()); }
+            else members.push_back(e);
+        };
+        if (blocks.is_arr()) for (auto& e : blocks.arr) add(e.str); else add(blocks.str);
+        if (members.empty()) return kNoState;
+        return bd.default_state(members[size_t(random.next_int(int(members.size())))]);
+    }
     if (t == "rotated_block_provider") {
         static const char* axes[3] = {"x", "y", "z"};
         int axis = random.next_int(3);
@@ -262,7 +285,11 @@ struct PlaceRun {
             if (place_configured_feature(env, configured, random, pos)) placed = true;
             return;
         }
-        const Json& m = modifiers.arr[i];
+        apply(modifiers.arr[i], i, pos);
+    }
+
+    // one placement modifier, then the rest of the chain from i + 1
+    void apply(const Json& m, size_t i, const BlockPos& pos) {
         const std::string t = short_type(m);
         Level& lv = env.level;
         if (std::getenv("PAINITE_DBG2") && env.top_feature && pos.x >= 184 && pos.x <= 190 && pos.z >= -82 && pos.z <= -76) fprintf(stderr, "%s modifier %zu %s at %d %d %d\n", env.top_feature->c_str(), i, t.c_str(), pos.x, pos.y, pos.z);
@@ -294,6 +321,23 @@ struct PlaceRun {
             int sy = sample_int(m.at("y"), random);
             int sz = sample_int(m.at("z"), random);
             run(i + 1, BlockPos(pos.x + sx, pos.y + sy, pos.z + sz));
+        } else if (t == "randomly_selected") {   // RandomlySelectedPlacement: one modifier of the list stands in for this one
+            const Json& list = m.at("placements");
+            apply(list.arr[size_t(random.next_int(int(list.arr.size())))], i, pos);
+        } else if (t == "cuboid") {
+            int height = sample_int(m.at("y_size"), random);
+            int width = sample_int(m.at("xz_size"), random);
+            int length = sample_int(m.at("xz_size"), random);
+            bool edges = m.get_bool("include_edges", true), interior = m.get_bool("include_interior", true);
+            std::vector<BlockPos> out;
+            for (int x = 0; x <= width; x++)
+                for (int y = 0; y <= height; y++)
+                    for (int z = 0; z <= length; z++) {
+                        if (!((edges || (x != 0 && x != width) || (y != 0 && y != height)) && (edges || (z != 0 && z != length) || (y != 0 && y != height)) &&
+                              (edges || (x != 0 && x != width) || (z != 0 && z != length)) && (interior || x == 0 || x == width || y == 0 || y == height || z == 0 || z == length))) continue;
+                        out.push_back(BlockPos(x + pos.x, y + pos.y, z + pos.z));
+                    }
+            for (auto& q : out) run(i + 1, q);
         } else if (t == "random_chance") {
             if (random.next_float() < m.at("chance").float_value()) run(i + 1, pos);
         } else if (t == "random_offset") {

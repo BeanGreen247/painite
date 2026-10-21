@@ -951,6 +951,127 @@ bool place_fossil(FeatureEnv& env, const Json& config, Rng& random, const BlockP
     return true;
 }
 
+
+// ---- 26.3 features
+
+// a "block" field is a state or a state provider
+uint16_t block_of(FeatureEnv& env, const Json& j, Rng& random, const BlockPos& at) {
+    return j.has("type") ? provide_state(env, j, random, at) : env.bd().state(j);
+}
+
+Dir dir_named(const std::string& n) { return n == "up" ? UP : n == "down" ? DOWN : n == "north" ? NORTH : n == "south" ? SOUTH : n == "west" ? WEST : EAST; }
+
+// SingleBlockPillarFeature
+bool place_single_block_pillar(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    Level& lv = env.level;
+    const Dir dir = dir_named(config.at("direction").str);
+    const float chance = config.has("chance_to_continue") ? config.at("chance_to_continue").float_value() : 1.0f;
+    const Json* can_replace = config.find("can_replace");
+    BlockPos pos = origin;
+    while ((!can_replace || test_predicate(env, *can_replace, pos)) && random.next_float() < chance && !lv.outside_build_height(pos.y)) {
+        lv.set(pos, block_of(env, config.at("block"), random, pos));
+        pos = pos + dir;
+    }
+    pos = pos + Dir(int(dir) ^ 1);
+    if (const Json* cap = config.find("cap_feature")) place_placed_feature(env, resolve_ref(env, "placed_feature", *cap), random, pos, nullptr);
+    return true;
+}
+
+// ProjectedRandomPatchySquare
+bool place_projected_patchy_square(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& pos) {
+    Level& lv = env.level;
+    int size = sample_int(config.at("size"), random);
+    int bound = size * size + 1;
+    for (int dx = -size; dx <= size; dx++)
+        for (int dz = -size; dz <= size; dz++) {
+            int probability = std::abs(dx) * std::abs(dz);
+            if (random.next_int(bound) >= bound - probability) continue;
+            BlockPos base = pos.offset(dx, 0, dz);
+            int drop = int(config.at("max_projection_height").int_value());
+            while (test_predicate(env, config.at("project_through"), base.below())) {
+                base = base.below();
+                if (--drop <= 0) break;
+            }
+            uint16_t state = block_of(env, config.at("block"), random, base);
+            if (state == kNoState) continue;
+            lv.set(base, state);
+        }
+    return true;
+}
+
+// SteppedColumnClusterFeature
+struct SteppedColumn {
+    FeatureEnv& env;
+    const Json& cfg;
+    Level& lv;
+    bool can_place_at(const BlockPos& cursor) {
+        if (!test_predicate(env, cfg.at("can_replace"), cursor)) return false;
+        uint16_t below = lv.get(cursor.below());
+        return !env.bd().air(below) && !state_in_set(env, below, cfg.at("cannot_place_on"));
+    }
+    bool find_surface(BlockPos& cursor, int limit) {
+        while (cursor.y > lv.min_y() + 1 && limit > 0) {
+            --limit;
+            if (can_place_at(cursor)) return true;
+            cursor = cursor.below();
+        }
+        return false;
+    }
+    bool find_air(BlockPos& cursor, int limit) {
+        while (cursor.y <= lv.max_y() && limit > 0) {
+            --limit;
+            uint16_t st = lv.get(cursor);
+            if (state_in_set(env, st, cfg.at("cannot_place_on"))) return false;
+            if (env.bd().air(st)) return true;
+            cursor = cursor.above();
+        }
+        return false;
+    }
+    bool place_column(Rng& random, const BlockPos& origin, int column_height, int reach) {
+        bool placed_any = false;
+        for (int z = origin.z - reach; z <= origin.z + reach; z++)   // betweenClosed: x fastest, then y, then z
+            for (int x = origin.x - reach; x <= origin.x + reach; x++) {
+                BlockPos pos(x, origin.y, z);
+                int step_limit = std::abs(pos.x - origin.x) + std::abs(pos.y - origin.y) + std::abs(pos.z - origin.z);
+                BlockPos column = pos;
+                bool found = test_predicate(env, cfg.at("can_replace"), pos) ? find_surface(column, step_limit) : find_air(column, step_limit);
+                if (!found) continue;
+                BlockPos cursor = column;
+                for (int blocks_y = column_height - step_limit / 2; blocks_y >= 0; --blocks_y) {
+                    if (test_predicate(env, cfg.at("can_replace"), cursor)) {
+                        lv.set(cursor, block_of(env, cfg.at("block"), random, cursor));
+                        cursor = cursor.above();
+                        placed_any = true;
+                        continue;
+                    }
+                    if (!test_predicate(env, cfg.at("continue_through"), cursor)) break;
+                    cursor = cursor.above();
+                }
+            }
+        return placed_any;
+    }
+};
+
+bool place_stepped_column_cluster(FeatureEnv& env, const Json& config, Rng& random, const BlockPos& origin) {
+    SteppedColumn sc{env, config, env.level};
+    if (!sc.can_place_at(origin)) return false;
+    int column_height = sample_int(config.at("height"), random);
+    int cluster_reach = std::min(column_height, sample_int(config.at("cluster_reach"), random));
+    int count = sample_int(config.at("column_count"), random);
+    bool placed = false;
+    for (int i = 0; i < count; i++) {   // BlockPos.randomBetweenClosed draws its coordinates lazily
+        int w = 2 * cluster_reach + 1;
+        int x = origin.x - cluster_reach + random.next_int(w);
+        int y = origin.y + random.next_int(1);
+        int z = origin.z - cluster_reach + random.next_int(w);
+        BlockPos pos(x, y, z);
+        int blocks_to_place_y = column_height - (std::abs(pos.x - origin.x) + std::abs(pos.y - origin.y) + std::abs(pos.z - origin.z));
+        if (blocks_to_place_y < 0) continue;
+        placed |= sc.place_column(random, pos, blocks_to_place_y, sample_int(config.at("column_reach"), random));
+    }
+    return placed;
+}
+
 }  // namespace
 
 bool place_feature_type4(FeatureEnv& env, const std::string& type, const Json& config, Rng& random, const BlockPos& origin, bool& handled) {
@@ -975,6 +1096,9 @@ bool place_feature_type4(FeatureEnv& env, const std::string& type, const Json& c
     if (type == "nether_forest_vegetation") return place_nether_forest_vegetation(env, config, random, origin);
     if (type == "twisting_vines") return place_twisting_vines(env, config, random, origin);
     if (type == "weeping_vines") return place_weeping_vines(env, config, random, origin);
+    if (type == "single_block_pillar") return place_single_block_pillar(env, config, random, origin);
+    if (type == "projected_random_patchy_square") return place_projected_patchy_square(env, config, random, origin);
+    if (type == "stepped_column_cluster") return place_stepped_column_cluster(env, config, random, origin);
     handled = false;
     return false;
 }

@@ -131,6 +131,9 @@ void Norm::generic(Json& j) {
     if (j.is_arr()) { for (auto& e : j.arr) generic(e); return; }
     if (!j.is_obj()) return;
     if (is_state(j)) { j = to_state(j); return; }
+    if (const Json* tj = j.find("type")) {   // a provider under a key that is not a known provider field (e.g. the "block" of a feature)
+        if (tj->is_str() && rename_provider(tj->str) != tj->str) { provider(j); return; }
+    }
     for (auto& kv : j.obj) {
         if (kv.first == "pool_aliases") continue;   // alias targets are pool ids, not block states
         if (state_keys().count(kv.first)) {

@@ -87,6 +87,8 @@ struct Trunk {
     void place_log_if_free(TreeCtx& t, const BlockPos& p) const { if (is_free(t, p)) place_log(t, p); }
 
     std::vector<Attach> place(TreeCtx& t, int tree_height, const BlockPos& origin) const;
+    // PoplarTrunkPlacer (26.3)
+    std::vector<Attach> poplar(TreeCtx& t, int h, const BlockPos& o) const;
     // pieces shared by several placers
     std::vector<Attach> straight(TreeCtx& t, int h, const BlockPos& o) const {
         place_below(t, o.below());
@@ -368,7 +370,28 @@ std::vector<Attach> Trunk::place(TreeCtx& t, int h, const BlockPos& o) const {
     if (type == "bending_trunk_placer") return bending(t, h, o);
     if (type == "upwards_branching_trunk_placer") return upwards_branching(t, h, o);
     if (type == "cherry_trunk_placer") return cherry(t, h, o);
+    if (type == "poplar_trunk_placer") return poplar(t, h, o);
     throw std::runtime_error("unknown trunk placer " + type);
+}
+
+std::vector<Attach> Trunk::poplar(TreeCtx& t, int h, const BlockPos& o) const {
+    place_below(t, o.below());
+    int up_to = h - sample_int(j.at("trunk_height_above_branches"), t.random);
+    for (int y = 0; y < h; y++) {
+        place_log(t, o.above(y));
+        // Direction.allShuffled(random), the horizontal ones in that order
+        Dir all[6] = {DOWN, UP, NORTH, SOUTH, WEST, EAST};
+        for (int i = 6; i > 1; i--) std::swap(all[i - 1], all[t.random.next_int(i)]);
+        std::vector<Dir> dirs;
+        for (Dir d : all) if (d != UP && d != DOWN) dirs.push_back(d);
+        if (up_to - 1 != y) continue;
+        int branches = sample_int(j.at("branch_amount"), t.random);
+        for (int x = 0; x < branches; x++) {
+            Dir bd = dirs[size_t(x)];
+            place_log(t, rel(o.above(y), bd), (bd == NORTH || bd == SOUTH) ? 'z' : 'x');
+        }
+    }
+    return {Attach{o.above(up_to), 0, false}};
 }
 
 // ---------------------------------------------------------------- foliage placers
@@ -388,6 +411,7 @@ struct Foliage {
         if (type == "acacia_foliage_placer") return 0;
         if (type == "random_spread_foliage_placer") return sample_int(j.at("foliage_height"), t.random);
         if (type == "cherry_foliage_placer") return sample_int(j.at("height"), t.random);
+        if (type == "poplar_foliage_placer") return sample_int(j.at("height"), t.random);
         throw std::runtime_error("unknown foliage placer " + type);
     }
     int foliage_radius(TreeCtx& t, int trunk_height) const {
@@ -551,9 +575,64 @@ struct Foliage {
             for (int y = foliage_h - 5; y >= 0; y--) leaves_row(t, pos, cr, y, dt);
             leaves_row_hanging(t, pos, cr, -1, dt, hang, hang_ext);
             leaves_row_hanging(t, pos, cr - 1, -2, dt, hang, hang_ext);
+        } else if (type == "poplar_foliage_placer") {
+            poplar_create(t, a, foliage_h, leaf_radius, offset);
         } else {
             throw std::runtime_error("unknown foliage placer " + type);
         }
+    }
+
+    // ---- PoplarFoliagePlacer (26.3): rhombus shaped rows
+    static bool in_rhombus(int cr, int adx, int adz, int cut, int extra) { return adx + adz <= cr * 2 - (cut + extra); }
+    static bool row_partial(int fh, int y) { return fh - 1 == y || fh - 2 == y; }
+    static int corners_to_cut(int dx, int dz, int cr, bool partial, bool flip) {
+        bool small_corner = flip ? ((dx > 0 && dz > 0) || (dz < 0 && dx < 0)) : ((dx > 0 && dz < 0) || (dz > 0 && dx < 0));
+        return small_corner ? cr - 1 : (partial ? cr + 1 : cr);
+    }
+    bool poplar_skip(TreeCtx& t, int dx, int y, int dz, int cr, int fh, bool flip) const {
+        bool partial = row_partial(fh, y);
+        int cut = corners_to_cut(dx, dz, cr, partial, flip);
+        int adx = std::abs(dx), adz = std::abs(dz);
+        bool edge = adx == cr || adz == cr;
+        if (partial && edge) return true;
+        int extra = t.random.next_float() <= j.at("side_hole_chance").float_value() ? 1 : 0;
+        return !in_rhombus(cr, adx, adz, cut, extra);
+    }
+    void poplar_row(TreeCtx& t, const BlockPos& origin, int cr, int y, bool dt, int fh, bool flip) const {
+        int offset = dt ? 1 : 0;
+        for (int dx = -cr; dx <= cr + offset; dx++)
+            for (int dz = -cr; dz <= cr + offset; dz++)
+                if (!poplar_skip(t, dx, y, dz, cr, fh, flip)) try_place_leaf(t, origin.offset(dx, y, dz));
+    }
+    void poplar_log_row(TreeCtx& t, const BlockPos& origin, int cr, int y, bool dt, int fh, bool flip) const {
+        int offset = dt ? 1 : 0;
+        for (int dx = -cr; dx <= cr + offset; dx++)
+            for (int dz = -cr; dz <= cr + offset; dz++) {
+                int adz = std::abs(dz), adx = std::abs(dx);
+                if (!in_rhombus(cr, adx, adz, corners_to_cut(dx, dz, cr, row_partial(fh, y), flip), 2)) continue;
+                if (!((adz == 0 && cr - adx >= 4) || (adx == 0 && cr - adz >= 4))) continue;
+                BlockPos pos = origin.offset(dx, y, dz);
+                // tryPlaceLog: where the foliage state stands, put the trunk block turned along the row
+                uint16_t want = provide_state(t.env, t.cfg.at("foliage_provider"), t.random, pos);
+                if (t.get(pos) != want) continue;
+                uint16_t log = provide_state(t.env, t.cfg.at("trunk_provider"), t.random, pos);
+                if (log != kNoState && t.bd.has_prop(log, "axis")) log = t.bd.with(log, "axis", adz == 0 ? "x" : "z");
+                t.set_foliage(pos, log);
+            }
+    }
+    void poplar_create(TreeCtx& t, const Attach& a, int foliage_h, int leaf_radius, int offset) const {
+        bool dt = a.double_trunk;
+        BlockPos pos = a.pos.above(offset);
+        int cr = leaf_radius + a.radius_offset - 1;
+        bool flip = t.random.next_boolean();
+        int fh = foliage_h;   // the attachment's foliage height offset is 0 for the poplar trunk
+        poplar_row(t, pos, cr - 2, fh - 1, dt, fh, flip);
+        poplar_row(t, pos, cr - 1, fh - 2, dt, fh, flip);
+        poplar_row(t, pos, cr - 1, fh - 3, dt, fh, flip);
+        for (int y = fh - 4; y >= 1; y--) poplar_row(t, pos, cr, y, dt, fh, flip);
+        poplar_log_row(t, pos, cr, fh - 4, dt, fh, flip);
+        poplar_row(t, pos, cr - 1, 0, dt, fh, flip);
+        poplar_row(t, pos, std::min(std::max(cr - 2, 1), 2), -1, dt, fh, flip);
     }
 };
 
@@ -849,6 +928,51 @@ void run_decorator(DecoCtx& c, const Json& d) {
         for (auto& pos : c.leaves) {
             BlockPos down = rel(pos, DOWN);
             if (r.next_float() < leaves_p && c.is_air(down)) hanger(down);
+        }
+    } else if (type == "shelf_mushroom") {
+        if (r.next_float() >= d.at("probability").float_value()) return;
+        if (c.logs.empty()) return;
+        const uint16_t shelf = bd.default_state("minecraft:shelf_mushroom");
+        auto is_shelf = [&](const BlockPos& p) { return bd.name(t.get(p)) == "minecraft:shelf_mushroom"; };
+        auto water = [&](const BlockPos& p) { return bd.name(t.get(p)) == "minecraft:water"; };
+        auto replaceable = [&](const BlockPos& p) {
+            bool near_water = water(p) || water(rel(p, EAST)) || water(rel(p, WEST)) || water(rel(p, NORTH)) || water(rel(p, SOUTH));
+            return bd.replaceable(t.get(p)) && !near_water;
+        };
+        auto place_mushroom = [&](const BlockPos& p, Dir facing) {
+            static const char* names[6] = {"down", "up", "north", "south", "west", "east"};
+            int age = r.next_int(2);
+            t.set_decoration(p, bd.with(bd.with(shelf, "age", std::to_string(age)), "facing", names[facing]));
+        };
+        auto horizontally_adjacent_shelf = [&](const BlockPos& p) { for (Dir hd : kHorizontal) if (is_shelf(rel(p, hd))) return true; return false; };
+        bool fallen = c.logs.front().y == c.logs.back().y;
+        if (!fallen) {
+            Dir first = kHorizontal[r.next_int(4)];
+            Dir dirs[2] = {first, clockwise(first)};
+            int base_y = c.logs.front().y;
+            for (auto& log : c.logs) {
+                int dy = log.y - base_y;
+                if (dy < 1 || dy > 4) continue;
+                for (Dir facing : dirs) {
+                    if (r.next_float() > 0.25f) continue;
+                    BlockPos m = rel(log, facing);
+                    if (!replaceable(m)) continue;
+                    if (is_shelf(m.below())) continue;
+                    place_mushroom(m, facing);
+                    break;
+                }
+            }
+        } else {
+            bool along_x = c.logs.front().x != c.logs.back().x;
+            Dir dirs[2] = {along_x ? NORTH : EAST, along_x ? SOUTH : WEST};
+            for (auto& log : c.logs)
+                for (Dir facing : dirs) {
+                    if (r.next_float() > 0.25f) continue;
+                    BlockPos m = rel(log, facing);
+                    if (!replaceable(m)) continue;
+                    if (horizontally_adjacent_shelf(m) || horizontally_adjacent_shelf(log)) continue;
+                    place_mushroom(m, facing);
+                }
         }
     } else if (type == "creaking_heart") {
         float prob = d.at("probability").float_value();
