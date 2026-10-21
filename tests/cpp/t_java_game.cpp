@@ -233,21 +233,27 @@ void survival(Ctx& t, Env& e) {
     B.drop("add_entity");
     B.send("player_action", Wr().varint(0).be64(block_pos(x, y, z)).u8(1).varint(1).b);
     B.send("player_action", Wr().varint(2).be64(block_pos(x, y, z)).u8(1).varint(2).b);
-    B.until([&] { return B.count("add_entity") >= 1; }, 3000);
-    t.check(B.count("add_entity") >= 1, "breaking dirt in survival spawns the dropped item");
+    int item_type = ids->entity_types.at("item");
+    auto item_spawn = [&]() -> Bytes {   // animals spawn by themselves now: look for the item entity by its type
+        for (auto& en : B.log) if (en.first == "add_entity") { Rd r(en.second); r.varint(); r.take(16); if (int(r.varint()) == item_type) return en.second; }
+        return Bytes();
+    };
+    B.until([&] { return !item_spawn().empty(); }, 3000);
+    t.check(!item_spawn().empty(), "breaking dirt in survival spawns the dropped item");
     B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
     if (B.count("take_item_entity") < 1) {   // items slide away from where they pop (as in vanilla): once it rests, walk onto it like a player would
         B.pump(1500);
-        Bytes spawn;
-        for (auto& en : B.log) if (en.first == "add_entity") { spawn = en.second; break; }
+        Bytes spawn = item_spawn();
         if (!spawn.empty()) {
             Rd r(spawn);
             r.varint(); r.take(16); r.varint();
             double ix = r.f64(), iy = r.f64(), iz = r.f64();
+            Rd id_reader(spawn);
+            int item_id = int(id_reader.varint());
             for (auto& en : B.log) {
                 if (en.first != "move_entity_pos" && en.first != "move_entity_pos_rot") continue;
                 Rd m(en.second);
-                m.varint();
+                if (int(m.varint()) != item_id) continue;
                 if (777 >= 777) m.varint();
                 ix += double(int16_t(m.be16())) / 4096.0; iy += double(int16_t(m.be16())) / 4096.0; iz += double(int16_t(m.be16())) / 4096.0;
             }
@@ -256,8 +262,7 @@ void survival(Ctx& t, Env& e) {
     }
     B.until([&] { return B.count("take_item_entity") >= 1; }, 5000);
     {   // items slide away from where they pop (as in vanilla): walk onto the item like a player would
-        Bytes spawn;
-        for (auto& en : B.log) if (en.first == "add_entity") { spawn = en.second; break; }
+        Bytes spawn = item_spawn();
         if (!spawn.empty()) {
             Rd r(spawn);
             r.varint(); r.take(16); r.varint();
