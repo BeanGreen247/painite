@@ -842,7 +842,7 @@ void Terrain3::do_fill(NoiseChunk3& nc, ChunkBlocks& out) const {
     const Volume& v = nc.vol;
     std::vector<float> dens(size_t(v.size()));
     I.final_density->volume(nc.ctx, dens.data(), v);
-    std::vector<uint16_t> blocks(size_t(ns_.dim_height) * 256, I.air);
+    std::vector<uint16_t> blocks(size_t(ns_.height) * 256, I.air);   // the chunk holds the generated range (the nether's 128 of 256)
     std::vector<uint8_t> marks(blocks.size(), 0);
     const uint8_t* flags = bd_.chunk_flags();
     for (int z = 0; z < v.sz; z++) {
@@ -855,13 +855,13 @@ void Terrain3::do_fill(NoiseChunk3& nc, ChunkBlocks& out) const {
                 int sub = nc.substance(bx, by, bz, double(density));
                 uint16_t state = sub < 0 ? I.default_block : uint16_t(sub);
                 if (state == I.air) continue;
-                size_t idx = size_t(by - ns_.dim_min_y) * 256 + size_t(z) * 16 + size_t(x);
+                size_t idx = size_t(by - ns_.min_y) * 256 + size_t(z) * 16 + size_t(x);
                 blocks[idx] = state;
                 if (nc.schedule && (flags[state] & kFlagFluid)) marks[idx] = 1;
             }
         }
     }
-    out.init(ns_.dim_min_y, ns_.dim_height, std::move(blocks), flags);
+    out.init(ns_.min_y, ns_.height, std::move(blocks), flags);
     out.marks = std::move(marks);
 }
 
@@ -968,10 +968,10 @@ void Terrain3::build_surface(NoiseChunk3& nc, ChunkBlocks& blocks, const std::fu
     const Impl& I = *p_;
     const uint8_t* flags = bd_.chunk_flags();
     int chunk_min_x = nc.vol.minx, chunk_min_z = nc.vol.minz;
-    int min_y = ns_.dim_min_y, max_y = ns_.dim_min_y + ns_.dim_height - 1;
+    int min_y = ns_.min_y, max_y = ns_.min_y + ns_.height - 1;
     // getHighestFilledSectionIndex: the top section with a block other than air
     int highest = -1;
-    for (int sec = ns_.dim_height / 16 - 1; sec >= 0 && highest < 0; sec--)
+    for (int sec = ns_.height / 16 - 1; sec >= 0 && highest < 0; sec--)
         for (size_t i = size_t(sec) * 16 * 256; i < size_t(sec + 1) * 16 * 256; i++)
             if (!(flags[blocks.b[i]] & kFlagAir)) { highest = sec; break; }
     int max_block_y = (min_y >> 4) * 16 + (highest + 0) * 16 + 15;
