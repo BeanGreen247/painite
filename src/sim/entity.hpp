@@ -91,6 +91,17 @@ public:
     virtual int block_state_id() const { return -1; }   // the "data" of the add entity packet for entities that carry a block state (falling block)
 };
 
+// PrimedTnt: a lit block of TNT, 80 ticks to the blast
+class PrimedTnt : public Entity {
+public:
+    PrimedTnt(EntityWorld* w, double x, double y, double z);
+    int fuse = 80;
+    void tick() override;
+    double default_gravity() const override { return 0.04; }
+    void collect_data(std::vector<DataItem>& out) const override;
+    uint64_t data_signature() const override { return uint64_t(fuse); }
+};
+
 // FallingBlockEntity: a block that lost its support. Falls with gravity 0.04 and 0.98 drag, lands back as a block or as an item.
 class FallingBlockEntity : public Entity {
 public:

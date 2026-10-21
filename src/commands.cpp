@@ -521,6 +521,12 @@ void Game::exec(uint64_t gid, const std::string& raw, const Reply& reply) {
         if (a.size() >= 5 && (!parse_coord(a[2], cur.x, x) || !parse_coord(a[3], cur.y, y) || !parse_coord(a[4], cur.z, z))) { reply("Invalid coordinates"); return; }
         if (summon(a[1], cur.dim, x, y, z)) reply("Summoned new " + a[1]);
         else reply("Unable to summon entity " + a[1] + " (Painite only knows living mobs)");
+    } else if (cmd == "gamerule") {
+        if (!need(2)) return;
+        if (a.size() >= 2 && lower(a[1]) == "randomtickspeed") {
+            if (a.size() >= 3) { set_random_tick_speed(std::max(0, std::min(100000, atoi(a[2].c_str())))); reply("Game rule randomTickSpeed is now set to: " + std::to_string(random_tick_speed())); }
+            else reply("Game rule randomTickSpeed is currently set to: " + std::to_string(random_tick_speed()));
+        } else reply("Painite knows the game rule randomTickSpeed only");
     } else if (cmd == "give" || cmd == "weather" || cmd == "difficulty" || cmd == "effect" || cmd == "xp" || cmd == "enchant") {
         reply("/" + cmd + " is not implemented in Painite yet (no inventory, mobs or weather)");
     } else {

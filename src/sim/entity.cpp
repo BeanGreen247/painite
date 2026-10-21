@@ -196,4 +196,33 @@ void FallingBlockEntity::tick() {
     needs_sync = true;
 }
 
+PrimedTnt::PrimedTnt(EntityWorld* w, double x, double y, double z) : Entity("minecraft:tnt", w) {
+    width = 0.98; height = 0.98; eye_height = 0.15;
+    set_pos(x, y, z);
+    double angle = rng->next_double() * 6.283185307179586;
+    delta = Vec3(-std::sin(angle) * 0.02, 0.2, -std::cos(angle) * 0.02);
+}
+
+void PrimedTnt::tick() {
+    Entity::tick();
+    apply_gravity();
+    move_self(delta);
+    delta = delta.scale(0.98);
+    if (on_ground) delta = delta.multiply(0.7, -0.5, 0.7);
+    if (--fuse <= 0) {
+        level->explode(Vec3(pos.x, pos.y + height / 16.0, pos.z), 4.0f, this);
+        discard();
+    }
+    needs_sync = true;
+}
+
+void PrimedTnt::collect_data(std::vector<DataItem>& out) const {
+    DataItem d;
+    d.index = 8;
+    d.serializer = 1;   // INT: the fuse
+    uint32_t v = uint32_t(fuse);
+    do { uint8_t b = v & 0x7f; v >>= 7; if (v) b |= 0x80; d.value.push_back(b); } while (v);
+    out.push_back(std::move(d));
+}
+
 }  // namespace pn::sim

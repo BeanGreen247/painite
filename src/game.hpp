@@ -2,6 +2,7 @@
 // commands and autosave. Workers (network threads) call in; events go back out through Worker::post_fn.
 #pragma once
 #include "auth.hpp"
+#include "redstone.hpp"
 #include "region.hpp"
 #include "sim/entity_manager.hpp"
 #include "sim/mob.hpp"
@@ -134,6 +135,13 @@ public:
 
     void post_task(std::function<void()> fn);
     RegionTicker& ticker() { return ticker_; }
+    Redstone& redstone();
+    void leaves_update(int dim, int x, int y, int z);                     // region threads: recompute the distance of a leaf block
+    void fire_update(int dim, int x, int y, int z);                       // region threads: a fire block's turn
+    bool set_fire(int dim, int x, int y, int z);                          // light a fire where it can live
+    void drop_block_loot(int dim, int x, int y, int z, uint16_t state);   // the items a block gives when it breaks by itself
+    int random_tick_speed() const { return random_tick_speed_.load(); }
+    void set_random_tick_speed(int n) { random_tick_speed_ = n; }
     void save_everything(bool unload);
     void save_player_data(uint64_t gid);
 
@@ -189,7 +197,14 @@ private:
     void send_health_locked(PState& p);
     void track_movement_locked(PState& p, const GPos& now);
     void add_exhaustion_locked(PState& p, float x) { if (p.gamemode != 1 && p.gamemode != 3) p.v.exhaustion = std::min(40.0f, p.v.exhaustion + x); }
-    void pickup_items();   // tick, players_ locked: players collect the item entities they touch
+    void pickup_items();
+    // blocks that change by themselves (blocktick.cpp)
+    void random_ticks();
+    void block_random_tick(int dim, int x, int y, int z, uint16_t id);
+    void plates_tick();
+    std::atomic<int> random_tick_speed_{3};
+    std::mutex fire_mu_;
+    std::unordered_map<uint64_t, int64_t> fire_next_;   // fire blocks and the game time of their next tick   // tick, players_ locked: players collect the item entities they touch
     void spawn_for(PState& viewer, PState& p);
     void despawn_for(PState& viewer, PState& p);
     void run_command(uint64_t gid, const std::string& line);   // commands.cpp
@@ -208,6 +223,7 @@ private:
     std::condition_variable task_cv_;
     std::vector<std::function<void()>> tasks_;
     RegionTicker ticker_;
+    std::unique_ptr<Redstone> redstone_;
     std::atomic<int64_t> game_time_{0}, day_time_{0};
     double tps_ = 20, mspt_ = 0;
     int64_t last_autosave_ = 0;

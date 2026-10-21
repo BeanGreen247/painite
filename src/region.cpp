@@ -1,6 +1,7 @@
 #include "region.hpp"
 #include "dimension.hpp"
 #include "log.hpp"
+#include "redstone.hpp"
 #include "server.hpp"
 #include "sim/entity.hpp"
 #include <algorithm>
@@ -159,8 +160,11 @@ void RegionTicker::process_block(int dim, int x, int y, int z) {
         const BlockInfo& below = B.info(w.get_block(x, y - 1, z));
         bool upper = bi.props.find("half=upper") != std::string::npos;
         bool ok = upper ? below.name == bi.name : (below.solid || below.name == "minecraft:farmland");
-        if (!ok) set(x, y, z, 0);
+        if (!ok) { set(x, y, z, 0); return; }
     }
+    if (bi.name.find("leaves") != std::string::npos) s_.game.leaves_update(dim, x, y, z);
+    else if (bi.name == "minecraft:fire") s_.game.fire_update(dim, x, y, z);
+    s_.game.redstone().update(dim, x, y, z);   // power: dust, torches, repeaters, lamps, doors, pistons ...
 }
 
 }  // namespace pn

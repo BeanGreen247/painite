@@ -4,6 +4,7 @@
 #include "server.hpp"
 #include "dimension.hpp"
 #include "sim/components.hpp"
+#include "redstone.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -35,7 +36,7 @@ static void put_entry(Wr& w, const GIdentity& id, int gamemode) {
 struct CmdDef { const char* name; int level; };
 static const CmdDef kCommands[] = {{"help", 0}, {"list", 0}, {"players", 0}, {"whois", 0}, {"playerinfo", 0}, {"tps", 0}, {"me", 0}, {"tell", 0}, {"msg", 0}, {"w", 0}, {"version", 0}, {"info", 0}, {"painite", 0}, {"pn", 0}, {"say", 2}, {"tp", 2},
     {"teleport", 2}, {"execute", 2}, {"locate", 2}, {"gamemode", 2}, {"time", 2}, {"setblock", 2}, {"fill", 2}, {"kick", 3}, {"ban", 3}, {"ban-ip", 3}, {"pardon", 3}, {"pardon-ip", 3},
-    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}, {"kill", 2}, {"summon", 2}, {"cache", 2}, {"perf", 2}};
+    {"banlist", 3}, {"whitelist", 3}, {"op", 3}, {"deop", 3}, {"save-all", 4}, {"save-on", 4}, {"save-off", 4}, {"stop", 4}, {"kill", 2}, {"summon", 2}, {"cache", 2}, {"perf", 2}, {"gamerule", 2}};
 
 // Command tree for the client: every command is a literal with one greedy text argument, so tab completion and highlighting
 // know the names; the server does the parsing.
@@ -569,6 +570,11 @@ static uint16_t placed_state(uint16_t base, int face, float yaw, float cursor_y)
     if (has("type") && name.find("slab") != std::string::npos) set("type", face == 0 ? "top" : face == 1 ? "bottom" : cursor_y >= 0.5f ? "top" : "bottom");
     if (has("half") && (name.find("stairs") != std::string::npos || name.find("trapdoor") != std::string::npos))
         set("half", face == 0 ? "top" : face == 1 ? "bottom" : cursor_y >= 0.5f ? "top" : "bottom");
+    if (has("face") && (name.find("lever") != std::string::npos || name.find("button") != std::string::npos)) {   // on the floor, on a wall or on the ceiling
+        static const char* const dirs[6] = {"down", "up", "north", "south", "west", "east"};
+        set("face", face == 1 ? "floor" : face == 0 ? "ceiling" : "wall");
+        set("facing", face >= 2 ? dirs[face] : look[q]);
+    }
     if (has("persistent")) set("persistent", "true");
     std::sort(kv.begin(), kv.end());
     std::string props;
@@ -708,15 +714,18 @@ void Worker::on_place(JConn& c, Rd& r) {
     }
     World& W = s_.dim(c.dim);
     uint16_t target = W.get_block(x, y, z);
+    if (hand == 0 && !c.sneaking && c.gamemode != 3 && Redstone::is_interactive(target) && s_.game.redstone().use(c.dim, x, y, z)) { send_block_ack(c, seq); return; }   // levers, buttons, doors ...
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }
     const DimInfo& di = dim_info(c.dim);
     if (hand == 0 && c.gamemode != 3 && c.gamemode != 2) {
         const std::string& held = held_name;
         if (held == "minecraft:ender_eye" && s_.game.put_ender_eye(c.dim, x, y, z)) { send_block_ack(c, seq); return; }
+        if (held == "minecraft:flint_and_steel" && s_.game.redstone().ignite_tnt(c.dim, x, y, z)) { send_block_ack(c, seq); return; }
         if (held == "minecraft:flint_and_steel" || held == "minecraft:fire_charge") {
             // lighting a nether portal: fire inside an obsidian frame turns the frame's inside into portal
             if (ty >= di.min_y && ty < di.min_y + di.height && s_.game.portal_ignite(c.dim, tx, ty, tz)) { send_block_ack(c, seq); return; }
+            if (ty >= di.min_y && ty < di.min_y + di.height && s_.game.set_fire(c.dim, tx, ty, tz)) { if (held == "minecraft:fire_charge" && c.gid) s_.game.inv_consume_held(c.gid, 1); send_block_ack(c, seq); return; }
         }
     }
     bool ok = item_block && c.gamemode != 3 && c.gamemode != 2 && ty >= di.min_y && ty < di.min_y + di.height;

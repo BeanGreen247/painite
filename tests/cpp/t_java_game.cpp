@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer"};
     return o;
 }
 
@@ -541,6 +541,132 @@ void cache_stats_test(Ctx& t, Env& e) {
         t.check(all.find(name) != std::string::npos, std::string("`cache` lists ") + name);
 }
 
+// ---- redstone and random ticks, seen from a bot ------------------------------------------------------------
+
+struct Stage {
+    Ctx& t;
+    JBot& B;
+    std::map<int, std::string> names;
+    std::map<std::array<int, 3>, std::string> seen;
+    int px, py, pz;
+    Stage(Ctx& ctx, JBot& bot, const std::string& blocks) : t(ctx), B(bot), names(load_block_names(blocks, true)) {
+        px = int(std::floor(B.pos[0])); py = int(std::floor(B.pos[1])); pz = int(std::floor(B.pos[2]));
+    }
+    void collect() {
+        for (auto& d : B.take("block_update")) {
+            Rd r(d);
+            int x, y, z;
+            unpack_pos(r.be64(), x, y, z);
+            auto it = names.find(int(r.varint()));
+            seen[{x, y, z}] = it == names.end() ? "?" : it->second;
+        }
+    }
+    void set(int x, int y, int z, const std::string& block) { B.command("setblock " + std::to_string(x) + " " + std::to_string(y) + " " + std::to_string(z) + " " + block); }
+    // wait until the block at (x, y, z) has a name containing `part`
+    bool wait(int x, int y, int z, const std::string& part, int ms) {
+        auto has = [&] { collect(); auto it = seen.find({x, y, z}); return it != seen.end() && it->second.find(part) != std::string::npos; };
+        B.until(has, ms);
+        return has();
+    }
+    std::string at(int x, int y, int z) { collect(); auto it = seen.find({x, y, z}); return it == seen.end() ? "(unseen)" : it->second; }
+};
+
+void redstone(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Wirer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, bx = S.px + 3, bz = S.pz;
+    // 1. a lever, a piece of dust and a lamp: the lamp follows the lever
+    S.set(bx, y, bz, "lever[face=floor,facing=north,powered=false]");
+    S.set(bx + 1, y, bz, "redstone_wire");
+    S.set(bx + 2, y, bz, "redstone_lamp");
+    B.pump(400);
+    S.collect();
+    t.check(S.at(bx + 2, y, bz).find("lit=false") != std::string::npos || S.at(bx + 2, y, bz) == "(unseen)", "the lamp starts dark: " + S.at(bx + 2, y, bz));
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, y, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(21).b);   // flip the lever
+    t.check(S.wait(bx + 2, y, bz, "lit=true", 3000), "flipping the lever lights the lamp through the dust: " + S.at(bx + 2, y, bz));
+    t.check(S.at(bx + 1, y, bz).find("power=15") != std::string::npos, "the dust next to the lever carries 15");
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, y, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(22).b);
+    t.check(S.wait(bx + 2, y, bz, "lit=false", 3000), "flipping it back darkens the lamp: " + S.at(bx + 2, y, bz));
+    // 2. a redstone torch on a block turns off when the block is powered
+    int tz = bz + 3;
+    S.set(bx, y, tz, "stone");
+    S.set(bx, y + 1, tz, "redstone_torch[lit=true]");
+    S.set(bx + 1, y, tz, "lever[face=wall,facing=east,powered=true]");
+    t.check(S.wait(bx, y + 1, tz, "lit=false", 3000), "a torch goes out when its block is powered: " + S.at(bx, y + 1, tz));
+    // 3. a redstone block opens a door
+    int dz = bz + 6;
+    S.set(bx, y, dz, "oak_door[half=lower,facing=north,open=false]");
+    S.set(bx, y + 1, dz, "oak_door[half=upper,facing=north,open=false]");
+    S.set(bx + 1, y, dz, "redstone_block");
+    t.check(S.wait(bx, y, dz, "open=true", 3000), "power opens a door: " + S.at(bx, y, dz));
+    // 4. a piston pushes the block in front of it
+    int pz2 = bz + 9;
+    S.set(bx, y, pz2, "piston[facing=east,extended=false]");
+    S.set(bx + 1, y, pz2, "stone");
+    S.set(bx, y, pz2 + 1, "redstone_block");
+    t.check(S.wait(bx + 2, y, pz2, "minecraft:stone", 3000), "a powered piston pushes the stone one block: " + S.at(bx + 2, y, pz2));
+    t.check(S.wait(bx + 1, y, pz2, "piston_head", 3000), "and its head takes the place: " + S.at(bx + 1, y, pz2));
+    // 6. a repeater passes the signal on after its delay, a button gives a short pulse, a plate answers to the player standing on it
+    int rz = bz - 8;
+    S.set(bx, y, rz, "lever[face=floor,facing=north,powered=false]");
+    S.set(bx + 1, y, rz, "repeater[facing=west,delay=2]");
+    S.set(bx + 2, y, rz, "redstone_lamp");
+    B.pump(300);
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, y, rz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(23).b);
+    t.check(S.wait(bx + 2, y, rz, "lit=true", 3000), "a lever feeds a lamp through a repeater");
+    int uz = bz - 11;
+    S.set(bx, y, uz, "stone_button[face=floor,facing=north,powered=false]");
+    S.set(bx + 1, y, uz, "redstone_lamp");
+    B.pump(300);
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, y, uz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(24).b);
+    t.check(S.wait(bx + 1, y, uz, "lit=true", 3000), "pressing a button lights the lamp next to it");
+    t.check(S.wait(bx + 1, y, uz, "lit=false", 4000), "and the button lets go again after a second");
+    S.set(S.px, y, S.pz, "stone_pressure_plate");
+    S.set(S.px + 1, y, S.pz, "redstone_lamp");
+    t.check(S.wait(S.px + 1, y, S.pz, "lit=true", 4000), "standing on a pressure plate lights the lamp next to it");
+    // 5. TNT next to a redstone block goes off
+    int tnz = bz - 5;
+    S.set(bx + 6, y, tnz, "tnt");
+    B.log.clear();
+    S.set(bx + 6, y, tnz + 1, "redstone_block");
+    B.until([&] { return B.count("add_entity") >= 1; }, 3000);
+    t.check(B.count("add_entity") >= 1, "powered TNT becomes a primed TNT entity");
+    S.collect();
+    S.seen.clear();
+    B.pump(4500);
+    t.check(S.at(bx + 6, y, tnz + 1) == "minecraft:air" || S.at(bx + 6, y, tnz + 1) == "(unseen)" ? S.at(bx + 6, y, tnz + 1) == "minecraft:air" : false, "the explosion blows the redstone block away: " + S.at(bx + 6, y, tnz + 1));
+}
+
+void random_tick_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Farmer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.command("gamerule randomTickSpeed 1000");
+    B.pump(200);
+    int y = S.py, x = S.px + 3, z = S.pz;
+    S.set(x, y - 1, z, "farmland[moisture=7]");
+    S.set(x, y, z, "wheat[age=0]");
+    S.set(x + 1, y - 1, z, "water");   // keeps the farmland wet
+    S.set(x + 2, y - 1, z + 8, "grass_block");
+    S.set(x + 2, y, z + 8, "oak_sapling[stage=1]");
+    S.set(x + 4, y + 6, z - 8, "oak_leaves[distance=7,persistent=false]");
+    B.pump(300);
+    S.collect();
+    auto age_of = [&] { std::string v = S.at(x, y, z); size_t p = v.find("age="); return p == std::string::npos ? -1 : atoi(v.c_str() + p + 4); };
+    B.until([&] { S.collect(); return age_of() >= 4; }, 14000);
+    t.check(age_of() >= 4, "wheat grows on watered farmland with random ticks (age " + std::to_string(age_of()) + ")");
+    t.check(S.wait(x + 2, y, z + 8, "oak_log", 8000), "a sapling grows into a tree");
+    t.check(S.wait(x + 4, y + 6, z - 8, "minecraft:air", 8000), "a leaf block without a log decays");
+}
+
 }  // namespace
 
 void reg_java_game(Registry& reg) {
@@ -577,6 +703,12 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"bow-and-snowball", ranged});
     d.tests.push_back({"natural-spawn", natural});
     reg.push_back(std::move(d));
+    Group rs;
+    rs.name = "redstone";
+    rs.opts = survival_opts;
+    rs.tests.push_back({"circuits", redstone});
+    rs.tests.push_back({"random-ticks", random_tick_test});
+    reg.push_back(std::move(rs));
     Group f;
     f.name = "persist";
     f.opts = survival_opts;

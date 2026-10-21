@@ -1,4 +1,5 @@
 #include "game.hpp"
+#include "redstone.hpp"
 #include "perf.hpp"
 #include "anvil.hpp"
 #include "dimension.hpp"
@@ -17,7 +18,10 @@ namespace pn {
 
 Game::~Game() { stop(); }
 
+Redstone& Game::redstone() { return *redstone_; }
+
 void Game::start() {
+    redstone_ = std::make_unique<Redstone>(s_);
     game_time_ = s_.world.game_time;
     day_time_ = s_.world.day_time;
     last_autosave_ = now_ms();
@@ -605,8 +609,10 @@ void Game::tick() {
     PN_PERF("tick.total");
     game_time_++;
     { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
+    { PN_PERF("tick.random_ticks"); random_ticks(); }
     refresh_entity_world();
     { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
+    plates_tick();
     day_time_++;
     portal_tick();
     if (game_time_ % 20 == 0) broadcast_time();
