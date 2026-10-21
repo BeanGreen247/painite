@@ -255,10 +255,10 @@ void Bedrock::on_game_event(uint64_t conn, const GEvent& ev) {
             if (e - p < 2) break;
             if (!rd_varuint(p, e, v)) break;       // game mode
             const uint8_t* meta = p;
-            // the tail starts 8 bytes before "permission, command permission, 2 layers": find the loading-screen layer header
-            static const uint8_t pat[] = {0x02, 0x01, 0x02, 0x05, 0x00, 0x3f, 0x01};
+            // the tail starts 8 bytes before "permission, command permission, 2 layers": find the layer header (the two permission bytes depend on the recorded player)
+            static const uint8_t pat[] = {0x02, 0x05, 0x00, 0x3f, 0x01};
             const uint8_t* tail = nullptr;
-            for (const uint8_t* q = e - sizeof pat; q > meta + 8; q--) if (memcmp(q, pat, sizeof pat) == 0) { tail = q - 8; break; }
+            for (const uint8_t* q = e - sizeof pat; q > meta + 10; q--) if (memcmp(q, pat, sizeof pat) == 0) { tail = q - 10; break; }
             if (!tail) break;
             std::vector<uint8_t> pl;
             pl.insert(pl.end(), ev.id->uuid, ev.id->uuid + 16);
