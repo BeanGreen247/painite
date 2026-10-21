@@ -235,7 +235,7 @@ uint16_t provide_state(FeatureEnv& env, const Json& p, Rng& random, const BlockP
         auto slow_value = [&](int x, int y, int z) { return slow.get(double(float(x) * slow_scale), double(float(y) * slow_scale), double(float(z) * slow_scale)); };
         const Json& var = p.at("variety");
         double variety_noise = double(slow_value(pos.x, pos.y, pos.z));
-        int lo = int(var.at("min_inclusive").int_value()), hi = int(var.at("max_inclusive").int_value());
+        int lo = int((var.is_arr() ? var.arr.at(0) : var.at("min_inclusive")).int_value()), hi = int((var.is_arr() ? var.arr.at(1) : var.at("max_inclusive")).int_value());   // 26.2 writes {min_inclusive, max_inclusive}, 26.3 [min, max]
         int local_variety = int(clamped_map(variety_noise, -1.0, 1.0, double(lo), double(hi + 1)));
         std::vector<uint16_t> possible;
         for (int i = 0; i < local_variety; i++) possible.push_back(pick_state(states, slow_value(pos.x + i * 54545, pos.y, pos.z + i * 34234)));
@@ -260,7 +260,7 @@ uint16_t provide_state(FeatureEnv& env, const Json& p, Rng& random, const BlockP
         double slow_scale = double(p.at("slow_scale").float_value());
         const Json& var = p.at("variety");
         double variety_noise = value(slow, pos.x, pos.y, pos.z, slow_scale);
-        int lo = int(var.at("min_inclusive").int_value()), hi = int(var.at("max_inclusive").int_value());
+        int lo = int((var.is_arr() ? var.arr.at(0) : var.at("min_inclusive")).int_value()), hi = int((var.is_arr() ? var.arr.at(1) : var.at("max_inclusive")).int_value());   // 26.2 writes {min_inclusive, max_inclusive}, 26.3 [min, max]
         int local_variety = int(clamped_map(variety_noise, -1.0, 1.0, double(lo), double(hi + 1)));
         std::vector<uint16_t> possible;
         for (int i = 0; i < local_variety; i++) possible.push_back(noise_pick(states, value(slow, pos.x + i * 54545, pos.y, pos.z + i * 34234, slow_scale)));

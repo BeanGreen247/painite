@@ -137,6 +137,11 @@ void Norm::generic(Json& j) {
     }
     for (auto& kv : j.obj) {
         if (kv.first == "pool_aliases") continue;   // alias targets are pool ids, not block states
+        if (kv.first == "features" && kv.second.is_arr() && j.has("type") && j.at("type").is_str() && j.at("type").str == "minecraft:weighted_random_selector") {
+            for (auto& e : kv.second.arr)   // the "data" of each entry is a placed feature id here, not a block state
+                if (e.is_obj()) for (auto& ekv : e.obj) if (!(ekv.first == "data" && ekv.second.is_str())) generic(ekv.second);
+            continue;
+        }
         if (state_keys().count(kv.first)) {
             if (kv.second.is_str() && kv.second.str.rfind("minecraft:", 0) == 0) { kv.second = name_state(kv.second.str); continue; }
             if (kv.second.is_arr()) for (auto& e : kv.second.arr) if (e.is_str() && e.str.rfind("minecraft:", 0) == 0) e = name_state(e.str);

@@ -125,7 +125,7 @@ void Worker::change_dimension(JConn& c, const GPos& p) {
     Wr w;
     w.varint(vd.packet("play/c/respawn"));
     write_spawn_info(c, w);
-    w.u8(0);   // keep nothing
+    w.u8(0x03);   // keep attributes and entity data, as a vanilla server does for a dimension change (only a death keeps nothing)
     send(c, w.b);
     Wr ab;
     ab.varint(vd.id.pl_abilities);
@@ -149,6 +149,7 @@ void Worker::change_dimension(JConn& c, const GPos& p) {
     send_time(c, s_.game.game_time(), s_.game.day_time());
     rebuild_pending(c);
     pump_chunks(c);
+    s_.game.inv_sync(c.gid);   // the client builds a new player on respawn: send the inventory again so nothing is lost going through a portal
 }
 
 // An item stack on the wire. The item id is looked up by name in the connection's own registry; component patches are
