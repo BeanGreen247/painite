@@ -2,7 +2,9 @@
 #include "../../src/sim/inventory.hpp"
 #include "../../src/sim/entity_manager.hpp"
 #include "../../src/blocks.hpp"
+#include "../../src/sim/path.hpp"
 #include <cstdio>
+#include <functional>
 #include <cstdlib>
 
 using namespace pn::sim;
@@ -38,6 +40,22 @@ struct ColumnWorld : EntityWorld {
     void entities_in_box(const AABB&, const Entity*, std::vector<Entity*>&) override {}
     Entity* add_entity(std::unique_ptr<Entity> e) override { spawned.push_back(std::move(e)); return spawned.back().get(); }
     std::vector<std::unique_ptr<Entity>> spawned;
+};
+
+// a world from a rule: solid(x, y, z)
+struct GridWorld : EntityWorld {
+    std::function<bool(int, int, int)> solid;
+    pn::vg::LegacyRandom rnd{1};
+    int64_t game_time() const override { return 0; }
+    pn::vg::Rng& random() override { return rnd; }
+    void block_collisions(const AABB& a, std::vector<AABB>& out) const override {
+        for (int x = int(std::floor(a.min_x)); x <= int(std::ceil(a.max_x)) - 1; x++)
+            for (int y = int(std::floor(a.min_y)); y <= int(std::ceil(a.max_y)) - 1; y++)
+                for (int z = int(std::floor(a.min_z)); z <= int(std::ceil(a.max_z)) - 1; z++)
+                    if (solid(x, y, z)) out.push_back(AABB(x, y, z, x + 1, y + 1, z + 1));
+    }
+    void entities_in_box(const AABB&, const Entity*, std::vector<Entity*>&) override {}
+    Entity* add_entity(std::unique_ptr<Entity>) override { return nullptr; }
 };
 
 int main(int argc, char** argv) {
@@ -129,6 +147,24 @@ int main(int argc, char** argv) {
         FallingBlockEntity fall(&deep, 0.5, 10, 0.5, sand);
         for (int i = 0; i < 700 && !fall.removed; i++) fall.tick();
         CHECK(fall.removed && deep.placed.empty());
+    }
+    {   // pathfinding: a wall at x = 3 for z in -3..3 with the way round at z = 4; a one block step up is taken, a two block wall is not
+        GridWorld gw;
+        gw.solid = [](int x, int y, int z) { return y <= 0 || (x == 3 && z >= -3 && z <= 3 && y <= 3); };
+        auto path = find_path(gw, Vec3(0.5, 1, 0.5), Vec3(6.5, 1, 0.5), 0.6, 1.8);
+        CHECK(!path.empty());
+        bool through = false, reached = false;
+        for (auto& p : path) { if (int(std::floor(p.x)) == 3 && p.z < 4.0) through = true; if (std::fabs(p.x - 6.5) < 0.6 && std::fabs(p.z - 0.5) < 0.6) reached = true; }
+        CHECK(!through);
+        CHECK(reached);
+        GridWorld steps;
+        steps.solid = [](int x, int y, int z) { return y <= 0 || (x >= 2 && y <= 1) || (x >= 4 && y <= 2); };
+        auto up = find_path(steps, Vec3(0.5, 1, 0.5), Vec3(5.5, 3, 0.5), 0.6, 1.8);
+        CHECK(!up.empty() && std::fabs(up.back().x - 5.5) < 0.6 && up.back().y == 3);
+        GridWorld cliff;
+        cliff.solid = [](int x, int y, int z) { return y <= 0 && x < 4; };   // the floor ends: the target is across a pit
+        auto none = find_path(cliff, Vec3(0.5, 1, 0.5), Vec3(8.5, 1, 0.5), 0.6, 1.8);
+        CHECK(none.empty() || none.back().x < 4.0);   // it walks to the edge, not into the void
     }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;

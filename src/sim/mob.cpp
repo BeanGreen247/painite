@@ -2,6 +2,7 @@
 #include "data.hpp"
 #include "../blocks.hpp"
 #include "loot.hpp"
+#include "path.hpp"
 #include <cstring>
 #include <cmath>
 
@@ -163,9 +164,22 @@ static float rot_lerp(float cur, float target, float max_step) {
 // MoveControl.tick: turn towards the goal, walk, jump when something is in the way
 void Mob::follow_goal() {
     if (!has_goal) { zza = 0.0; return; }
-    double dx = goal_x - pos.x, dz = goal_z - pos.z, dy = goal_y - pos.y;
-    double dist2 = dx * dx + dz * dz + dy * dy;
-    if (dist2 < 2.5000003E-7 || ++goal_ticks > 200) { stop_moving(); return; }
+    double gdx = goal_x - pos.x, gdz = goal_z - pos.z, gdy = goal_y - pos.y;
+    double hd2 = gdx * gdx + gdz * gdz;
+    if ((hd2 < 0.36 && std::fabs(gdy) < 1.5) || ++goal_ticks > 400) { stop_moving(); return; }
+    double tx = goal_x, ty = goal_y, tz = goal_z;
+    if (hd2 > 6.25 || std::fabs(gdy) > 1.5) {   // further than 2.5 blocks (or on another level): plan a way around what is in between
+        double moved = (Vec3(goal_x, goal_y, goal_z) - path_goal).length();
+        if (path.empty() || path_i >= path.size() || --repath <= 0 || moved > 1.5) {
+            path = find_path(*level, pos, Vec3(goal_x, goal_y, goal_z), width, height);
+            path_goal = Vec3(goal_x, goal_y, goal_z);
+            path_i = 0;
+            repath = 20 + (id % 10);
+        }
+        while (path_i < path.size() && (path[path_i].x - pos.x) * (path[path_i].x - pos.x) + (path[path_i].z - pos.z) * (path[path_i].z - pos.z) < 0.16 && std::fabs(path[path_i].y - pos.y) < 1.2) ++path_i;
+        if (path_i < path.size()) { tx = path[path_i].x; ty = path[path_i].y; tz = path[path_i].z; }
+    }
+    double dx = tx - pos.x, dz = tz - pos.z, dy = ty - pos.y;
     float target_yaw = float(std::atan2(dz, dx) * 57.2957763671875) - 90.0f;
     yaw = rot_lerp(yaw, target_yaw, 90.0f);
     pitch = 0.0f;

@@ -46,10 +46,14 @@ public:
     void ai_step() override;
     // MoveControl: walk to a point at a fraction of the walking speed
     void move_to(double x, double y, double z, double modifier);
-    void stop_moving() { has_goal = false; zza = 0.0; }
+    void stop_moving() { has_goal = false; zza = 0.0; path.clear(); }
     bool has_goal = false;
     double goal_x = 0, goal_y = 0, goal_z = 0, goal_speed = 1.0;
     int goal_ticks = 0;
+    std::vector<Vec3> path;      // waypoints to the goal (A*), followed one by one
+    size_t path_i = 0;
+    int repath = 0;
+    Vec3 path_goal;
     int attack_cooldown = 0;
     int panic_ticks = 0;
     uint64_t target_gid = 0;
