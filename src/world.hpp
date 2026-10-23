@@ -58,6 +58,8 @@ public:
     std::shared_ptr<Chunk> chunk_if_loaded(int cx, int cz);
     uint16_t get_block(int x, int y, int z);
     bool set_block(int x, int y, int z, uint16_t id);        // marks dirty, bumps the chunk version
+    bool get_block_entity(int x, int y, int z, Nbt& out);        // a copy of the block entity at the spot (chest items, furnace state ...)
+    void put_block_entity(int x, int y, int z, const Nbt& be);   // replaces or adds it; the chunk is saved with it
     int top_y(int x, int z);                                 // y of the highest solid block, or kMinY - 1
     void save(bool unload_idle, int64_t now_ms);
     int loaded() ;

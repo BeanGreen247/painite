@@ -401,6 +401,13 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.varint(ev.slot);
             send(c, w.b);
             break;
+        case GEvent::ContainerData:
+            w.varint(vd.packet("play/c/container_set_data"));
+            w.varint(ev.container);
+            w.be16(static_cast<uint16_t>(ev.slot));
+            w.be16(static_cast<uint16_t>(ev.value));
+            send(c, w.b);
+            break;
         case GEvent::OpenScreen:
             w.varint(vd.packet("play/c/open_screen"));
             w.varint(ev.container);
@@ -583,6 +590,7 @@ static uint16_t placed_state(uint16_t base, int face, float yaw, float cursor_y)
         set("face", face == 1 ? "floor" : face == 0 ? "ceiling" : "wall");
         set("facing", face >= 2 ? dirs[face] : look[q]);
     }
+    if (name == "minecraft:hopper") set("facing", face == 0 || face == 1 ? "down" : face == 2 ? "south" : face == 3 ? "north" : face == 4 ? "east" : "west");
     if (has("persistent")) set("persistent", "true");
     std::sort(kv.begin(), kv.end());
     std::string props;
@@ -687,7 +695,9 @@ void Worker::on_dig(JConn& c, Rd& r) {
         const BlockInfo& bi = Blocks::get().info(cur);
         uint16_t left = bi.props.find("waterlogged=true") != std::string::npos ? block_with(cur, "waterlogged", false) : 0;   // a waterlogged block leaves its water behind
         if (left) left = Blocks::get().find("minecraft:water", "level=0");
-        if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && W.set_block(x, y, z, left)) {
+        bool can_break = take && near && !protect && !bi.air && bi.name != "minecraft:bedrock";
+        if (can_break) s_.game.spill_container(c.dim, x, y, z, cur);   // before the block goes: its block entity goes with it
+        if (can_break && W.set_block(x, y, z, left)) {
             s_.game.block_changed(c.dim, x, y, z, left);
             if (c.gamemode == 0 && c.gid) s_.game.player_broke_block(c.gid, c.dim, x, y, z, cur);
         } else if (status == 0 || status == 2) {
@@ -727,6 +737,7 @@ void Worker::on_place(JConn& c, Rd& r) {
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && Redstone::is_interactive(target) && s_.game.redstone().use(c.dim, x, y, z)) { send_block_ack(c, seq); return; }   // levers, buttons, doors ...
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gamemode != 2 && B.info(target).name.find("cauldron") != std::string::npos && s_.game.cauldron_use(c.gid, c.dim, x, y, z, held_name)) { send_block_ack(c, seq); return; }
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && B.info(target).name == "minecraft:crafting_table" && s_.game.open_menu(c.gid, "crafting", "Crafting")) { send_block_ack(c, seq); return; }
+    if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && s_.game.open_container(c.gid, c.dim, x, y, z)) { send_block_ack(c, seq); return; }
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }
     const DimInfo& di = dim_info(c.dim);
@@ -753,6 +764,23 @@ void Worker::on_place(JConn& c, Rd& r) {
     }
     if (ok) {
         uint16_t state = placed_state(item_block, face, c.yaw, cy);
+        if (!c.sneaking && (B.info(state).name == "minecraft:chest" || B.info(state).name == "minecraft:trapped_chest")) {   // ChestBlock: next to a single chest of the same facing the two become a double chest
+            static const char* const dirs[4] = {"north", "east", "south", "west"};
+            static const int ddx[4] = {0, 1, 0, -1}, ddz[4] = {-1, 0, 1, 0};
+            std::string f = block_prop(state, "facing");
+            int fi = 0;
+            for (int i = 0; i < 4; i++) if (f == dirs[i]) fi = i;
+            for (int side = 0; side < 2; side++) {   // 0: neighbour clockwise of the facing (this one is the left half), 1: counter clockwise (right half)
+                int d = (fi + (side == 0 ? 1 : 3)) & 3;
+                int nx = tx + ddx[d], nz = tz + ddz[d];
+                uint16_t other = W.get_block(nx, ty, nz);
+                if (B.info(other).name != B.info(state).name || block_prop(other, "facing") != f || block_prop(other, "type") != "single") continue;
+                uint16_t mine = block_with(state, "type", side == 0 ? "left" : "right"), theirs = block_with(other, "type", side == 0 ? "right" : "left");
+                if (W.set_block(nx, ty, nz, theirs)) s_.game.block_changed(c.dim, nx, ty, nz, theirs);
+                state = mine;
+                break;
+            }
+        }
         { uint16_t here = W.get_block(tx, ty, tz); if (B.info(here).name == "minecraft:water" && block_int(here, "level", 1) == 0 && B.info(state).props.find("waterlogged=false") != std::string::npos) state = block_with(state, "waterlogged", true); }   // a slab or stair set into a water source holds the water
         if (W.set_block(tx, ty, tz, state)) {
             s_.game.block_changed(c.dim, tx, ty, tz, state);

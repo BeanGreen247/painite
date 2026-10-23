@@ -49,7 +49,7 @@ struct GPos {
 
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
-                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen,
+                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen, ContainerData,
                 EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
@@ -104,6 +104,9 @@ public:
     // --- inventory (called from worker threads; the game state lives in sim::PlayerSim) ---
     void inv_click(uint64_t gid, int container, int state, int slot, int button, int mode, const std::map<int, sim::HashedLite>& changed, const sim::HashedLite& carried);
     void inv_close(uint64_t gid, int container);
+    bool open_container(uint64_t gid, int dim, int x, int y, int z);          // right click on a chest, furnace ...: open its window
+    void spill_container(int dim, int x, int y, int z, uint16_t state);        // a container block is broken: its items drop
+    void containers_tick();                                                    // game thread: furnaces burn and smelt
     bool open_menu(uint64_t gid, const std::string& kind, const std::string& title);   // crafting table ...: open the window of a block; false when the player cannot
 
     void inv_set_held(uint64_t gid, int slot);
@@ -209,6 +212,11 @@ private:
     void block_random_tick(int dim, int x, int y, int z, uint16_t id);
     void plates_tick();
     std::atomic<int> random_tick_speed_{3};
+    struct BEC;
+    std::unordered_map<uint64_t, std::weak_ptr<BEC>> bec_registry_;   // block entity containers somebody holds (windows, furnaces); mu_
+    std::unordered_map<uint64_t, std::shared_ptr<BEC>> bec_active_;   // furnaces that have work to do
+    std::shared_ptr<BEC> bec_get_locked(int dim, int x, int y, int z);
+    void bec_save_locked(BEC& b);
     std::mutex fluid_mu_;
     std::unordered_map<uint64_t, int64_t> fluid_next_;   // fluid blocks waiting for their tick delay: position key -> game time
     std::mutex fire_mu_;

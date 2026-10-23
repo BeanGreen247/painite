@@ -115,7 +115,14 @@ public:
         e.stack = s;
         send_(id_, std::move(e));
     }
-    void send_data_change(sim::Menu&, int, int) override {}
+    void send_data_change(sim::Menu& m, int id, int value) override {
+        GEvent e;
+        e.kind = GEvent::ContainerData;
+        e.container = m.container_id;
+        e.slot = id;
+        e.value = value;
+        send_(id_, std::move(e));
+    }
     Game* game;
 private:
     std::shared_ptr<const GIdentity> id_;
@@ -635,6 +642,7 @@ void Game::tick() {
     game_time_++;
     { PN_PERF("tick.block_updates"); ticker_.run(game_time_); }
     { PN_PERF("tick.random_ticks"); random_ticks(); }
+    { PN_PERF("tick.containers"); containers_tick(); }
     refresh_entity_world();
     { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
     plates_tick();

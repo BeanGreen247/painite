@@ -449,15 +449,37 @@ bool World::set_block(int x, int y, int z, uint16_t id) {
     if (y < kMinY || y >= kMinY + kHeight) return false;
     auto c = chunk(x >> 4, z >> 4);
     std::lock_guard<std::mutex> l(c->mu);
-    if (c->get(x & 15, y, z & 15) == id) return false;
+    uint16_t old = c->get(x & 15, y, z & 15);
+    if (old == id) return false;
     c->set(x & 15, y, z & 15, id);
-    // block entities at that spot no longer match the block
-    if (Nbt* be = c->extra.get("block_entities")) {
+    // block entities at that spot no longer match the block (a furnace that lights up is still the same furnace)
+    if (Nbt* be = Blocks::get().info(old).name == Blocks::get().info(id).name ? nullptr : c->extra.get("block_entities")) {
         auto& v = be->list;
         v.erase(std::remove_if(v.begin(), v.end(), [&](const Nbt& e) { return e.geti("x") == x && e.geti("y") == y && e.geti("z") == z; }), v.end());
     }
     blocks_changed++;
     return true;
+}
+
+bool World::get_block_entity(int x, int y, int z, Nbt& out) {
+    auto c = chunk(x >> 4, z >> 4);
+    std::lock_guard<std::mutex> l(c->mu);
+    const Nbt* list = c->extra.get("block_entities");
+    if (!list) return false;
+    for (const Nbt& e : list->list) if (e.geti("x") == x && e.geti("y") == y && e.geti("z") == z) { out = e; return true; }
+    return false;
+}
+
+void World::put_block_entity(int x, int y, int z, const Nbt& be) {
+    auto c = chunk(x >> 4, z >> 4);
+    std::lock_guard<std::mutex> l(c->mu);
+    Nbt* list = c->extra.get("block_entities");
+    if (!list) list = &c->extra.put("block_entities", Nbt::list_of(Nbt::Compound));
+    if (list->type != Nbt::List) *list = Nbt::list_of(Nbt::Compound);
+    list->etype = Nbt::Compound;
+    for (Nbt& e : list->list) if (e.geti("x") == x && e.geti("y") == y && e.geti("z") == z) { e = be; c->dirty = true; return; }
+    list->list.push_back(be);
+    c->dirty = true;
 }
 
 int World::top_y(int x, int z) {

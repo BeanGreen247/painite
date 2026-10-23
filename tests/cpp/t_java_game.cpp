@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter", "Packer"};
     return o;
 }
 
@@ -684,6 +684,105 @@ void crafting_test(Ctx& t, Env& e) {
     B.pump(200);
 }
 
+// chests keep what is put in them (also after closing and reopening), double chests are 54 slots, furnaces smelt
+void containers_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Packer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 2, z = S.pz;
+    S.set(x, y, z, "chest[facing=north,type=single]");
+    S.set(x + 4, y, z, "chest[facing=north,type=left]");
+    S.set(x + 5, y, z, "chest[facing=north,type=right]");
+    S.set(x, y, z + 4, "furnace[facing=north,lit=false]");
+    auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
+    give(36, "diamond", 5);
+    give(37, "raw_iron", 3);
+    give(38, "coal", 4);
+    B.pump(300);
+    B.command("gamemode survival");
+    B.pump(300);
+    int seq = 70;
+    auto open = [&](int bx, int bz) -> int {
+        B.drop("open_screen");
+        B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, y, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq++)).b);
+        B.wait_for("open_screen", 1, 3000);
+        auto scr = B.take("open_screen");
+        int cid = 0, type = -1;
+        if (!scr.empty()) { Rd r(scr[0]); cid = int(r.varint()); type = int(r.varint()); }
+        B.pump(200);
+        return type < 0 ? -1 : cid;
+    };
+    auto click = [&](int cid, int slot, int button) { B.send("container_click", Wr().varint(uint32_t(cid)).varint(0).be16(uint16_t(slot)).u8(uint8_t(button)).varint(0).varint(0).u8(0).b); B.pump(150); };
+    // the number of slots in the last full window content, and the item in a slot
+    auto content = [&](int& n, std::vector<std::pair<int, int>>& stacks) {
+        n = 0; stacks.clear();
+        auto all = B.take("container_set_content");
+        if (all.empty()) return;
+        Rd r(all.back());
+        r.varint(); r.varint();
+        n = int(r.varint());
+        for (int i = 0; i < n && !r.bad; i++) {
+            int count = int(r.varint());
+            int item = 0;
+            if (count > 0) { item = int(r.varint()); r.varint(); r.varint(); }
+            stacks.push_back({item, count});
+        }
+    };
+    int n = 0;
+    std::vector<std::pair<int, int>> st;
+    // 1. a chest: 27 slots, the diamonds go in and stay
+    int cid = open(x, z);
+    t.check(cid > 0, "a chest opens");
+    B.drop("container_set_content");
+    click(cid, 27 + 27, 0);   // pick up the diamonds (hotbar slot 0)
+    click(cid, 3, 0);         // into chest slot 3
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    cid = open(x, z);
+    B.drop("container_set_content");
+    click(cid, 40, 1);   // a click somewhere harmless to get a full state back
+    content(n, st);
+    t.check(n == 63 && st.size() > 3 && st[3].first == ids->items.at("diamond") && st[3].second == 5, "the chest still holds the diamonds after reopening (" + std::to_string(n) + " slots)");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    // 2. a double chest is 54 + 36 slots
+    B.drop("container_set_content");
+    cid = open(x + 4, z);
+    B.drop("container_set_content");
+    click(cid, 80, 1);
+    content(n, st);
+    t.check(n == 90, "a double chest has 54 + 36 slots: " + std::to_string(n));
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    // 3. a furnace smelts raw iron with coal
+    cid = open(x, z + 4);
+    B.drop("container_set_content");
+    click(cid, 3 + 27 + 1, 0);   // the raw iron: hotbar slot 1
+    click(cid, 0, 0);            // into the ingredient slot
+    click(cid, 3 + 27 + 2, 0);   // the coal
+    click(cid, 1, 0);            // into the fuel slot
+    B.drop("container_set_slot");
+    bool smelted = B.until([&] {
+        for (auto& d : B.log) {
+            if (d.first != "container_set_slot") continue;
+            Rd r(d.second);
+            r.varint(); r.varint();
+            int slot = int16_t(r.be16());
+            int count = int(r.varint());
+            if (slot == 2 && count > 0 && int(r.varint()) == ids->items.at("iron_ingot")) return true;
+        }
+        return false;
+    }, 16000);
+    t.check(smelted, "a furnace turns raw iron into an ingot");
+    t.check(B.count("container_set_data") > 0, "the furnace sends its progress");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+}
+
 void fluids_more_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Plumber2");
@@ -879,6 +978,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"health-and-death", vitals});
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"crafting-table", crafting_test});
+    d.tests.push_back({"containers", containers_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
     d.tests.push_back({"perf-mobs", perf_mobs});

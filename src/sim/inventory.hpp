@@ -270,4 +270,28 @@ public:
     void update_crafting_result();
 };
 
+// ChestMenu, ShulkerBoxMenu, DispenserMenu, HopperMenu: container slots first (one or two containers behind them), then the player's 27 + 9
+class ContainerMenu : public Menu {
+public:
+    ContainerMenu(int menu_type_id, int container_id, PlayerInventory* inv, std::vector<Container*> parts, bool no_shulkers, std::shared_ptr<void> keep_alive);
+    ~ContainerMenu() override { if (on_closed) on_closed(); }
+    ItemStack quick_move_stack(MenuPlayer& player, int slot) override;
+    void removed(MenuPlayer& player) override { Menu::removed(player); if (on_closed) { auto f = std::move(on_closed); on_closed = nullptr; f(); } }
+    int container_slots = 0;
+    std::function<void()> on_closed;   // the owner of the containers stops telling this menu about changes
+    std::shared_ptr<void> keep;
+};
+
+// AbstractFurnaceMenu: 0 ingredient, 1 fuel, 2 result, then the player's 27 + 9; four data values (lit time left, lit total, cook progress, cook total)
+class FurnaceMenu : public Menu {
+public:
+    FurnaceMenu(int menu_type_id, int container_id, PlayerInventory* inv, Container* furnace, const std::string& recipe_kind, std::shared_ptr<void> keep_alive);
+    ~FurnaceMenu() override { if (on_closed) on_closed(); }
+    ItemStack quick_move_stack(MenuPlayer& player, int slot) override;
+    void removed(MenuPlayer& player) override { Menu::removed(player); if (on_closed) { auto f = std::move(on_closed); on_closed = nullptr; f(); } }
+    std::string kind;
+    std::function<void()> on_closed;
+    std::shared_ptr<void> keep;
+};
+
 }  // namespace pn::sim

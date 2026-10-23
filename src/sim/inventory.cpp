@@ -1,4 +1,5 @@
 #include "inventory.hpp"
+#include "recipe.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -685,6 +686,91 @@ ItemStack CraftingMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
         if (stack.count() == clicked.count()) return ItemStack();
         slot->on_take(player, stack);
         if (slot_index == 0) player.drop(stack, false);
+    }
+    return clicked;
+}
+
+namespace {
+class NoShulkerSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override { return s.is_empty() || s.item()->name.find("shulker_box") == std::string::npos; }
+};
+class FuelSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override {
+        return Recipes::get().is_fuel(s) || (!s.is_empty() && s.item()->name == "minecraft:bucket");
+    }
+    int max_stack_size(const ItemStack& s) const { return s.item()->name == "minecraft:bucket" ? 1 : Slot::max_stack_size(s); }
+};
+class FurnaceResultSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack&) const override { return false; }
+};
+}  // namespace
+
+ContainerMenu::ContainerMenu(int menu_type_id, int container_id, PlayerInventory* inv, std::vector<Container*> parts, bool no_shulkers, std::shared_ptr<void> keep_alive)
+    : Menu(menu_type_id, container_id), keep(std::move(keep_alive)) {
+    for (Container* c : parts)
+        for (int i = 0; i < c->size(); i++) {
+            if (no_shulkers) add_slot(std::make_unique<NoShulkerSlot>(c, i));
+            else add_slot(std::make_unique<Slot>(c, i));
+            container_slots++;
+        }
+    add_standard_inventory_slots(inv, 8, 84);
+}
+
+ItemStack ContainerMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
+    ItemStack clicked;
+    Slot* slot = slots[size_t(slot_index)].get();
+    if (slot->has_item()) {
+        ItemStack& stack = slot->get_item();
+        clicked = stack.copy();
+        int n = container_slots, total = int(slots.size());
+        if (slot_index < n) { if (!move_item_stack_to(stack, n, total, true)) return ItemStack(); }
+        else if (!move_item_stack_to(stack, 0, n, false)) return ItemStack();
+        if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
+        else slot->set_changed();
+        (void)player;
+    }
+    return clicked;
+}
+
+FurnaceMenu::FurnaceMenu(int menu_type_id, int container_id, PlayerInventory* inv, Container* furnace, const std::string& recipe_kind, std::shared_ptr<void> keep_alive)
+    : Menu(menu_type_id, container_id), kind(recipe_kind), keep(std::move(keep_alive)) {
+    add_slot(std::make_unique<Slot>(furnace, 0));
+    add_slot(std::make_unique<FuelSlot>(furnace, 1));
+    add_slot(std::make_unique<FurnaceResultSlot>(furnace, 2));
+    add_standard_inventory_slots(inv, 8, 84);
+    data_slots.assign(4, 0);
+}
+
+ItemStack FurnaceMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
+    ItemStack clicked;
+    Slot* slot = slots[size_t(slot_index)].get();
+    if (slot->has_item()) {
+        ItemStack& stack = slot->get_item();
+        clicked = stack.copy();
+        if (slot_index == 2) {
+            if (!move_item_stack_to(stack, 3, 39, true)) return ItemStack();
+            slot->on_quick_craft(stack, clicked);
+        } else if (slot_index == 1 || slot_index == 0) {
+            if (!move_item_stack_to(stack, 3, 39, false)) return ItemStack();
+        } else if (Recipes::get().find_cooking(kind, stack)) {
+            if (!move_item_stack_to(stack, 0, 1, false)) return ItemStack();
+        } else if (Recipes::get().is_fuel(stack)) {
+            if (!move_item_stack_to(stack, 1, 2, false)) return ItemStack();
+        } else if (slot_index >= 3 && slot_index < 30) {
+            if (!move_item_stack_to(stack, 30, 39, false)) return ItemStack();
+        } else if (slot_index >= 30 && slot_index < 39) {
+            if (!move_item_stack_to(stack, 3, 30, false)) return ItemStack();
+        }
+        if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
+        else slot->set_changed();
+        if (stack.count() == clicked.count()) return ItemStack();
+        slot->on_take(player, stack);
     }
     return clicked;
 }
