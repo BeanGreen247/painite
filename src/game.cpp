@@ -354,6 +354,19 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     }
     ps.sync = std::make_unique<MenuSync>(this, id, [this](const std::shared_ptr<const GIdentity>& to, GEvent ev) { send_event(to, std::move(ev)); });
     ps.sim->inventory_menu->set_synchronizer(ps.sync.get());
+    {   // the ender chest
+        ps.ender = std::make_shared<sim::SimpleContainer>(27);
+        Nbt saved;
+        if (s_.world.load_player(uuid_string(id->uuid), saved) && saved.type == Nbt::Compound)
+            if (const Nbt* l = saved.get("EnderItems"); l && l->type == Nbt::List)
+                for (auto& e : l->list) {
+                    sim::ItemStack st;
+                    int slot = -1;
+                    if (sim::item_from_nbt(e, st, &slot) && !st.is_empty() && slot >= 0 && slot < 27) ps.ender->items()[size_t(slot)] = st;
+                }
+        PState* pp = &ps;
+        ps.ender->on_changed = [pp] { if (pp->sim && pp->sim->menu) pp->sim->menu->broadcast_changes(); };
+    }
     GEvent held;
     held.kind = GEvent::HeldSlot;
     held.slot = ps.sim->inv.selected;
@@ -559,6 +572,7 @@ void Game::save_player_data(uint64_t gid) {
     int gm = 0;
     Nbt inventory_list = Nbt::list_of(Nbt::Compound);
     int selected_slot = 0;
+    Nbt ender_list = Nbt::list_of(Nbt::Compound);
     Vitals vit;
     {
         std::lock_guard<std::mutex> l(mu_);
@@ -575,6 +589,8 @@ void Game::save_player_data(uint64_t gid) {
                 if (!inv.item(i).is_empty()) inventory_list.list.push_back(sim::item_to_nbt(inv.item(i), i));
             selected_slot = inv.selected;
         }
+        if (it->second.ender)
+            for (int i = 0; i < 27; i++) if (!it->second.ender->items()[size_t(i)].is_empty()) ender_list.list.push_back(sim::item_to_nbt(it->second.ender->items()[size_t(i)], i));
     }
     World& w = s_.world;
     std::string u = uuid_string(id->uuid);
@@ -610,6 +626,7 @@ void Game::save_player_data(uint64_t gid) {
     root.put("Dimension", Nbt::str(dim_info(pos.dim).name));
     root.put("playerGameType", Nbt::make(Nbt::Int, gm));
     root.put("Inventory", std::move(inventory_list));
+    root.put("EnderItems", std::move(ender_list));
     root.put("SelectedItemSlot", Nbt::make(Nbt::Int, selected_slot));
     root.put("DataVersion", Nbt::make(Nbt::Int, w.data_version));
     if (!w.save_player(u, root)) warn("could not save player data for " + id->name);

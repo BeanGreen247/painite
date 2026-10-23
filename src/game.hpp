@@ -186,6 +186,7 @@ private:
         int64_t last_save_ms = 0;
         std::unique_ptr<sim::PlayerSim> sim;
         std::unique_ptr<sim::ContainerSynchronizer> sync;
+        std::shared_ptr<sim::SimpleContainer> ender;   // the ender chest contents (saved as EnderItems)
     };
     struct EntityTrack {
         sim::Entity* entity = nullptr;

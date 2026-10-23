@@ -159,6 +159,32 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
     uint16_t id = w.get_block(x, y, z);
     const BlockInfo& bi = Blocks::get().info(id);
     const std::string name = bi.name;
+    if (name == "minecraft:ender_chest") {
+        const BlockInfo& above = Blocks::get().info(w.get_block(x, y + 1, z));
+        if (above.solid && above.opacity >= 15) return true;
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = players_.find(gid);
+        if (it == players_.end() || !it->second.sim || !it->second.ender) return false;
+        PState& p = it->second;
+        sim::PlayerSim& sm = *p.sim;
+        if (p.v.dead || p.gamemode == 3) return false;
+        if (sm.menu != sm.inventory_menu.get()) sm.handle_container_close(sm.menu->container_id);
+        int type = sim::Registries::get().id("minecraft:menu", "minecraft:generic_9x3");
+        if (type < 0) return false;
+        int cid = sm.new_container_id();
+        std::vector<sim::Container*> parts{p.ender.get()};
+        auto cm = std::make_unique<sim::ContainerMenu>(type, cid, &sm.inv, parts, false, p.ender);
+        GEvent e;
+        e.kind = GEvent::OpenScreen;
+        e.container = cid;
+        e.value = type;
+        e.text = "Ender Chest";
+        send_event(p.id, e);
+        sm.open_menu = std::move(cm);
+        sm.menu = sm.open_menu.get();
+        sm.menu->set_synchronizer(p.sync.get());
+        return true;
+    }
     if (!container_size(name)) return false;
     {   // a solid block on top shuts a chest
         const BlockInfo& above = Blocks::get().info(w.get_block(x, y + 1, z));

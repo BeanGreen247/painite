@@ -698,10 +698,12 @@ void containers_test(Ctx& t, Env& e) {
     S.set(x + 4, y, z, "chest[facing=north,type=left]");
     S.set(x + 5, y, z, "chest[facing=north,type=right]");
     S.set(x, y, z + 4, "furnace[facing=north,lit=false]");
+    S.set(x + 2, y, z + 4, "ender_chest[facing=north,waterlogged=false]");
     auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
     give(36, "diamond", 5);
     give(37, "raw_gold", 3);
     give(38, "coal", 4);
+    give(39, "emerald", 3);
     B.pump(300);
     B.command("gamemode survival");
     B.pump(300);
@@ -789,6 +791,21 @@ void containers_test(Ctx& t, Env& e) {
         if (r.varint() >= 1) got_xp = true;
     }
     t.check(got_xp, "taking smelted gold pays experience");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    // 4. an ender chest keeps its items for the player
+    cid = open(x + 2, z + 4);
+    t.check(cid > 0, "an ender chest opens");
+    B.drop("container_set_content");
+    click(cid, 27 + 27 + 3, 0);   // the emeralds: hotbar slot 3
+    click(cid, 5, 0);
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    cid = open(x + 2, z + 4);
+    B.drop("container_set_content");
+    click(cid, 40, 1);
+    content(n, st);
+    t.check(n == 63 && st.size() > 5 && st[5].first == ids->items.at("emerald") && st[5].second == 3, "the ender chest still holds the emeralds");
     B.send("container_close", Wr().varint(uint32_t(cid)).b);
     B.pump(200);
 }
