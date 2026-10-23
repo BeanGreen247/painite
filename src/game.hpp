@@ -139,6 +139,8 @@ public:
     void leaves_update(int dim, int x, int y, int z);                     // region threads: recompute the distance of a leaf block
     void fire_update(int dim, int x, int y, int z);                       // region threads: a fire block's turn
     void fluid_update(int dim, int x, int y, int z);                      // region threads: water or lava (or a waterlogged block) may flow
+    void swap_held_bucket(uint64_t gid, const char* to);                  // the held bucket becomes another item (not in creative)
+    bool cauldron_use(uint64_t gid, int dim, int x, int y, int z, const std::string& held);   // a bucket used on a cauldron; true when handled
     void bucket_use(uint64_t gid);                                        // game thread: use_item with a bucket, scoop or pour
     bool set_fire(int dim, int x, int y, int z);                          // light a fire where it can live
     void drop_block_loot(int dim, int x, int y, int z, uint16_t state);   // the items a block gives when it breaks by itself

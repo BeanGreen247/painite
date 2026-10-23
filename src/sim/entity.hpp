@@ -3,6 +3,7 @@
 #include "item.hpp"
 #include "phys.hpp"
 #include "../vg/random.hpp"
+#include <functional>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -10,6 +11,9 @@
 #include <vector>
 
 namespace pn::sim {
+
+Vec3 compute_fluid_flow(const AABB& box, const std::function<int(int, int, int)>& amount, const std::function<bool(int, int, int)>& falling,
+                        const std::function<bool(int, int, int)>& solid);   // FlowingFluid.getFlow around a box, see entity_manager.cpp
 
 class Entity;
 

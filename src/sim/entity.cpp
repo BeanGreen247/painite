@@ -118,7 +118,62 @@ void ItemEntity::merge_with_neighbours() {
     }
 }
 
+// FlowingFluid.getFlow summed over the fluid blocks the box touches (each weighted by how deep the box is in it), then normalized.
+// amount(x, y, z) is the 0..8 fluid in a block, falling(x, y, z) tells falling fluid, solid(x, y, z) a block that stops fluid.
+Vec3 compute_fluid_flow(const AABB& box, const std::function<int(int, int, int)>& amount, const std::function<bool(int, int, int)>& falling,
+                        const std::function<bool(int, int, int)>& solid) {
+    AABB b = box.deflate(0.001);
+    int x0 = int(std::floor(b.min_x)), x1 = int(std::ceil(b.max_x)), y0 = int(std::floor(b.min_y)), y1 = int(std::ceil(b.max_y)), z0 = int(std::floor(b.min_z)), z1 = int(std::ceil(b.max_z));
+    static const int DX[4] = {0, 0, -1, 1}, DZ[4] = {-1, 1, 0, 0};
+    Vec3 total;
+    int count = 0;
+    for (int y = y0; y < y1; ++y)
+        for (int z = z0; z < z1; ++z)
+            for (int x = x0; x < x1; ++x) {
+                int a = amount(x, y, z);
+                if (a == 0) continue;
+                double h = a / 9.0, d = y + (amount(x, y + 1, z) > 0 ? 1.0 : h) - box.min_y;
+                if (d < 0.001) continue;
+                Vec3 flow;
+                for (int k = 0; k < 4; k++) {
+                    int nx = x + DX[k], nz = z + DZ[k];
+                    int na = amount(nx, y, nz);
+                    double f = 0.0;
+                    if (na == 0) {
+                        if (!solid(nx, y, nz)) {
+                            int ba = amount(nx, y - 1, nz);
+                            if (ba > 0) f = h - (ba / 9.0 - 0.8888889);
+                        }
+                    } else f = h - na / 9.0;
+                    if (f != 0.0) flow = flow + Vec3(DX[k] * f, 0, DZ[k] * f);
+                }
+                if (falling(x, y, z)) {   // falling fluid pulled down against walls
+                    for (int k = 0; k < 4; k++)
+                        if (solid(x + DX[k], y, z + DZ[k]) || solid(x + DX[k], y + 1, z + DZ[k])) { flow = flow.normalize() + Vec3(0, -6.0, 0); break; }
+                }
+                flow = flow.normalize();
+                if (d < 0.4) flow = flow.scale(d);
+                total = total + flow;
+                count++;
+            }
+    if (count == 0 || total.length_sqr() == 0.0) return Vec3();
+    return total.scale(1.0 / count).normalize();
+}
+
 void Entity::fluid_push() {
+    {   // BubbleColumnBlock: soul sand lifts, magma drags down; the air just above a column launches harder
+        const Blocks& B = Blocks::get();
+        int bx = int(std::floor(pos.x)), by = int(std::floor(pos.y)), bz = int(std::floor(pos.z));
+        const BlockInfo& here = B.info(level->block_state(bx, by, bz));
+        bool inside = here.name == "minecraft:bubble_column";
+        const BlockInfo& under = B.info(level->block_state(bx, by - 1, bz));
+        bool above = !inside && here.air && under.name == "minecraft:bubble_column";
+        if (inside || above) {
+            bool drag = (inside ? here : under).props.find("drag=true") != std::string::npos;
+            if (above) delta = delta.with(1, drag ? std::max(-0.9, delta.y - 0.03) : std::min(1.8, delta.y + 0.1));
+            else delta = delta.with(1, drag ? std::max(-0.3, delta.y - 0.03) : std::min(0.7, delta.y + 0.06));
+        }
+    }
     Vec3 flow = level->fluid_flow(bounding_box(), false);
     if (flow.length_sqr() == 0.0) return;
     if (std::fabs(delta.x) < 0.003 && std::fabs(delta.z) < 0.003 && flow.length() < 0.0045) flow = flow.normalize().scale(0.0045);

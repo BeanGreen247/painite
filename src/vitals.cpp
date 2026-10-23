@@ -181,7 +181,7 @@ void Game::start_eating(uint64_t gid) {
     sim::ItemStack& h = p.sim->held_item();
     if (h.is_empty()) return;
     const std::string& name = h.item()->name;
-    if (name == "minecraft:bucket" || name == "minecraft:water_bucket" || name == "minecraft:lava_bucket") { post_task([this, gid] { bucket_use(gid); }); return; }
+    if (name == "minecraft:bucket" || name == "minecraft:water_bucket" || name == "minecraft:lava_bucket" || name == "minecraft:powder_snow_bucket") { post_task([this, gid] { bucket_use(gid); }); return; }
     if (name == "minecraft:bow") { p.v.bow_start = game_time_; return; }
     if (name == "minecraft:snowball" || name == "minecraft:egg" || name == "minecraft:ender_pearl") {
         if (p.pos.dim < 0 || p.pos.dim > 2 || !entity_managers_[p.pos.dim]) return;

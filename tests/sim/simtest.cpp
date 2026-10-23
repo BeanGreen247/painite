@@ -184,6 +184,16 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 400; i++) fish.tick();
         CHECK(fish.air_supply == 300 && fish.health == 20.0f);
     }
+    {   // flowing water pushes along its slope: a row of water getting shallower towards +x pushes +x; still water pushes nothing
+        auto amount = [](int x, int y, int z) { return y == 1 && z == 0 && x >= 0 && x <= 6 ? 8 - x : 0; };
+        auto none = [](int, int, int) { return false; };
+        auto floor = [](int x, int y, int z) { return y <= 0 || z != 0; };
+        Vec3 f = compute_fluid_flow(AABB(2.1, 1.0, 0.1, 2.7, 1.5, 0.7), amount, none, floor);
+        CHECK(f.x > 0.9 && std::fabs(f.z) < 0.1);
+        auto flat = [](int x, int y, int z) { return y == 1 && z == 0 && x >= 0 && x <= 6 ? 8 : 0; };
+        Vec3 g = compute_fluid_flow(AABB(2.1, 1.0, 0.1, 2.7, 1.5, 0.7), flat, none, floor);
+        CHECK(g.length_sqr() == 0.0);
+    }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;
 }

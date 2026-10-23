@@ -285,6 +285,18 @@ void Game::block_random_tick(int dim, int x, int y, int z, uint16_t id) {
     const std::string& name = Blocks::get().info(id).name;
     auto is = [&](const char* n) { return name == n; };
     auto has = [&](const char* p) { return name.find(p) != std::string::npos; };
+    // ---- kelp grows upwards through water (GrowingPlantHeadBlock.randomTick)
+    if (is("minecraft:kelp")) {
+        int age = block_int(id, "age");
+        if (age < 25 && rnd(100) < 14) {
+            uint16_t above = b.at(x, y + 1, z);
+            if (block_named(above, "minecraft:water") && block_int(above, "level", 1) == 0) {
+                b.put(x, y + 1, z, block_with(id, "age", age + 1));
+                b.put(x, y, z, Blocks::get().default_state("minecraft:kelp_plant"));
+            }
+        }
+        return;
+    }
     // ---- lava sets fire to what burns around it (LavaFluid.randomTick)
     if (is("minecraft:lava")) {
         int n = rnd(3);

@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2"};
     return o;
 }
 
@@ -625,6 +625,75 @@ void fluids_test(Ctx& t, Env& e) {
     t.check(poured, "a lava bucket pours a source where the ray meets the floor: " + S.at(S.px, y, S.pz + 3));
 }
 
+void fluids_more_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Plumber2");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.command("gamerule randomTickSpeed 3000");
+    B.pump(150);
+    int y = S.py, bx = S.px + 4, bz = S.pz + 4;
+    auto give = [&](const char* item) { B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); B.pump(300); };
+    auto click = [&](int x, int yy, int z, int seq) { B.send("use_item_on", Wr().varint(0).be64(block_pos(x, yy, z)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq)).b); };
+    // 0. powder snow from a bucket, and back
+    B.send("move_player_pos_rot", Wr().f64(S.px + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
+    B.pump(200);
+    give("powder_snow_bucket");
+    B.send("use_item", Wr().varint(0).varint(50).f32(0.0f).f32(30.0f).b);
+    bool placed = S.wait(S.px, y, S.pz + 3, "powder_snow", 3000);
+    t.check(placed, "a powder snow bucket places powder snow: " + S.at(S.px, y, S.pz + 3));
+    give("bucket");
+    B.send("move_player_pos_rot", Wr().f64(S.px + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
+    B.send("use_item", Wr().varint(0).varint(51).f32(0.0f).f32(30.0f).b);
+    bool taken = S.wait(S.px, y, S.pz + 3, "air", 3000);
+    t.check(taken, "an empty bucket takes it back: " + S.at(S.px, y, S.pz + 3));
+    // 1. a bubble column over soul sand lifts, over magma drags down
+    S.set(bx, y - 1, bz, "soul_sand");
+    S.set(bx, y, bz, "water");
+    S.set(bx + 6, y - 1, bz, "magma_block");
+    S.set(bx + 6, y, bz, "water");
+    S.set(bx, y + 1, bz, "water");
+    B.pump(800);
+    t.check(S.wait(bx, y, bz, "bubble_column[drag=false]", 4000), "water over soul sand becomes an upward bubble column: " + S.at(bx, y, bz));
+    t.check(S.wait(bx + 6, y, bz + 0, "bubble_column[drag=true]", 4000), "water over magma becomes a downward bubble column: " + S.at(bx + 6, y, bz));
+    t.check(S.wait(bx, y + 1, bz, "bubble_column", 4000), "the column carries on upwards: " + S.at(bx, y + 1, bz));
+    // 2. kelp grows up through water
+    int kz = bz + 6;
+    for (int i = 0; i <= 8; i++) S.set(bx, y + i, kz, "water");
+    S.set(bx, y - 1, kz, "sand");
+    S.set(bx, y, kz, "kelp[age=0]");
+    B.pump(500);
+    t.check(S.wait(bx, y, kz, "kelp_plant", 15000), "kelp grows: the base becomes a plant block: " + S.at(bx, y, kz));
+    // 3. lava next to planks sets them alight
+    int lz = bz - 6;
+    S.set(bx, y, lz, "lava");
+    S.set(bx + 1, y, lz, "oak_planks");
+    S.set(bx - 1, y, lz, "oak_planks");
+    S.set(bx, y, lz + 1, "oak_planks");
+    S.set(bx, y, lz - 1, "oak_planks");
+    bool fire = B.until([&] {
+        S.collect();
+        for (auto& kv : S.seen) if (kv.second.find("fire") != std::string::npos && std::abs(kv.first[0] - bx) <= 3 && std::abs(kv.first[2] - lz) <= 3) return true;
+        return false;
+    }, 20000);
+    t.check(fire, "lava starts a fire on the planks around it");
+    B.command("gamerule randomTickSpeed 3");
+    // 4. buckets and a cauldron
+    int cz = bz + 24;
+    S.set(bx, y, cz, "cauldron");
+    give("water_bucket");
+    click(bx, y, cz, 40);
+    t.check(S.wait(bx, y, cz, "water_cauldron[level=3]", 3000), "a water bucket fills a cauldron: " + S.at(bx, y, cz));
+    give("bucket");
+    click(bx, y, cz, 41);
+    t.check(S.wait(bx, y, cz, "minecraft:cauldron", 3000), "an empty bucket empties it again: " + S.at(bx, y, cz));
+    give("lava_bucket");
+    click(bx, y, cz, 42);
+    t.check(S.wait(bx, y, cz, "lava_cauldron", 3000), "a lava bucket fills it with lava: " + S.at(bx, y, cz));
+}
+
 void redstone(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Wirer");
@@ -763,6 +832,7 @@ void reg_java_game(Registry& reg) {
     rs.tests.push_back({"circuits", redstone});
     rs.tests.push_back({"random-ticks", random_tick_test});
     rs.tests.push_back({"fluids", fluids_test});
+    rs.tests.push_back({"fluids-more", fluids_more_test});
     reg.push_back(std::move(rs));
     Group f;
     f.name = "persist";

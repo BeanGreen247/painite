@@ -208,7 +208,7 @@ bool bucket_ray(FW& f, double ex, double ey, double ez, double dx, double dy, do
         uint16_t id = f.at(x, y, z);
         const BlockInfo& bi = B.info(id);
         bool fluid_block = bi.name == "minecraft:water" || bi.name == "minecraft:lava";
-        bool hit = want_source ? ((fs_of(id).source && (fluid_block || bi.props.find("waterlogged=true") != std::string::npos)) || (!bi.air && !fluid_block && bi.solid))
+        bool hit = want_source ? ((fs_of(id).source && (fluid_block || bi.props.find("waterlogged=true") != std::string::npos)) || (!bi.air && !fluid_block && bi.solid) || bi.name == "minecraft:powder_snow")
                                : (!bi.air && !fluid_block);
         if (hit) { hx = x; hy = y; hz = z; bx = px; by = py; bz = pz; return true; }
         px = x; py = y; pz = z;
@@ -225,6 +225,19 @@ void Game::fluid_update(int dim, int x, int y, int z) {
     const FS st = fs_of(id);
     uint64_t key = (uint64_t(uint32_t(x)) << 32) ^ (uint64_t(uint32_t(z)) << 8) ^ uint64_t(uint32_t(y + 64)) ^ (uint64_t(dim) << 62);
     if (!st.kind) { std::lock_guard<std::mutex> l(fluid_mu_); fluid_next_.erase(key); return; }
+    {   // BubbleColumnBlock: water above soul sand or magma turns into a column that carries on upwards, a column with nothing under it turns back into water
+        const std::string& nm = Blocks::get().info(id).name;
+        bool col = nm == "minecraft:bubble_column";
+        if (col || (nm == "minecraft:water" && st.source)) {
+            uint16_t below = f.at(x, y - 1, z);
+            const std::string& bn = Blocks::get().info(below).name;
+            int drag = bn == "minecraft:soul_sand" ? 0 : bn == "minecraft:magma_block" ? 1 : bn == "minecraft:bubble_column" ? (block_flag(below, "drag") ? 1 : 0) : -1;
+            if (drag >= 0) {
+                uint16_t want = Blocks::get().find("minecraft:bubble_column", drag ? "drag=true" : "drag=false");
+                if (want != id) { f.put(x, y, z, want); return; }
+            } else if (col) { f.put(x, y, z, source_block(1)); return; }
+        }
+    }
     if (st.kind == 2 && lava_reacts(f, x, y, z, id)) { std::lock_guard<std::mutex> l(fluid_mu_); fluid_next_.erase(key); return; }
     int delay = spread_delay(st.kind, dim);
     {
@@ -245,6 +258,45 @@ void Game::fluid_update(int dim, int x, int y, int z) {
     fl.spread(x, y, z, cur);
 }
 
+// the held bucket turns into `to` (not in creative)
+void Game::swap_held_bucket(uint64_t gid, const char* to) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim || it->second.sim->has_infinite_materials()) return;
+    sim::PlayerSim& pl = *it->second.sim;
+    const sim::ItemType* t = sim::Items::get().by_name(to);
+    if (!t) return;
+    sim::ItemStack filled(t, 1);
+    sim::ItemStack& h = pl.held_item();
+    if (h.count() == 1) h = filled;
+    else { h.shrink(1); pl.inv.add(filled); }
+    pl.inventory_menu->broadcast_changes();
+}
+
+// CauldronInteraction: buckets fill an empty cauldron or empty a full one. True when the click was used.
+bool Game::cauldron_use(uint64_t gid, int dim, int x, int y, int z, const std::string& held) {
+    if (dim < 0 || dim > 2) return false;
+    FW f(s_, dim);
+    uint16_t id = f.at(x, y, z);
+    const std::string& n = Blocks::get().info(id).name;
+    if (n != "minecraft:cauldron" && n != "minecraft:water_cauldron" && n != "minecraft:lava_cauldron" && n != "minecraft:powder_snow_cauldron") return false;
+    Blocks& B = Blocks::get();
+    int level = block_int(id, "level", 3);
+    bool empty = n == "minecraft:cauldron";
+    if (held == "minecraft:water_bucket" && (empty || (n == "minecraft:water_cauldron" && level < 3))) {
+        f.put(x, y, z, B.find("minecraft:water_cauldron", "level=3")); swap_held_bucket(gid, "minecraft:bucket"); return true;
+    }
+    if (held == "minecraft:lava_bucket" && empty) { f.put(x, y, z, B.default_state("minecraft:lava_cauldron")); swap_held_bucket(gid, "minecraft:bucket"); return true; }
+    if (held == "minecraft:powder_snow_bucket" && (empty || (n == "minecraft:powder_snow_cauldron" && level < 3))) {
+        f.put(x, y, z, B.find("minecraft:powder_snow_cauldron", "level=3")); swap_held_bucket(gid, "minecraft:bucket"); return true;
+    }
+    if (held == "minecraft:bucket" && !empty && (n == "minecraft:lava_cauldron" || level == 3)) {
+        const char* to = n == "minecraft:water_cauldron" ? "minecraft:water_bucket" : n == "minecraft:lava_cauldron" ? "minecraft:lava_bucket" : "minecraft:powder_snow_bucket";
+        f.put(x, y, z, B.default_state("minecraft:cauldron")); swap_held_bucket(gid, to); return true;
+    }
+    return !empty && (held.size() > 7 && held.compare(held.size() - 7, 7, "_bucket") == 0);   // a bucket that does nothing here still counts as used
+}
+
 // use_item with a bucket (game thread): scoop up a fluid source, or pour the fluid out where the player looks.
 void Game::bucket_use(uint64_t gid) {
     std::string name;
@@ -258,33 +310,21 @@ void Game::bucket_use(uint64_t gid) {
         name = h.item()->name;
         pos = it->second.pos;
     }
-    int pour = name == "minecraft:water_bucket" ? 1 : name == "minecraft:lava_bucket" ? 2 : 0;
+    int pour = name == "minecraft:water_bucket" ? 1 : name == "minecraft:lava_bucket" ? 2 : name == "minecraft:powder_snow_bucket" ? 3 : 0;
     if (name != "minecraft:bucket" && !pour) return;
     if (pos.dim < 0 || pos.dim > 2) return;
     double yr = double(pos.yaw) * 0.017453292519943295, pr = double(pos.pitch) * 0.017453292519943295;
     double dx = -std::sin(yr) * std::cos(pr), dy = -std::sin(pr), dz = std::cos(yr) * std::cos(pr);
     FW f(s_, pos.dim);
     Blocks& B = Blocks::get();
-    // the held bucket turns into `to` (not in creative)
-    auto swap_item = [&](const char* to) {
-        std::lock_guard<std::mutex> l(mu_);
-        auto it = players_.find(gid);
-        if (it == players_.end() || !it->second.sim || it->second.sim->has_infinite_materials()) return;
-        sim::PlayerSim& pl = *it->second.sim;
-        const sim::ItemType* t = sim::Items::get().by_name(to);
-        if (!t) return;
-        sim::ItemStack filled(t, 1);
-        sim::ItemStack& h = pl.held_item();
-        if (h.count() == 1) h = filled;
-        else { h.shrink(1); pl.inv.add(filled); }
-        pl.inventory_menu->broadcast_changes();
-    };
+    auto swap_item = [&](const char* to) { swap_held_bucket(gid, to); };
     int hx, hy, hz, bx, by, bz;
     if (!bucket_ray(f, pos.x, pos.y + 1.62, pos.z, dx, dy, dz, !pour, hx, hy, hz, bx, by, bz)) return;
     if (!pour) {
         uint16_t id = f.at(hx, hy, hz);
         const BlockInfo& bi = B.info(id);
         const FS& s = fs_of(id);
+        if (bi.name == "minecraft:powder_snow") { f.put(hx, hy, hz, 0); swap_item("minecraft:powder_snow_bucket"); return; }
         if (!s.source) return;
         if (bi.name == "minecraft:water" || bi.name == "minecraft:lava") f.put(hx, hy, hz, 0);
         else if (bi.props.find("waterlogged=true") != std::string::npos) f.put(hx, hy, hz, block_with(id, "waterlogged", false));
@@ -304,7 +344,10 @@ void Game::bucket_use(uint64_t gid) {
     bool waterloggable = pour == 1 && ci.props.find("waterlogged=false") != std::string::npos;
     if (!ci.air && !ci.replaceable && !waterloggable && !(ci.name == "minecraft:water" || ci.name == "minecraft:lava")) return;
     if (ci.solid && !waterloggable) return;
-    if (waterloggable) f.put(tx, ty, tz, block_with(cur, "waterlogged", true));
+    if (pour == 3) {
+        if (!ci.air && !ci.fluid) drop_block_loot(pos.dim, tx, ty, tz, cur);
+        f.put(tx, ty, tz, B.default_state("minecraft:powder_snow"));
+    } else if (waterloggable) f.put(tx, ty, tz, block_with(cur, "waterlogged", true));
     else {
         if (!ci.air && !ci.fluid) drop_block_loot(pos.dim, tx, ty, tz, cur);
         f.put(tx, ty, tz, source_block(pour));
