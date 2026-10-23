@@ -1,6 +1,7 @@
 #include "redstone.hpp"
 #include "blockstate.hpp"
 #include "dimension.hpp"
+#include "game.hpp"
 #include "server.hpp"
 #include "sim/data.hpp"
 #include "sim/entity.hpp"
@@ -18,7 +19,7 @@ const char* const DNAME[6] = {"down", "up", "north", "south", "west", "east"};
 inline int opposite(int d) { return d ^ 1; }
 int dir_of(const std::string& name) { for (int i = 0; i < 6; i++) if (name == DNAME[i]) return i; return -1; }
 
-enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead };
+enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead, Hopper, Dispenser, Dropper };
 
 Kind kind_of(uint16_t id) {
     static const std::vector<uint8_t> table = [] {
@@ -43,6 +44,9 @@ Kind kind_of(uint16_t id) {
             else if (n == "minecraft:piston") k = Piston;
             else if (n == "minecraft:sticky_piston") k = StickyPiston;
             else if (n == "minecraft:piston_head") k = PistonHead;
+            else if (n == "minecraft:hopper") k = Hopper;
+            else if (n == "minecraft:dispenser") k = Dispenser;
+            else if (n == "minecraft:dropper") k = Dropper;
             t[i] = k;
         }
         return t;
@@ -392,6 +396,18 @@ void Redstone::update(int dim, int x, int y, int z) {
         case Tnt:
             if (c.has_signal(x, y, z)) ignite_tnt(dim, x, y, z);
             break;
+        case Hopper: {   // a powered hopper is switched off
+            bool enabled = !c.has_signal(x, y, z);
+            if (block_flag(id, "enabled") != enabled) c.put(x, y, z, block_with(id, "enabled", enabled));
+            s_.game.hopper_register(dim, x, y, z);
+            break;
+        }
+        case Dispenser: case Dropper: {   // a rising edge of power (the block or the one above it) fires it four ticks later
+            bool powered = c.has_signal(x, y, z) || c.has_signal(x, y + 1, z), triggered = block_flag(id, "triggered");
+            if (powered && !triggered) { c.put(x, y, z, block_with(id, "triggered", true)); s_.game.queue_dispense(dim, x, y, z, 4); }
+            else if (!powered && triggered) c.put(x, y, z, block_with(id, "triggered", false));
+            break;
+        }
         default: break;
     }
 }

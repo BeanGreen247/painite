@@ -106,6 +106,9 @@ public:
     void inv_close(uint64_t gid, int container);
     bool open_container(uint64_t gid, int dim, int x, int y, int z);          // right click on a chest, furnace ...: open its window
     void spill_container(int dim, int x, int y, int z, uint16_t state);        // a container block is broken: its items drop
+    void hopper_register(int dim, int x, int y, int z);                        // region threads: this hopper should be ticked
+    void queue_dispense(int dim, int x, int y, int z, int delay);              // region threads: a dispenser or dropper fires in `delay` ticks
+    bool dispense_fluid(int dim, int x, int y, int z, int pour);               // a dispenser pours (1 water, 2 lava) or picks up (0) a fluid at a spot; true when something happened
     void containers_tick();                                                    // game thread: furnaces burn and smelt
     bool open_menu(uint64_t gid, const std::string& kind, const std::string& title);   // crafting table ...: open the window of a block; false when the player cannot
 
@@ -213,6 +216,12 @@ private:
     void plates_tick();
     std::atomic<int> random_tick_speed_{3};
     struct BEC;
+    struct HopperRef { int dim, x, y, z; int64_t due; };
+    std::mutex hop_mu_;
+    std::unordered_map<uint64_t, HopperRef> hoppers_;   // hoppers to tick
+    std::vector<HopperRef> dispenses_;                   // dispensers and droppers waiting for their delay (due = fire time)
+    bool hopper_move_locked(int dim, int x, int y, int z, std::vector<std::function<void()>>& after);
+    void dispense_locked(int dim, int x, int y, int z, std::vector<std::function<void()>>& after);
     std::unordered_map<uint64_t, std::weak_ptr<BEC>> bec_registry_;   // block entity containers somebody holds (windows, furnaces); mu_
     std::unordered_map<uint64_t, std::shared_ptr<BEC>> bec_active_;   // furnaces that have work to do
     std::shared_ptr<BEC> bec_get_locked(int dim, int x, int y, int z);

@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter", "Packer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter", "Packer", "Hopperer"};
     return o;
 }
 
@@ -783,6 +783,82 @@ void containers_test(Ctx& t, Env& e) {
     B.pump(200);
 }
 
+// a hopper moves items from the chest above into the chest it faces, a powered dropper throws an item out
+void hopper_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Hopperer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 2, z = S.pz;
+    S.set(x, y, z, "hopper[facing=east,enabled=true]");
+    S.set(x, y + 1, z, "chest[facing=north,type=single]");
+    S.set(x + 1, y, z, "chest[facing=north,type=single]");
+    S.set(x, y, z + 5, "dropper[facing=east,triggered=false]");
+    auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
+    give(36, "diamond", 5);
+    give(37, "diamond", 2);
+    B.pump(300);
+    B.command("gamemode survival");
+    B.pump(300);
+    int seq = 90;
+    auto open = [&](int bx, int by, int bz) -> int {
+        B.drop("open_screen");
+        B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, by, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq++)).b);
+        B.wait_for("open_screen", 1, 3000);
+        auto scr = B.take("open_screen");
+        int cid = 0, type = -1;
+        if (!scr.empty()) { Rd r(scr[0]); cid = int(r.varint()); type = int(r.varint()); }
+        B.pump(200);
+        return type < 0 ? -1 : cid;
+    };
+    auto click = [&](int cid, int slot, int button) { B.send("container_click", Wr().varint(uint32_t(cid)).varint(0).be16(uint16_t(slot)).u8(uint8_t(button)).varint(0).varint(0).u8(0).b); B.pump(150); };
+    auto diamonds_in = [&](int bx, int by, int bz, int container_slots) {   // reopen and count the diamonds in the container part
+        int cid = open(bx, by, bz);
+        B.drop("container_set_content");
+        click(cid, container_slots + 20, 1);   // an empty slot: just to get a full state
+        int total = 0;
+        auto all = B.take("container_set_content");
+        if (!all.empty()) {
+            Rd r(all.back());
+            r.varint(); r.varint();
+            int n = int(r.varint());
+            for (int i = 0; i < n && !r.bad; i++) {
+                int count = int(r.varint());
+                int item = 0;
+                if (count > 0) { item = int(r.varint()); r.varint(); r.varint(); }
+                if (i < container_slots && item == ids->items.at("diamond")) total += count;
+            }
+        }
+        B.send("container_close", Wr().varint(uint32_t(cid)).b);
+        B.pump(100);
+        return total;
+    };
+    // 1. five diamonds into the upper chest
+    int cid = open(x, y + 1, z);
+    click(cid, 27 + 27, 0);
+    click(cid, 0, 0);
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(2500);   // the hopper moves one item every 8 ticks
+    int moved = diamonds_in(x + 1, y, z, 27);
+    t.check(moved == 5, "the hopper carried all 5 diamonds into the chest it faces: " + std::to_string(moved));
+    t.check(diamonds_in(x, y + 1, z, 27) == 0, "and the chest above is empty");
+    // 2. a dropper with two diamonds, switched on by a redstone block
+    cid = open(x, y, z + 5);
+    click(cid, 9 + 27 + 1, 0);
+    click(cid, 0, 0);
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    size_t before = B.count("add_entity");
+    S.set(x, y + 1, z + 5, "redstone_block");
+    B.pump(1500);
+    t.check(B.count("add_entity") > before, "a powered dropper throws an item entity out");
+    int left = diamonds_in(x, y, z + 5, 9);
+    t.check(left == 1, "one diamond is left in the dropper: " + std::to_string(left));
+}
+
 void fluids_more_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Plumber2");
@@ -979,6 +1055,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"crafting-table", crafting_test});
     d.tests.push_back({"containers", containers_test});
+    d.tests.push_back({"hoppers-droppers", hopper_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
     d.tests.push_back({"perf-mobs", perf_mobs});

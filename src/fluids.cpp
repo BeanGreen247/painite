@@ -297,6 +297,25 @@ bool Game::cauldron_use(uint64_t gid, int dim, int x, int y, int z, const std::s
     return !empty && (held.size() > 7 && held.compare(held.size() - 7, 7, "_bucket") == 0);   // a bucket that does nothing here still counts as used
 }
 
+// a dispenser's bucket: 0 picks up the fluid source at the spot, 1 / 2 pours water / lava into it. True when the world changed.
+bool Game::dispense_fluid(int dim, int x, int y, int z, int pour) {
+    FW f(s_, dim);
+    Blocks& B = Blocks::get();
+    uint16_t cur = f.at(x, y, z);
+    const BlockInfo& ci = B.info(cur);
+    if (!pour) {
+        if ((ci.name == "minecraft:water" || ci.name == "minecraft:lava") && fs_of(cur).source) return f.put(x, y, z, 0);
+        return false;
+    }
+    if (dim == 1 && pour == 1) return true;   // the water evaporates in the Nether
+    bool waterloggable = pour == 1 && ci.props.find("waterlogged=false") != std::string::npos;
+    if (!ci.air && !ci.replaceable && !waterloggable && ci.name != "minecraft:water" && ci.name != "minecraft:lava") return false;
+    if (ci.solid && !waterloggable) return false;
+    if (waterloggable) return f.put(x, y, z, block_with(cur, "waterlogged", true));
+    if (!ci.air && !ci.fluid) drop_block_loot(dim, x, y, z, cur);
+    return f.put(x, y, z, source_block(pour));
+}
+
 // use_item with a bucket (game thread): scoop up a fluid source, or pour the fluid out where the player looks.
 void Game::bucket_use(uint64_t gid) {
     std::string name;
