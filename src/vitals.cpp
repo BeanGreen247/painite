@@ -20,6 +20,42 @@ void Game::send_health_locked(PState& p) {
     send_event(p.id, e);
 }
 
+void Game::send_xp_locked(PState& p) {
+    GEvent e;
+    e.kind = GEvent::Experience;
+    e.health = p.v.xp_progress;
+    e.value = p.v.xp_level;
+    e.slot = p.v.xp_total;
+    send_event(p.id, e);
+}
+
+static int xp_needed(int level) { return level >= 30 ? 112 + (level - 30) * 9 : level >= 15 ? 37 + (level - 15) * 5 : 7 + level * 2; }
+
+void Game::add_xp_locked(PState& p, int points) {
+    Vitals& v = p.v;
+    v.xp_progress += float(points) / float(xp_needed(v.xp_level));
+    v.xp_total = std::max(0, v.xp_total + points);
+    while (v.xp_progress < 0.0f) {
+        float f = v.xp_progress * float(xp_needed(v.xp_level));
+        if (v.xp_level > 0) { v.xp_level--; v.xp_progress = 1.0f + f / float(xp_needed(v.xp_level)); } else { v.xp_level--; v.xp_progress = 0.0f; }
+        if (v.xp_level < 0) { v.xp_level = 0; v.xp_progress = 0.0f; }
+    }
+    while (v.xp_progress >= 1.0f) {
+        v.xp_progress = (v.xp_progress - 1.0f) * float(xp_needed(v.xp_level));
+        v.xp_level++;
+        v.xp_progress /= float(xp_needed(v.xp_level));
+    }
+    send_xp_locked(p);
+}
+
+void Game::give_xp(uint64_t gid, int points) {
+    post_task([this, gid, points] {
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = players_.find(gid);
+        if (it != players_.end()) add_xp_locked(it->second, points);
+    });
+}
+
 void Game::damage(uint64_t gid, float amount, const std::string& source) {
     post_task([this, gid, amount, source] {
         std::lock_guard<std::mutex> l(mu_);
@@ -111,6 +147,8 @@ void Game::die_locked(PState& p, const std::string& source) {
     p.v.dead = true;
     p.v.health = 0.0f;
     p.v.eating = -1;
+    p.v.xp_level = 0; p.v.xp_total = 0; p.v.xp_progress = 0.0f;   // the experience is lost (no orbs drop yet)
+    send_xp_locked(p);
     std::string key = source == "outOfWorld" ? "outOfWorld" : source;
     info(p.id->name + " died (" + key + ")");
     if (p.sim && p.pos.dim >= 0 && p.pos.dim <= 2 && entity_managers_[p.pos.dim]) {

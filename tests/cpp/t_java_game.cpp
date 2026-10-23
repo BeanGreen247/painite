@@ -700,7 +700,7 @@ void containers_test(Ctx& t, Env& e) {
     S.set(x, y, z + 4, "furnace[facing=north,lit=false]");
     auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
     give(36, "diamond", 5);
-    give(37, "raw_iron", 3);
+    give(37, "raw_gold", 3);
     give(38, "coal", 4);
     B.pump(300);
     B.command("gamemode survival");
@@ -758,10 +758,10 @@ void containers_test(Ctx& t, Env& e) {
     t.check(n == 90, "a double chest has 54 + 36 slots: " + std::to_string(n));
     B.send("container_close", Wr().varint(uint32_t(cid)).b);
     B.pump(200);
-    // 3. a furnace smelts raw iron with coal
+    // 3. a furnace smelts raw gold with coal
     cid = open(x, z + 4);
     B.drop("container_set_content");
-    click(cid, 3 + 27 + 1, 0);   // the raw iron: hotbar slot 1
+    click(cid, 3 + 27 + 1, 0);   // the raw gold: hotbar slot 1
     click(cid, 0, 0);            // into the ingredient slot
     click(cid, 3 + 27 + 2, 0);   // the coal
     click(cid, 1, 0);            // into the fuel slot
@@ -773,12 +773,22 @@ void containers_test(Ctx& t, Env& e) {
             r.varint(); r.varint();
             int slot = int16_t(r.be16());
             int count = int(r.varint());
-            if (slot == 2 && count > 0 && int(r.varint()) == ids->items.at("iron_ingot")) return true;
+            if (slot == 2 && count > 0 && int(r.varint()) == ids->items.at("gold_ingot")) return true;
         }
         return false;
     }, 16000);
-    t.check(smelted, "a furnace turns raw iron into an ingot");
+    t.check(smelted, "a furnace turns raw gold into an ingot");
     t.check(B.count("container_set_data") > 0, "the furnace sends its progress");
+    B.drop("set_experience");
+    click(cid, 2, 0);   // take the ingot: the furnace pays out its stored experience
+    bool got_xp = false;
+    for (auto& d : B.log) {
+        if (d.first != "set_experience") continue;
+        Rd r(d.second);
+        r.f32(); r.varint();
+        if (r.varint() >= 1) got_xp = true;
+    }
+    t.check(got_xp, "taking smelted gold pays experience");
     B.send("container_close", Wr().varint(uint32_t(cid)).b);
     B.pump(200);
 }

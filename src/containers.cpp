@@ -11,6 +11,8 @@
 #include "sim/loot.hpp"
 #include "sim/recipe.hpp"
 #include <algorithm>
+#include <cmath>
+#include <map>
 
 namespace pn {
 
@@ -20,6 +22,7 @@ struct Game::BEC {
     sim::SimpleContainer items;
     std::vector<sim::Menu*> viewers;  // open windows on this container
     int lit = 0, lit_total = 0, cook = 0, cook_total = 0;   // furnaces
+    std::map<std::string, int> used;                        // furnaces: recipes smelted since the output was last taken (their experience waits in the furnace)
     explicit BEC(int n) : items(n) {}
 };
 
@@ -87,6 +90,8 @@ std::shared_ptr<Game::BEC> Game::bec_get_locked(int dim, int x, int y, int z) {
         b->lit_total = int(be.geti("lit_total_time", 0));
         b->cook = int(be.geti("cooking_time_spent", be.geti("CookTime", 0)));
         b->cook_total = int(be.geti("cooking_total_time", be.geti("CookTimeTotal", 0)));
+        if (const Nbt* ru = be.get("RecipesUsed"); ru && ru->type == Nbt::Compound)
+            for (auto& kv : ru->map) b->used[kv.first] = int(kv.second.i);
         if (const Nbt* lt = be.get("LootTable"); lt && lt->type == Nbt::String) {   // a generated chest rolls its loot the first time somebody looks inside
             if (const sim::LootTable* table = sim::LootTables::get(lt->s)) {
                 sim::LootParams lp;
@@ -140,6 +145,9 @@ void Game::bec_save_locked(BEC& b) {
         be.put("lit_total_time", Nbt::make(Nbt::Short, b.lit_total));
         be.put("cooking_time_spent", Nbt::make(Nbt::Short, b.cook));
         be.put("cooking_total_time", Nbt::make(Nbt::Short, b.cook_total));
+        Nbt ru = Nbt::compound();
+        for (auto& kv : b.used) ru.put(kv.first, Nbt::make(Nbt::Int, kv.second));
+        be.put("RecipesUsed", std::move(ru));
     }
     s_.dim(b.dim).put_block_entity(b.x, b.y, b.z, be);
 }
@@ -207,6 +215,23 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
         BEC* fb = first.get();
         frm->on_closed = [fb, raw] { fb->viewers.erase(std::remove(fb->viewers.begin(), fb->viewers.end(), raw), fb->viewers.end()); };
         frm->data_slots = {first->lit, first->lit_total, first->cook, first->cook_total};
+        frm->award = [this, gid, fb] {   // awardUsedRecipesAndPopExperience (mu_ is held: windows are clicked under it)
+            double xp = 0;
+            for (auto& kv : fb->used) {
+                const sim::CookingRecipe* r = sim::Recipes::get().cooking_by_name(kv.first);
+                if (!r) continue;
+                double amount = double(kv.second) * double(r->experience);
+                int whole = int(std::floor(amount));
+                double frac = amount - whole;
+                if (frac != 0.0 && (entity_managers_[fb->dim] ? entity_managers_[fb->dim]->random().next_double() : 0.5) < frac) whole++;
+                xp += whole;
+            }
+            if (fb->used.empty()) return;
+            fb->used.clear();
+            bec_save_locked(*fb);
+            auto pit = players_.find(gid);
+            if (pit != players_.end() && xp > 0) add_xp_locked(pit->second, int(xp));
+        };
         m = std::move(fm);
     } else {
         std::vector<sim::Container*> parts;
@@ -335,6 +360,7 @@ void Game::containers_tick() {
                         f.cook = 0;
                         sim::ItemStack& out = f.items.item(2);
                         if (out.is_empty()) f.items.items()[2] = r->result; else out.grow(r->result.count());
+                        f.used[r->name]++;
                         input.shrink(1);
                         changed = true;
                     }

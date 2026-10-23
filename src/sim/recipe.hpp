@@ -39,6 +39,7 @@ public:
     size_t crafting_count() const { return crafting_.size(); }
     const CraftingRecipe* find_crafting(CraftingContainer& grid) const;
     const CookingRecipe* find_cooking(const std::string& kind, const ItemStack& input) const;
+    const CookingRecipe* cooking_by_name(const std::string& name) const;
     bool is_fuel(const ItemStack& s) const { return fuel_ticks(s) > 0; }
     int fuel_ticks(const ItemStack& s) const;   // burn time of an item as furnace fuel (FuelValues), 0 when it is not fuel
 private:

@@ -291,6 +291,7 @@ public:
     void removed(MenuPlayer& player) override { Menu::removed(player); if (on_closed) { auto f = std::move(on_closed); on_closed = nullptr; f(); } }
     std::string kind;
     std::function<void()> on_closed;
+    std::function<void()> award;   // the player took from the result slot: hand out the experience the furnace stored
     std::shared_ptr<void> keep;
 };
 

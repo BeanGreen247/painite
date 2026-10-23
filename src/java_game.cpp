@@ -329,6 +329,13 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.f32(ev.saturation);
             send(c, w.b);
             break;
+        case GEvent::Experience:
+            w.varint(vd.packet("play/c/set_experience"));
+            w.f32(ev.health);
+            w.varint(ev.value);
+            w.varint(ev.slot);
+            send(c, w.b);
+            break;
         case GEvent::Hurt:
             w.varint(vd.packet("play/c/hurt_animation"));
             w.varint(ev.id->eid);

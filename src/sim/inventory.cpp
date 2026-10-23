@@ -706,8 +706,12 @@ public:
 };
 class FurnaceResultSlot : public Slot {
 public:
-    using Slot::Slot;
+    FurnaceResultSlot(Container* c, int slot, std::function<void()>* award) : Slot(c, slot), award_(award) {}
     bool may_place(const ItemStack&) const override { return false; }
+    void on_take(MenuPlayer& p, const ItemStack& s) override { if (award_ && *award_) (*award_)(); Slot::on_take(p, s); }   // checkTakeAchievements: the stored experience
+    void on_quick_craft(const ItemStack& picked, const ItemStack& original) override { Slot::on_quick_craft(picked, original); if (award_ && *award_) (*award_)(); }
+private:
+    std::function<void()>* award_;
 };
 }  // namespace
 
@@ -742,7 +746,7 @@ FurnaceMenu::FurnaceMenu(int menu_type_id, int container_id, PlayerInventory* in
     : Menu(menu_type_id, container_id), kind(recipe_kind), keep(std::move(keep_alive)) {
     add_slot(std::make_unique<Slot>(furnace, 0));
     add_slot(std::make_unique<FuelSlot>(furnace, 1));
-    add_slot(std::make_unique<FurnaceResultSlot>(furnace, 2));
+    add_slot(std::make_unique<FurnaceResultSlot>(furnace, 2, &award));
     add_standard_inventory_slots(inv, 8, 84);
     data_slots.assign(4, 0);
 }

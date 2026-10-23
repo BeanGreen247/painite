@@ -331,6 +331,9 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
             ps.v.food = int(std::max(0.0f, std::min(20.0f, num("foodLevel", 20.0f))));
             ps.v.saturation = std::max(0.0f, num("foodSaturationLevel", 5.0f));
             ps.v.exhaustion = std::max(0.0f, num("foodExhaustionLevel", 0.0f));
+            ps.v.xp_level = int(std::max(0.0f, num("XpLevel", 0.0f)));
+            ps.v.xp_progress = std::max(0.0f, std::min(1.0f, num("XpP", 0.0f)));
+            ps.v.xp_total = int(std::max(0.0f, num("XpTotal", 0.0f)));
             ps.v.sent_health = ps.v.health; ps.v.sent_food = ps.v.food; ps.v.sent_sat = ps.v.saturation;
         }
     }
@@ -356,6 +359,7 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     held.slot = ps.sim->inv.selected;
     send_event(id, held);
     send_health_locked(ps);
+    send_xp_locked(ps);
     }
     for (auto& kv : players_) {
         GEvent a;
@@ -590,6 +594,9 @@ void Game::save_player_data(uint64_t gid) {
     root.put("foodLevel", Nbt::make(Nbt::Int, vit.dead ? 20 : vit.food));
     root.put("foodSaturationLevel", flt(vit.dead ? 5.0f : vit.saturation));
     root.put("foodExhaustionLevel", flt(vit.exhaustion));
+    root.put("XpLevel", Nbt::make(Nbt::Int, vit.xp_level));
+    root.put("XpP", flt(vit.xp_progress));
+    root.put("XpTotal", Nbt::make(Nbt::Int, vit.xp_total));
     Nbt p = Nbt::list_of(Nbt::Double);
     p.list = {dbl(pos.x), dbl(pos.y), dbl(pos.z)};
     root.put("Pos", std::move(p));

@@ -148,6 +148,11 @@ const CookingRecipe* Recipes::find_cooking(const std::string& kind, const ItemSt
     return nullptr;
 }
 
+const CookingRecipe* Recipes::cooking_by_name(const std::string& name) const {
+    for (const CookingRecipe& r : cooking_) if (r.name == name) return &r;
+    return nullptr;
+}
+
 // FuelValues.vanillaBurnTimes (in ticks)
 int Recipes::fuel_ticks(const ItemStack& s) const {
     if (s.is_empty()) return 0;

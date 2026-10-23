@@ -50,7 +50,7 @@ struct GPos {
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
                 Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen, ContainerData, Sound,
-                EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
+                EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake, Experience } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -60,7 +60,7 @@ struct GEvent {
     int64_t t0 = 0, t1 = 0;                // Time: world age, day time
     int value = 0;
     std::string text;
-    float health = 0, saturation = 0;       // Health: value is the food level
+    float health = 0, saturation = 0;       // Health: value is the food level; Experience: health is the bar progress, value the level, slot the total points
     // container events (the player's own worker encodes them)
     int container = 0, state = 0, slot = 0;
     std::vector<sim::ItemStack> items;
@@ -127,6 +127,7 @@ public:
     void start_eating(uint64_t gid);             // use_item with food in the hand
     void stop_eating(uint64_t gid);
     float health_of(uint64_t gid);
+    void give_xp(uint64_t gid, int points);       // any thread
     // --- mobs (mobs.cpp) ---
     bool summon(const std::string& type, int dim, double x, double y, double z);   // game thread (commands)
     void attack_entity(uint64_t gid, int entity_id);                               // any thread
@@ -171,6 +172,8 @@ private:
         int sent_food = 20;
         int food = 20, food_timer = 0, invulnerable = 0, air = 300, drown_timer = 0, eating = -1;   // eating: ticks left, -1 when not
         bool dead = false;
+        int xp_level = 0, xp_total = 0;
+        float xp_progress = 0.0f;
         int64_t bow_start = -1;   // game time the bow was drawn
     };
     struct PState {
@@ -209,6 +212,8 @@ private:
     void hurt_locked(PState& p, float amount, const std::string& source);
     void die_locked(PState& p, const std::string& source);
     void send_health_locked(PState& p);
+    void send_xp_locked(PState& p);
+    void add_xp_locked(PState& p, int points);   // Player.giveExperiencePoints
     void track_movement_locked(PState& p, const GPos& now);
     void add_exhaustion_locked(PState& p, float x) { if (p.gamemode != 1 && p.gamemode != 3) p.v.exhaustion = std::min(40.0f, p.v.exhaustion + x); }
     void pickup_items();
