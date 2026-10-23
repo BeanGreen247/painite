@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter", "Packer", "Hopperer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer"};
     return o;
 }
 
@@ -859,6 +859,54 @@ void hopper_test(Ctx& t, Env& e) {
     t.check(left == 1, "one diamond is left in the dropper: " + std::to_string(left));
 }
 
+// observers, comparators, daylight sensors and note blocks
+void redstone_more_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Wirer2");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 3, z = S.pz;
+    auto click = [&](int bx, int by, int bz, int seq) { B.send("use_item_on", Wr().varint(0).be64(block_pos(bx, by, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq)).b); };
+    // 1. an observer pulses when the block in front changes: the lamp behind it lights up and goes out again
+    S.set(x, y, z, "observer[facing=east,powered=false]");
+    S.set(x - 1, y, z, "redstone_lamp");
+    B.pump(500);
+    S.set(x + 1, y, z, "stone");
+    t.check(S.wait(x - 1, y, z, "lit=true", 3000), "an observer lights the lamp behind it when the block in front changes");
+    t.check(S.wait(x - 1, y, z, "lit=false", 3000), "and the pulse ends");
+    // 2. a comparator reads a cake (14) and lights the lamp in front of it
+    int cz = z + 4;
+    S.set(x - 1, y, cz, "cake[bites=0]");
+    S.set(x, y, cz, "comparator[facing=west,mode=compare,powered=false]");
+    S.set(x + 1, y, cz, "redstone_lamp");
+    t.check(S.wait(x, y, cz, "powered=true", 4000), "a comparator reading a cake turns on");
+    t.check(S.wait(x + 1, y, cz, "lit=true", 3000), "and powers the lamp next to it");
+    // 3. a daylight sensor in the open reports the sun
+    S.set(x, y, z + 8, "daylight_detector[inverted=false,power=0]");
+    S.set(x + 2, y, z + 8, "daylight_detector[inverted=true,power=0]");
+    auto power_of = [&](int px) { std::string v = S.at(px, y, z + 8); size_t p = v.find("power="); return p == std::string::npos ? -1 : atoi(v.c_str() + p + 6); };
+    bool sun = B.until([&] { S.collect(); return power_of(x) > 0 || power_of(x + 2) > 0; }, 4000);   // by day the plain one reads, by night the inverted one
+    t.check(sun, "daylight sensors in the open read the sun or the dark: " + std::to_string(power_of(x)) + " / " + std::to_string(power_of(x + 2)));
+    // 4. a note block changes its note when clicked
+    S.set(x, y, z + 12, "note_block[instrument=harp,note=0,powered=false]");
+    B.pump(300);
+    click(x, y, z + 12, 120);
+    t.check(S.wait(x, y, z + 12, "note=1", 3000), "clicking a note block raises the note: " + S.at(x, y, z + 12));
+    // 5. a piston pushes a slime block and the stone stuck to its side (high up: slime also drags what is under it)
+    int sz = z + 16, sy = y + 4;
+    S.set(x, sy, sz, "piston[facing=east,extended=false]");
+    S.set(x + 1, sy, sz, "slime_block");
+    S.set(x + 1, sy, sz + 1, "stone");
+    B.pump(400);
+    S.set(x - 1, sy, sz, "redstone_block");
+    bool slid = S.wait(x + 2, sy, sz, "slime_block", 4000);
+    t.check(slid, "a piston pushes a slime block");
+    t.check(S.wait(x + 2, sy, sz + 1, "stone", 3000), "and the stone stuck to it comes along: " + S.at(x + 2, sy, sz + 1));
+}
+
 void fluids_more_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Plumber2");
@@ -871,18 +919,19 @@ void fluids_more_test(Ctx& t, Env& e) {
     int y = S.py, bx = S.px + 4, bz = S.pz + 4;
     auto give = [&](const char* item) { B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); B.pump(300); };
     auto click = [&](int x, int yy, int z, int seq) { B.send("use_item_on", Wr().varint(0).be64(block_pos(x, yy, z)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq)).b); };
-    // 0. powder snow from a bucket, and back
-    B.send("move_player_pos_rot", Wr().f64(S.px + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
+    // 0. powder snow from a bucket, and back (west of everything the other fluid tests leave behind)
+    int tpx = S.px - 8;
+    B.send("move_player_pos_rot", Wr().f64(tpx + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
     B.pump(200);
     give("powder_snow_bucket");
     B.send("use_item", Wr().varint(0).varint(50).f32(0.0f).f32(30.0f).b);
-    bool placed = S.wait(S.px, y, S.pz + 3, "powder_snow", 3000);
-    t.check(placed, "a powder snow bucket places powder snow: " + S.at(S.px, y, S.pz + 3));
+    bool placed = S.wait(tpx, y, S.pz + 3, "powder_snow", 3000);
+    t.check(placed, "a powder snow bucket places powder snow: " + S.at(tpx, y, S.pz + 3));
     give("bucket");
-    B.send("move_player_pos_rot", Wr().f64(S.px + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
+    B.send("move_player_pos_rot", Wr().f64(tpx + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);
     B.send("use_item", Wr().varint(0).varint(51).f32(0.0f).f32(30.0f).b);
-    bool taken = S.wait(S.px, y, S.pz + 3, "air", 3000);
-    t.check(taken, "an empty bucket takes it back: " + S.at(S.px, y, S.pz + 3));
+    bool taken = S.wait(tpx, y, S.pz + 3, "air", 3000);
+    t.check(taken, "an empty bucket takes it back: " + S.at(tpx, y, S.pz + 3));
     // 1. a bubble column over soul sand lifts, over magma drags down
     S.set(bx, y - 1, bz, "soul_sand");
     S.set(bx, y, bz, "water");
@@ -1069,6 +1118,7 @@ void reg_java_game(Registry& reg) {
     rs.tests.push_back({"circuits", redstone});
     rs.tests.push_back({"random-ticks", random_tick_test});
     rs.tests.push_back({"fluids", fluids_test});
+    rs.tests.push_back({"redstone-more", redstone_more_test});
     rs.tests.push_back({"fluids-more", fluids_more_test});
     reg.push_back(std::move(rs));
     Group f;

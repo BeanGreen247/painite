@@ -8,6 +8,7 @@
 #include "sim/entity_manager.hpp"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace pn {
 
@@ -19,7 +20,7 @@ const char* const DNAME[6] = {"down", "up", "north", "south", "west", "east"};
 inline int opposite(int d) { return d ^ 1; }
 int dir_of(const std::string& name) { for (int i = 0; i < 6; i++) if (name == DNAME[i]) return i; return -1; }
 
-enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead, Hopper, Dispenser, Dropper };
+enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead, Hopper, Dispenser, Dropper, Observer, Comparator, Daylight, Target, NoteBlock, WeightedPlate };
 
 Kind kind_of(uint16_t id) {
     static const std::vector<uint8_t> table = [] {
@@ -47,6 +48,12 @@ Kind kind_of(uint16_t id) {
             else if (n == "minecraft:hopper") k = Hopper;
             else if (n == "minecraft:dispenser") k = Dispenser;
             else if (n == "minecraft:dropper") k = Dropper;
+            else if (n == "minecraft:observer") k = Observer;
+            else if (n == "minecraft:comparator") k = Comparator;
+            else if (n == "minecraft:daylight_detector") k = Daylight;
+            else if (n == "minecraft:target") k = Target;
+            else if (n == "minecraft:note_block") k = NoteBlock;
+            else if (n == "minecraft:heavy_weighted_pressure_plate" || n == "minecraft:light_weighted_pressure_plate") k = WeightedPlate;
             t[i] = k;
         }
         return t;
@@ -63,11 +70,12 @@ bool is_iron(uint16_t id) { return block_name_has(id, "iron_"); }
 }  // namespace
 
 struct Redstone::Ctx {
+    Redstone* rs = nullptr;
     Server& s;
     int dim;
     World& w;
     int64_t now;
-    Ctx(Server& srv, int d) : s(srv), dim(d), w(srv.dim(d)), now(srv.game.game_time()) {}
+    Ctx(Redstone* r, Server& srv, int d) : rs(r), s(srv), dim(d), w(srv.dim(d)), now(srv.game.game_time()) {}
     uint16_t at(int x, int y, int z) {
         auto ch = w.chunk_if_loaded(x >> 4, z >> 4);
         if (!ch) return 0;
@@ -99,7 +107,12 @@ struct Redstone::Ctx {
     void put_notify(int x, int y, int z, uint16_t id) { if (put(x, y, z, id)) notify(x, y, z); }
 
     // what the block `id` at a source position gives to a receiver; d is the direction from the receiver to the source
-    int out_signal(uint16_t id, int d, bool strong, bool count_wires) {
+    int comparator_output(uint64_t key, uint16_t id) {
+        std::lock_guard<std::mutex> l(rs->mu_);
+        auto it = rs->comp_out_.find(key);
+        return it == rs->comp_out_.end() ? (block_flag(id, "powered") ? 15 : 0) : it->second;
+    }
+    int out_signal(uint16_t id, int d, bool strong, bool count_wires, int px = 0, int py = 0, int pz = 0) {
         switch (kind_of(id)) {
             case RedBlock: return strong ? 0 : 15;
             case Lever: case Button: {
@@ -113,6 +126,11 @@ struct Redstone::Ctx {
             case Torch: return block_flag(id, "lit") && (strong ? d == 0 : d != 1) ? 15 : 0;
             case WallTorch: return block_flag(id, "lit") && (strong ? d == 0 : dir_of(block_prop(id, "facing")) != d) ? 15 : 0;
             case Repeater: return block_flag(id, "powered") && dir_of(block_prop(id, "facing")) == d ? 15 : 0;
+            case Observer: return block_flag(id, "powered") && dir_of(block_prop(id, "facing")) == d ? 15 : 0;
+            case Comparator: return dir_of(block_prop(id, "facing")) == d ? comparator_output(pos_key(dim, px, py, pz), id) : 0;
+            case Daylight: return block_int(id, "power");
+            case Target: return strong ? 0 : block_int(id, "power");
+            case WeightedPlate: return (!strong || d == 1) ? block_int(id, "power") : 0;
             case Wire: {
                 if (!count_wires || d == 0) return 0;
                 int power = block_int(id, "power");
@@ -127,14 +145,14 @@ struct Redstone::Ctx {
     // strong power into the conductor at (x, y, z)
     int direct_into(int x, int y, int z, bool count_wires) {
         int best = 0;
-        for (int e = 0; e < 6 && best < 15; e++) best = std::max(best, out_signal(at(x + DX[e], y + DY[e], z + DZ[e]), e, true, count_wires));
+        for (int e = 0; e < 6 && best < 15; e++) best = std::max(best, out_signal(at(x + DX[e], y + DY[e], z + DZ[e]), e, true, count_wires, x + DX[e], y + DY[e], z + DZ[e]));
         return best;
     }
     // Level.getSignal: the power the block next to a receiver gives it
     int signal_at(int rx, int ry, int rz, int d, bool count_wires) {
         int nx = rx + DX[d], ny = ry + DY[d], nz = rz + DZ[d];
         uint16_t id = at(nx, ny, nz);
-        int s = out_signal(id, d, false, count_wires);
+        int s = out_signal(id, d, false, count_wires, nx, ny, nz);
         if (conductor(id)) s = std::max(s, direct_into(nx, ny, nz, count_wires));
         return s;
     }
@@ -238,7 +256,31 @@ void Redstone::update_torch(Ctx& c, int x, int y, int z, uint16_t id) {
     int attached = kind_of(id) == WallTorch ? opposite(dir_of(block_prop(id, "facing"))) : 0;
     bool powered = c.signal_at(x, y, z, attached, true) > 0;
     bool lit = block_flag(id, "lit");
-    if (lit == powered) c.put_notify(x, y, z, block_with(id, "lit", !powered));   // a torch burns while the block it is on is not powered
+    uint64_t k = pos_key(c.dim, x, y, z);
+    if (lit && powered) {   // a torch burns while the block it is on is not powered; turning off 8 times within 3 seconds burns it out for a while
+        bool burnt;
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            auto& h = burnout_[k];
+            h.push_back(c.now);
+            h.erase(std::remove_if(h.begin(), h.end(), [&](int64_t t) { return t < c.now - 60; }), h.end());
+            burnt = h.size() >= 8;
+        }
+        c.put_notify(x, y, z, block_with(id, "lit", false));
+        if (burnt) c.schedule(x, y, z, 160);
+    } else if (!lit && !powered) {
+        {
+            std::lock_guard<std::mutex> l(mu_);
+            auto it = burnout_.find(k);
+            if (it != burnout_.end()) {
+                auto& h = it->second;
+                h.erase(std::remove_if(h.begin(), h.end(), [&](int64_t t) { return t < c.now - 60; }), h.end());
+                if (h.size() >= 8) { c.schedule(x, y, z, 20); return; }
+                if (h.empty()) burnout_.erase(it);
+            }
+        }
+        c.put_notify(x, y, z, block_with(id, "lit", true));
+    }
 }
 
 void Redstone::update_repeater(Ctx& c, int x, int y, int z, uint16_t id) {
@@ -321,31 +363,55 @@ bool movable(uint16_t id, bool& destroyed) {
 }
 }  // namespace
 
-bool Redstone::push_line(Ctx& c, int x, int y, int z, int dir, std::vector<Pos>& moved, std::vector<Pos>& destroyed) {
-    int cx = x + DX[dir], cy = y + DY[dir], cz = z + DZ[dir];
-    for (int i = 0; i < 13; i++) {
-        if (cy < kMinY || cy >= kMinY + kHeight || !c.loaded(cx, cz)) return false;
-        uint16_t id = c.at(cx, cy, cz);
+// PistonStructureResolver: what moves along when a piston pushes (move = direction of the movement) the block at (sx, sy, sz). Slime and honey blocks carry
+// what touches them (but not each other); at most 12 blocks. Plants and the like in the way are destroyed instead of moved.
+bool Redstone::push_line(Ctx& c, int px, int py, int pz, int sx, int sy, int sz, int move, std::vector<Pos>& moved, std::vector<Pos>& destroyed) {
+    std::function<bool(int, int, int)> add = [&](int x, int y, int z) -> bool {
+        if (y < kMinY || y >= kMinY + kHeight || !c.loaded(x, z)) return false;
+        if (x == px && y == py && z == pz) return true;
+        uint16_t id = c.at(x, y, z);
         bool dest;
         if (!movable(id, dest)) return false;
         if (Blocks::get().info(id).air) return true;
-        if (dest) { destroyed.push_back({cx, cy, cz}); return true; }
-        moved.push_back({cx, cy, cz});
+        if (dest) { destroyed.push_back({x, y, z}); return true; }
+        for (const Pos& m : moved) if (m.x == x && m.y == y && m.z == z) return true;
+        moved.push_back({x, y, z});
         if (moved.size() > 12) return false;
-        cx += DX[dir]; cy += DY[dir]; cz += DZ[dir];
-    }
-    return false;
+        if (!add(x + DX[move], y + DY[move], z + DZ[move])) return false;   // whatever is ahead is pushed too
+        const std::string& n = Blocks::get().info(id).name;
+        bool slime = n == "minecraft:slime_block", honey = n == "minecraft:honey_block";
+        if (slime || honey) {
+            if (!add(x - DX[move], y - DY[move], z - DZ[move])) { /* the block behind only comes along when it can move */ }
+            for (int d = 0; d < 6; d++) {
+                if (d == move || d == opposite(move) || moved.size() > 12) continue;
+                int nx = x + DX[d], ny = y + DY[d], nz = z + DZ[d];
+                if (!c.loaded(nx, nz)) continue;
+                uint16_t nid = c.at(nx, ny, nz);
+                if (Blocks::get().info(nid).air) continue;
+                const std::string& nn = Blocks::get().info(nid).name;
+                if ((slime && nn == "minecraft:honey_block") || (honey && nn == "minecraft:slime_block")) continue;
+                bool nd;
+                if (!movable(nid, nd) || nd) continue;
+                if (!add(nx, ny, nz)) return false;
+            }
+        }
+        return true;
+    };
+    bool ok = add(sx, sy, sz);
+    return ok && moved.size() <= 12;
 }
 
 void Redstone::extend_piston(Ctx& c, int x, int y, int z, uint16_t id) {
     int dir = dir_of(block_prop(id, "facing"));
     if (dir < 0) return;
     std::vector<Pos> moved, destroyed;
-    if (!push_line(c, x, y, z, dir, moved, destroyed)) return;
+    if (!push_line(c, x, y, z, x + DX[dir], y + DY[dir], z + DZ[dir], dir, moved, destroyed)) return;
     for (const Pos& d : destroyed) c.put(d.x, d.y, d.z, 0);
-    for (size_t i = moved.size(); i-- > 0;) {   // the far end first
-        uint16_t b = c.at(moved[i].x, moved[i].y, moved[i].z);
-        c.put(moved[i].x + DX[dir], moved[i].y + DY[dir], moved[i].z + DZ[dir], b);
+    std::sort(moved.begin(), moved.end(), [&](const Pos& a, const Pos& b) { return a.x * DX[dir] + a.y * DY[dir] + a.z * DZ[dir] > b.x * DX[dir] + b.y * DY[dir] + b.z * DZ[dir]; });   // the far end first
+    for (const Pos& m : moved) {
+        uint16_t b = c.at(m.x, m.y, m.z);
+        c.put(m.x, m.y, m.z, 0);
+        c.put(m.x + DX[dir], m.y + DY[dir], m.z + DZ[dir], b);
     }
     bool sticky = kind_of(id) == StickyPiston;
     std::string props = std::string("facing=") + DNAME[dir] + ",short=false,type=" + (sticky ? "sticky" : "normal");
@@ -360,13 +426,22 @@ void Redstone::retract_piston(Ctx& c, int x, int y, int z, uint16_t id) {
     int hx = x + DX[dir], hy = y + DY[dir], hz = z + DZ[dir];
     uint16_t head = c.at(hx, hy, hz);
     if (kind_of(head) == PistonHead && dir_of(block_prop(head, "facing")) == dir) c.put(hx, hy, hz, 0);
-    if (kind_of(id) == StickyPiston) {   // a sticky piston takes the block in front of its head back with it
+    if (kind_of(id) == StickyPiston) {   // a sticky piston takes the block in front of its head back with it (and what sticks to that block)
         int px = hx + DX[dir], py = hy + DY[dir], pz = hz + DZ[dir];
         uint16_t pulled = c.at(px, py, pz);
         bool dest;
         if (!Blocks::get().info(pulled).air && movable(pulled, dest) && !dest && c.at(hx, hy, hz) == 0) {
-            c.put(hx, hy, hz, pulled);
-            c.put(px, py, pz, 0);
+            std::vector<Pos> moved, destroyed;
+            int back = opposite(dir);
+            if (push_line(c, x, y, z, px, py, pz, back, moved, destroyed) && !moved.empty()) {
+                std::sort(moved.begin(), moved.end(), [&](const Pos& a, const Pos& b) { return a.x * DX[back] + a.y * DY[back] + a.z * DZ[back] > b.x * DX[back] + b.y * DY[back] + b.z * DZ[back]; });
+                for (const Pos& d : destroyed) c.put(d.x, d.y, d.z, 0);
+                for (const Pos& m : moved) {
+                    uint16_t bl = c.at(m.x, m.y, m.z);
+                    c.put(m.x, m.y, m.z, 0);
+                    c.put(m.x + DX[back], m.y + DY[back], m.z + DZ[back], bl);
+                }
+            }
         }
     }
     c.put(x, y, z, block_with(id, "extended", false));
@@ -380,10 +455,204 @@ void Redstone::update_piston(Ctx& c, int x, int y, int z, uint16_t id) {
     else if (!powered && extended) retract_piston(c, x, y, z, id);
 }
 
+void Redstone::schedule_daylight(Ctx& c, int x, int y, int z) { c.schedule(x, y, z, 1); }
+
+// ---- observers, comparators, daylight sensors, target blocks, note blocks
+
+// an observer pulses when the block it faces changes
+void Redstone::update_observer(Ctx& c, int x, int y, int z, uint16_t id) {
+    int f = dir_of(block_prop(id, "facing"));
+    if (f < 0) return;
+    uint64_t k = pos_key(c.dim, x, y, z);
+    uint16_t front = c.at(x + DX[f], y + DY[f], z + DZ[f]);
+    bool powered = block_flag(id, "powered");
+    int64_t due = -1;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        auto seen = observed_.find(k);
+        if (seen == observed_.end()) observed_[k] = front;
+        else if (seen->second != front) {
+            seen->second = front;
+            if (!powered && !pending_.count(k)) pending_[k] = c.now + 2;
+        }
+        if (powered && !pending_.count(k)) pending_[k] = c.now + 2;   // lit when loaded: turn it off again
+        auto it = pending_.find(k);
+        if (it != pending_.end()) due = it->second;
+    }
+    if (due < 0) return;
+    if (c.now < due) { c.schedule(x, y, z, int(due - c.now)); return; }
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        if (powered) pending_.erase(k); else pending_[k] = c.now + 2;
+    }
+    if (c.put(x, y, z, block_with(id, "powered", !powered))) {
+        c.notify(x, y, z);
+        c.notify(x - DX[f], y - DY[f], z - DZ[f]);
+        if (!powered) c.schedule(x, y, z, 2);
+    }
+}
+
+// the analog signal of a block a comparator reads (containers by how full they are, cauldrons, cakes ...); -1 when it has none
+int Redstone::analog_signal(Ctx& c, int x, int y, int z) {
+    uint16_t id = c.at(x, y, z);
+    const std::string& n = Blocks::get().info(id).name;
+    if (n == "minecraft:cauldron") return 0;
+    if (n == "minecraft:water_cauldron" || n == "minecraft:powder_snow_cauldron") return block_int(id, "level", 1);
+    if (n == "minecraft:lava_cauldron") return 3;
+    if (n == "minecraft:cake") return (7 - block_int(id, "bites")) * 2;
+    if (n == "minecraft:end_portal_frame") return block_flag(id, "eye") ? 15 : 0;
+    if (n == "minecraft:respawn_anchor") { int ch = block_int(id, "charges"); return ch == 0 ? 0 : (ch * 4 > 15 ? 15 : ch * 4); }
+    if (n == "minecraft:beehive" || n == "minecraft:bee_nest") return block_int(id, "honey_level");
+    if (n == "minecraft:composter") return block_int(id, "level");
+    return s_.game.container_signal(c.dim, x, y, z);
+}
+
+int Redstone::comparator_signal(Ctx& c, int x, int y, int z, uint16_t id) {
+    int f = dir_of(block_prop(id, "facing"));
+    int rear = c.signal_at(x, y, z, f, true);
+    if (rear < 15) { uint16_t back = c.at(x + DX[f], y + DY[f], z + DZ[f]); if (kind_of(back) == Wire) rear = std::max(rear, block_int(back, "power")); }
+    int bx = x + DX[f], by = y + DY[f], bz = z + DZ[f];
+    int a = analog_signal(c, bx, by, bz);
+    if (a >= 0) rear = a;
+    else if (rear < 15 && c.conductor(c.at(bx, by, bz))) {   // through one solid block
+        int a2 = analog_signal(c, bx + DX[f], by + DY[f], bz + DZ[f]);
+        if (a2 >= 0) rear = a2;
+    }
+    int left = (f == 2 || f == 3) ? 4 : 2, right = left ^ 1;   // the two sides of the facing
+    int side = std::max(c.signal_at(x, y, z, left, true), c.signal_at(x, y, z, right, true));
+    if (block_prop(id, "mode") == "subtract") return std::max(rear - side, 0);
+    return rear >= side ? rear : 0;
+}
+
+void Redstone::update_comparator(Ctx& c, int x, int y, int z, uint16_t id) {
+    uint64_t k = pos_key(c.dim, x, y, z);
+    int want = comparator_signal(c, x, y, z, id);
+    bool powered = block_flag(id, "powered");
+    int cur;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = comp_out_.find(k);
+        if (it == comp_out_.end()) { comp_out_[k] = powered ? want : 0; cur = comp_out_[k]; }
+        else cur = it->second;
+    }
+    int64_t due;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        bool differs = want != cur || (want > 0) != powered;
+        if (!differs) { pending_.erase(k); return; }
+        auto it = pending_.find(k);
+        if (it == pending_.end()) it = pending_.emplace(k, c.now + 2).first;
+        due = it->second;
+        if (c.now >= due) pending_.erase(it);
+    }
+    if (c.now < due) { c.schedule(x, y, z, int(due - c.now)); return; }
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        comp_out_[k] = want;
+    }
+    int f = dir_of(block_prop(id, "facing"));
+    if ((want > 0) != powered) c.put(x, y, z, block_with(id, "powered", want > 0));
+    c.notify(x, y, z);
+    c.notify(x - DX[f], y - DY[f], z - DZ[f]);
+}
+
+// the daylight sensor follows the sun
+void Redstone::update_daylight(Ctx& c, int x, int y, int z, uint16_t id) {
+    c.schedule(x, y, z, 20);
+    int i = (c.loaded(x, z) && c.w.top_y(x, z) <= y) ? 15 : 0;   // the sensor itself is the highest solid block of a column in the open
+    double t = double(s_.game.day_time() % 24000) / 24000.0 - 0.25;
+    t -= std::floor(t);
+    double d1 = 0.5 - std::cos(t * 3.14159265358979) / 2.0;
+    double angle = (t + (d1 - t) / 3.0) * 2.0 * 3.14159265358979;   // Level.getSunAngle
+    bool inverted = block_flag(id, "inverted");
+    if (inverted) i = 15 - i;
+    else if (i > 0) {
+        double f1 = angle < 3.14159265358979 ? 0.0 : 2.0 * 3.14159265358979;
+        angle += (f1 - angle) * 0.2;
+        i = int(std::lround(double(i) * std::cos(angle)));
+    }
+    i = std::max(0, std::min(15, i));
+    if (block_int(id, "power") != i) c.put_notify(x, y, z, block_with(id, "power", i));
+}
+
+// a target block lights up when something hits it and falls back after a while
+void Redstone::target_hit(int dim, int x, int y, int z, double rx, double ry, double rz, int ticks) {
+    Ctx c(this, s_, dim);
+    uint16_t id = c.at(x, y, z);
+    if (kind_of(id) != Target) return;
+    double a[3] = {std::fabs(rx - 0.5), std::fabs(ry - 0.5), std::fabs(rz - 0.5)};
+    std::sort(a, a + 3);
+    double d = a[1];   // the hit axis sits at 0.5: the second largest is the distance from the middle of the face
+    int power = std::max(1, std::min(15, int(std::ceil(15.0 * std::max(0.0, std::min(1.0, (0.5 - d) / 0.5))))));
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        pending_[pos_key(dim, x, y, z)] = c.now + ticks;
+    }
+    if (block_int(id, "power") != power) c.put_notify(x, y, z, block_with(id, "power", power));
+    c.schedule(x, y, z, ticks);
+}
+
+void Redstone::update_target(Ctx& c, int x, int y, int z, uint16_t id) {
+    if (block_int(id, "power") == 0) return;
+    uint64_t k = pos_key(c.dim, x, y, z);
+    int64_t due;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = pending_.find(k);
+        if (it == pending_.end()) it = pending_.emplace(k, c.now + 8).first;
+        due = it->second;
+        if (c.now >= due) pending_.erase(it);
+    }
+    if (c.now < due) { c.schedule(x, y, z, int(due - c.now)); return; }
+    c.put_notify(x, y, z, block_with(id, "power", 0));
+}
+
+// NoteBlockInstrument of the block under a note block
+static const char* instrument_below(const std::string& n) {
+    auto has = [&](const char* p) { return n.find(p) != std::string::npos; };
+    if (has("glass") ) return "hat";
+    if (n == "minecraft:sand" || n == "minecraft:red_sand" || n == "minecraft:gravel" || has("concrete_powder") || n == "minecraft:soul_sand") return n == "minecraft:soul_sand" ? "cow_bell" : "snare";
+    if (has("_wool")) return "guitar";
+    if (n == "minecraft:clay") return "flute";
+    if (n == "minecraft:gold_block") return "bell";
+    if (n == "minecraft:packed_ice") return "chime";
+    if (n == "minecraft:bone_block") return "xylophone";
+    if (n == "minecraft:iron_block") return "iron_xylophone";
+    if (n == "minecraft:pumpkin" || n == "minecraft:carved_pumpkin" || n == "minecraft:jack_o_lantern") return "didgeridoo";
+    if (n == "minecraft:emerald_block") return "bit";
+    if (n == "minecraft:hay_block") return "banjo";
+    if (n == "minecraft:glowstone") return "pling";
+    if (has("planks") || has("_log") || has("_wood") || has("bookshelf") || has("chest") || has("crafting_table") || has("barrel") || has("jukebox") || has("note_block") || has("_door") || has("_fence") || has("_sign")) return "bass";
+    if (has("stone") || has("cobble") || has("brick") || has("deepslate") || has("netherrack") || has("obsidian") || has("ore") || has("terracotta") || has("basalt") || has("blackstone") || has("andesite") || has("diorite") || has("granite") || has("end_stone") || has("prismarine") || has("quartz") || has("furnace") || has("dispenser") || has("dropper") || has("observer")) return "basedrum";
+    return "harp";
+}
+
+void Redstone::play_note(Ctx& c, int x, int y, int z, uint16_t id) {
+    if (!Blocks::get().info(c.at(x, y + 1, z)).air) return;
+    std::string inst = block_prop(id, "instrument");
+    int note = block_int(id, "note");
+    float pitch = float(std::pow(2.0, double(note - 12) / 12.0));
+    s_.game.play_sound(c.dim, x + 0.5, y + 0.5, z + 0.5, "minecraft:block.note_block." + (inst.empty() ? std::string("harp") : inst), 3.0f, pitch);
+}
+
+void Redstone::update_note(Ctx& c, int x, int y, int z, uint16_t id) {
+    std::string want_inst = instrument_below(Blocks::get().info(c.at(x, y - 1, z)).name);
+    uint16_t cur = id;
+    if (block_prop(cur, "instrument") != want_inst) cur = block_with(cur, "instrument", want_inst);
+    bool powered = c.has_signal(x, y, z);
+    if (powered != block_flag(cur, "powered")) {
+        cur = block_with(cur, "powered", powered);
+        if (cur != id) c.put(x, y, z, cur);
+        if (powered) play_note(c, x, y, z, cur);
+        return;
+    }
+    if (cur != id) c.put(x, y, z, cur);
+}
+
 // ---- entry points
 
 void Redstone::update(int dim, int x, int y, int z) {
-    Ctx c(s_, dim);
+    Ctx c(this, s_, dim);
     uint16_t id = c.at(x, y, z);
     switch (kind_of(id)) {
         case Wire: update_wire(c, x, y, z); break;
@@ -396,6 +665,11 @@ void Redstone::update(int dim, int x, int y, int z) {
         case Tnt:
             if (c.has_signal(x, y, z)) ignite_tnt(dim, x, y, z);
             break;
+        case Observer: update_observer(c, x, y, z, id); break;
+        case Comparator: update_comparator(c, x, y, z, id); break;
+        case Daylight: update_daylight(c, x, y, z, id); break;
+        case Target: update_target(c, x, y, z, id); break;
+        case NoteBlock: update_note(c, x, y, z, id); break;
         case Hopper: {   // a powered hopper is switched off
             bool enabled = !c.has_signal(x, y, z);
             if (block_flag(id, "enabled") != enabled) c.put(x, y, z, block_with(id, "enabled", enabled));
@@ -414,17 +688,24 @@ void Redstone::update(int dim, int x, int y, int z) {
 
 bool Redstone::is_interactive(uint16_t id) {
     switch (kind_of(id)) {
-        case Lever: case Button: case Gate: return true;
+        case Lever: case Button: case Gate: case Daylight: case NoteBlock: return true;
         case Door: case Trapdoor: return !is_iron(id);
         default: return false;
     }
 }
 
 bool Redstone::use(int dim, int x, int y, int z) {
-    Ctx c(s_, dim);
+    Ctx c(this, s_, dim);
     uint16_t id = c.at(x, y, z);
     switch (kind_of(id)) {
         case Lever: c.put_notify(x, y, z, block_with(id, "powered", !block_flag(id, "powered"))); return true;
+        case Daylight: c.put(x, y, z, block_with(id, "inverted", !block_flag(id, "inverted"))); schedule_daylight(c, x, y, z); return true;
+        case NoteBlock: {
+            uint16_t n = block_with(id, "note", (block_int(id, "note") + 1) % 25);
+            c.put(x, y, z, n);
+            play_note(c, x, y, z, n);
+            return true;
+        }
         case Button: {
             if (block_flag(id, "powered")) return true;
             bool wooden = !block_name_has(id, "stone");
@@ -452,7 +733,7 @@ bool Redstone::use(int dim, int x, int y, int z) {
 }
 
 bool Redstone::ignite_tnt(int dim, int x, int y, int z) {
-    Ctx c(s_, dim);
+    Ctx c(this, s_, dim);
     if (kind_of(c.at(x, y, z)) != Tnt) return false;
     if (!c.put(x, y, z, 0)) return false;
     s_.game.add_entity(dim, std::make_unique<sim::PrimedTnt>(nullptr, x + 0.5, y, z + 0.5));
@@ -464,10 +745,12 @@ void Redstone::plates(const std::vector<PlateHit>& hits, int64_t tick) {
     std::vector<PlateState> release;
     std::vector<PlateHit> press;
     std::vector<PlateHit> valid;
+    std::unordered_map<uint64_t, std::pair<PlateHit, int>> weighted;   // plate -> hit and how many things stand on it
     for (const PlateHit& h : hits) {   // a stone plate wants a mob or a player, a wooden one reacts to everything
-        Ctx c(s_, h.dim);
+        Ctx c(this, s_, h.dim);
         uint16_t id = c.at(h.x, h.y, h.z);
-        if (kind_of(id) == Plate && (h.living || !block_name_has(id, "stone"))) valid.push_back(h);
+        if (kind_of(id) == WeightedPlate) { auto& w = weighted[pos_key(h.dim, h.x, h.y, h.z)]; w.first = h; w.second++; }
+        else if (kind_of(id) == Plate && (h.living || !block_name_has(id, "stone"))) valid.push_back(h);
     }
     {
         std::lock_guard<std::mutex> l(mu_);
@@ -477,18 +760,34 @@ void Redstone::plates(const std::vector<PlateHit>& hits, int64_t tick) {
             if (it == plates_.end()) { plates_[k] = {h.dim, h.x, h.y, h.z, tick + 20}; press.push_back(h); }
             else it->second.until = tick + 20;
         }
+        for (auto& kv : weighted) {
+            const PlateHit& h = kv.second.first;
+            auto it = plates_.find(kv.first);
+            if (it == plates_.end()) plates_[kv.first] = {h.dim, h.x, h.y, h.z, tick + 20};
+            else it->second.until = tick + 20;
+        }
         for (auto it = plates_.begin(); it != plates_.end();)
             if (it->second.until <= tick) { release.push_back(it->second); it = plates_.erase(it); } else ++it;
     }
     for (const PlateHit& h : press) {
-        Ctx c(s_, h.dim);
+        Ctx c(this, s_, h.dim);
         uint16_t id = c.at(h.x, h.y, h.z);
         if (kind_of(id) == Plate) c.put_notify(h.x, h.y, h.z, block_with(id, "powered", true));
     }
+    for (auto& kv : weighted) {   // light plates give one level per thing (up to 15), heavy ones one per ten (up to 150)
+        const PlateHit& h = kv.second.first;
+        Ctx c(this, s_, h.dim);
+        uint16_t id = c.at(h.x, h.y, h.z);
+        if (kind_of(id) != WeightedPlate) continue;
+        int n = kv.second.second;
+        int power = block_name_has(id, "heavy") ? int(std::ceil(std::min(n, 150) / 10.0)) : std::min(n, 15);
+        if (block_int(id, "power") != power) c.put_notify(h.x, h.y, h.z, block_with(id, "power", power));
+    }
     for (const PlateState& p : release) {
-        Ctx c(s_, p.dim);
+        Ctx c(this, s_, p.dim);
         uint16_t id = c.at(p.x, p.y, p.z);
         if (kind_of(id) == Plate) c.put_notify(p.x, p.y, p.z, block_with(id, "powered", false));
+        else if (kind_of(id) == WeightedPlate) c.put_notify(p.x, p.y, p.z, block_with(id, "power", 0));
     }
 }
 

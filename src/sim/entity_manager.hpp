@@ -36,6 +36,8 @@ public:
     bool is_full_block(int x, int y, int z) const override;
     double fluid_height(const AABB& box, bool lava) const override;
     Vec3 fluid_flow(const AABB& box, bool lava) const override;
+    void projectile_hit_block(const Vec3& at, const Vec3& travel, int redstone_ticks) override { if (on_projectile_hit) on_projectile_hit(at, travel, redstone_ticks); }
+    std::function<void(const Vec3&, const Vec3&, int)> on_projectile_hit;
     uint16_t block_state(int x, int y, int z) const override { return block_at(x, y, z); }
     bool set_block_state(int x, int y, int z, uint16_t state) override;
     void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) override;

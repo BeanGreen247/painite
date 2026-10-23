@@ -408,6 +408,18 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.be16(static_cast<uint16_t>(ev.value));
             send(c, w.b);
             break;
+        case GEvent::Sound: {
+            int sid = sim::Registries::get().id("minecraft:sound_event", ev.text);
+            if (sid < 0) break;
+            w.varint(vd.packet("play/c/sound"));
+            w.varint(sid + 1);
+            w.varint(ev.value);
+            w.be32(uint32_t(ev.bx)); w.be32(uint32_t(ev.by)); w.be32(uint32_t(ev.bz));
+            w.f32(ev.health); w.f32(ev.saturation);
+            w.be64(uint64_t(ev.bx) * 31 + uint64_t(ev.bz));
+            send(c, w.b);
+            break;
+        }
         case GEvent::OpenScreen:
             w.varint(vd.packet("play/c/open_screen"));
             w.varint(ev.container);

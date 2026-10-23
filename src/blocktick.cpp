@@ -286,6 +286,7 @@ void Game::block_random_tick(int dim, int x, int y, int z, uint16_t id) {
     auto is = [&](const char* n) { return name == n; };
     auto has = [&](const char* p) { return name.find(p) != std::string::npos; };
     if (is("minecraft:hopper")) { hopper_register(dim, x, y, z); return; }
+    if (is("minecraft:daylight_detector")) { ticker_.schedule(dim, x, y, z, 1); return; }
     // ---- kelp grows upwards through water (GrowingPlantHeadBlock.randomTick)
     if (is("minecraft:kelp")) {
         int age = block_int(id, "age");
@@ -428,7 +429,7 @@ void Game::random_ticks() {
         std::vector<uint8_t> f(Blocks::get().count(), 0);
         for (size_t i = 0; i < f.size(); i++) {
             const sim::BlockProps* bp = sim::BlockTable::get().find(Blocks::get().info(uint16_t(i)).name);
-            f[i] = (bp && bp->random_ticks) || Blocks::get().info(uint16_t(i)).name == "minecraft:hopper";   // a hopper's random tick wakes it after a restart
+            f[i] = (bp && bp->random_ticks) || Blocks::get().info(uint16_t(i)).name == "minecraft:hopper" || Blocks::get().info(uint16_t(i)).name == "minecraft:daylight_detector";   // a hopper's random tick wakes it after a restart
         }
         return f;
     }();

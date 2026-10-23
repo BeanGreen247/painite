@@ -49,7 +49,7 @@ struct GPos {
 
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
-                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen, ContainerData,
+                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen, ContainerData, Sound,
                 EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
@@ -106,6 +106,8 @@ public:
     void inv_close(uint64_t gid, int container);
     bool open_container(uint64_t gid, int dim, int x, int y, int z);          // right click on a chest, furnace ...: open its window
     void spill_container(int dim, int x, int y, int z, uint16_t state);        // a container block is broken: its items drop
+    int container_signal(int dim, int x, int y, int z);                        // region threads: how full the container at a spot is, 0..15 (comparators); -1 when it holds nothing
+    void play_sound(int dim, double x, double y, double z, const std::string& name, float volume, float pitch);   // players nearby hear it
     void hopper_register(int dim, int x, int y, int z);                        // region threads: this hopper should be ticked
     void queue_dispense(int dim, int x, int y, int z, int delay);              // region threads: a dispenser or dropper fires in `delay` ticks
     bool dispense_fluid(int dim, int x, int y, int z, int pour);               // a dispenser pours (1 water, 2 lava) or picks up (0) a fluid at a spot; true when something happened

@@ -398,7 +398,7 @@ void ArrowEntity::tick() {
             return;
         }
     }
-    if (horizontal_collision || vertical_collision) { stuck = true; delta = Vec3(); return; }
+    if (horizontal_collision || vertical_collision) { stuck = true; level->projectile_hit_block(pos, delta, 20); delta = Vec3(); return; }
     bool water = level->fluid_height(bounding_box(), false) > 0.0;
     double drag = water ? 0.6 : 0.99;
     delta = Vec3(delta.x * drag, delta.y * drag - 0.05, delta.z * drag);

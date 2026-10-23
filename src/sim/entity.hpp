@@ -51,6 +51,7 @@ public:
     virtual void explode(const Vec3& at, float power, Entity* source) {}
     virtual void teleport_owner(uint64_t gid, const Vec3& to) {}   // an ender pearl landed
     virtual int difficulty() const { return 2; }
+    virtual void projectile_hit_block(const Vec3& at, const Vec3& travel, int redstone_ticks) {}   // an arrow stuck in a block: `at` is where, `travel` its last movement
     virtual int64_t day_time() const { return 0; }
 };
 

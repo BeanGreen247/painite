@@ -45,6 +45,11 @@ void Game::start() {
             p.x = to.x; p.y = to.y; p.z = to.z;
             teleport(gid, p);
         };
+        entity_managers_[dim]->on_projectile_hit = [this, dim](const sim::Vec3& at, const sim::Vec3& travel, int ticks) {
+            sim::Vec3 in = at + travel.normalize().scale(0.05);   // just inside the block that stopped it
+            int bx = int(std::floor(in.x)), by = int(std::floor(in.y)), bz = int(std::floor(in.z));
+            redstone().target_hit(dim, bx, by, bz, in.x - bx, in.y - by, in.z - bz, ticks);
+        };
         entity_managers_[dim]->on_block_changed = [this, dim](int x, int y, int z, uint16_t id) { block_changed(dim, x, y, z, id); };
     }
     load_entities();

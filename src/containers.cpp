@@ -118,6 +118,8 @@ std::shared_ptr<Game::BEC> Game::bec_get_locked(int dim, int x, int y, int z) {
     b->items.on_changed = [this, raw] {
         bec_save_locked(*raw);
         for (sim::Menu* m : raw->viewers) m->broadcast_changes();
+        ticker_.schedule_around(raw->dim, raw->x, raw->y, raw->z);   // comparators next to it (or behind a block next to it) read the new fill level
+        for (int d = 0; d < 4; d++) ticker_.schedule(raw->dim, raw->x + (d == 2 ? -2 : d == 3 ? 2 : 0), raw->y, raw->z + (d == 0 ? -2 : d == 1 ? 2 : 0), 2);
         if (raw->block == "minecraft:furnace" || raw->block == "minecraft:blast_furnace" || raw->block == "minecraft:smoker") bec_active_[bec_key(raw->dim, raw->x, raw->y, raw->z)] = bec_registry_[bec_key(raw->dim, raw->x, raw->y, raw->z)].lock();
     };
     bec_registry_[key] = b;
@@ -354,6 +356,39 @@ void Game::containers_tick() {
         uint16_t id = w.get_block(p.x, p.y, p.z);
         uint16_t now = block_with(id, "lit", p.lit);
         if (now != id && w.set_block(p.x, p.y, p.z, now)) block_changed(p.dim, p.x, p.y, p.z, now);
+    }
+}
+
+int Game::container_signal(int dim, int x, int y, int z) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto b = bec_get_locked(dim, x, y, z);
+    if (!b) return -1;
+    float f = 0;
+    bool any = false;
+    for (int i = 0; i < b->items.size(); i++) {
+        sim::ItemStack& st = b->items.item(i);
+        if (st.is_empty()) continue;
+        any = true;
+        f += float(st.count()) / float(std::min(b->items.max_stack_size(), st.max_stack_size()));
+    }
+    f /= float(b->items.size());
+    return int(std::floor(f * 14.0f)) + (any ? 1 : 0);
+}
+
+void Game::play_sound(int dim, double x, double y, double z, const std::string& name, float volume, float pitch) {
+    std::lock_guard<std::mutex> l(mu_);
+    for (auto& kv : players_) {
+        PState& p = kv.second;
+        if (p.pos.dim != dim) continue;
+        double dx = p.pos.x - x, dy = p.pos.y - y, dz = p.pos.z - z;
+        if (dx * dx + dy * dy + dz * dz > 64.0 * 64.0) continue;
+        GEvent e;
+        e.kind = GEvent::Sound;
+        e.text = name;
+        e.bx = int(std::floor(x * 8.0)); e.by = int(std::floor(y * 8.0)); e.bz = int(std::floor(z * 8.0));
+        e.health = volume; e.saturation = pitch;
+        e.value = 4;   // SoundSource.BLOCKS
+        send_event(p.id, e);
     }
 }
 
