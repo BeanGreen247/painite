@@ -21,6 +21,8 @@ public:
     void plates(const std::vector<PlateHit>& hits, int64_t tick);     // game thread: the plates entities stand on right now
     bool ignite_tnt(int dim, int x, int y, int z);                    // flint and steel on TNT
     static bool is_interactive(uint16_t block);
+    void tripwires(const std::vector<PlateHit>& hits, int64_t tick);  // game thread: the tripwires entities touch right now
+    void removed(int dim, int x, int y, int z, uint16_t old_state, bool shears);   // a tripwire or hook was broken by a player
     void target_hit(int dim, int x, int y, int z, double rx, double ry, double rz, int ticks);   // an arrow hit a target block; (rx, ry, rz) is the hit inside the block
 
 private:
@@ -38,6 +40,9 @@ private:
     void update_daylight(Ctx& c, int x, int y, int z, uint16_t id);
     void update_target(Ctx& c, int x, int y, int z, uint16_t id);
     void update_note(Ctx& c, int x, int y, int z, uint16_t id);
+    void update_tripwire(Ctx& c, int x, int y, int z, uint16_t id);
+    void update_source(Ctx& c, int x, int y, int z, uint16_t wire);
+    void calc_hook(Ctx& c, int x, int y, int z, uint16_t hook, bool removed, bool notify, int wire_source, uint16_t wire_state);
     void play_note(Ctx& c, int x, int y, int z, uint16_t id);
     void schedule_daylight(Ctx& c, int x, int y, int z);
     int analog_signal(Ctx& c, int x, int y, int z);
@@ -52,6 +57,7 @@ private:
     std::unordered_map<uint64_t, std::vector<int64_t>> burnout_;   // redstone torches: when they turned off lately        // comparators: their output signal
     std::unordered_map<uint64_t, int64_t> pending_;   // blocks waiting for their delay: key of the position -> game time it is due
     struct PlateState { int dim, x, y, z; int64_t until; };
+    std::unordered_map<uint64_t, PlateState> wires_;   // tripwires something touches and the game time until which they stay powered
     std::unordered_map<uint64_t, PlateState> plates_;  // pressed plates and the game time until which they stay pressed
 };
 

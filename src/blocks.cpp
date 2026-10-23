@@ -105,6 +105,10 @@ bool Blocks::load(const std::vector<std::pair<int, std::string>>& files, std::st
                 by_key_[k] = static_cast<uint16_t>(id);
                 if (def) defaults_[name] = static_cast<uint16_t>(id);
             }
+            for (auto alias : {std::pair<const char*, const char*>{"minecraft:string", "minecraft:tripwire"}, {"minecraft:redstone", "minecraft:redstone_wire"}}) {   // items that place a block of another name
+                auto t = defaults_.find(alias.second);
+                if (t != defaults_.end() && !defaults_.count(alias.first)) defaults_[alias.first] = t->second;
+            }
             auto st = defaults_.find("minecraft:stone");
             if (st != defaults_.end()) stone_ = st->second;
             pm.resize(info_.size());

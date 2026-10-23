@@ -718,6 +718,7 @@ void Worker::on_dig(JConn& c, Rd& r) {
         if (can_break) s_.game.spill_container(c.dim, x, y, z, cur);   // before the block goes: its block entity goes with it
         if (can_break && W.set_block(x, y, z, left)) {
             s_.game.block_changed(c.dim, x, y, z, left);
+            if (block_named(cur, "minecraft:tripwire") || block_named(cur, "minecraft:tripwire_hook")) s_.game.redstone().removed(c.dim, x, y, z, cur, c.gid && s_.game.inv_held(c.gid).is("minecraft:shears"));
             if (c.gamemode == 0 && c.gid) s_.game.player_broke_block(c.gid, c.dim, x, y, z, cur);
         } else if (status == 0 || status == 2) {
             send_block_update(c, x, y, z, W.get_block(x, y, z));

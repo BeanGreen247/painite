@@ -20,7 +20,7 @@ const char* const DNAME[6] = {"down", "up", "north", "south", "west", "east"};
 inline int opposite(int d) { return d ^ 1; }
 int dir_of(const std::string& name) { for (int i = 0; i < 6; i++) if (name == DNAME[i]) return i; return -1; }
 
-enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead, Hopper, Dispenser, Dropper, Observer, Comparator, Daylight, Target, NoteBlock, WeightedPlate };
+enum Kind : uint8_t { None, Wire, RedBlock, Lever, Button, Plate, Torch, WallTorch, Repeater, Lamp, Door, Trapdoor, Gate, Tnt, Piston, StickyPiston, PistonHead, Hopper, Dispenser, Dropper, Observer, Comparator, Daylight, Target, NoteBlock, WeightedPlate, Tripwire, TripHook };
 
 Kind kind_of(uint16_t id) {
     static const std::vector<uint8_t> table = [] {
@@ -54,6 +54,8 @@ Kind kind_of(uint16_t id) {
             else if (n == "minecraft:target") k = Target;
             else if (n == "minecraft:note_block") k = NoteBlock;
             else if (n == "minecraft:heavy_weighted_pressure_plate" || n == "minecraft:light_weighted_pressure_plate") k = WeightedPlate;
+            else if (n == "minecraft:tripwire") k = Tripwire;
+            else if (n == "minecraft:tripwire_hook") k = TripHook;
             t[i] = k;
         }
         return t;
@@ -128,6 +130,7 @@ struct Redstone::Ctx {
             case Repeater: return block_flag(id, "powered") && dir_of(block_prop(id, "facing")) == d ? 15 : 0;
             case Observer: return block_flag(id, "powered") && dir_of(block_prop(id, "facing")) == d ? 15 : 0;
             case Comparator: return dir_of(block_prop(id, "facing")) == d ? comparator_output(pos_key(dim, px, py, pz), id) : 0;
+            case TripHook: return block_flag(id, "powered") && (!strong || d == dir_of(block_prop(id, "facing"))) ? 15 : 0;
             case Daylight: return block_int(id, "power");
             case Target: return strong ? 0 : block_int(id, "power");
             case WeightedPlate: return (!strong || d == 1) ? block_int(id, "power") : 0;
@@ -247,6 +250,125 @@ void Redstone::update_wire(Ctx& c, int x, int y, int z) {
         (void)names;
         uint16_t want = Blocks::get().find("minecraft:redstone_wire", props);
         if (want != id) c.put(n.x, n.y, n.z, want);
+    }
+}
+
+// ---- tripwires
+
+// TripWireHookBlock.calculateState: the hook and the one it faces across the strings
+void Redstone::calc_hook(Ctx& c, int x, int y, int z, uint16_t hook, bool removed, bool notify, int wire_source, uint16_t wire_state) {
+    int f = dir_of(block_prop(hook, "facing"));
+    if (f < 2) return;
+    bool was_attached = block_flag(hook, "attached"), was_powered = block_flag(hook, "powered");
+    bool attached = !removed, powered = false;
+    int wire_distance = 0;
+    uint16_t wires[42] = {};
+    for (int d = 1; d < 42; d++) {
+        int px = x + DX[f] * d, pz = z + DZ[f] * d;
+        uint16_t t = c.at(px, y, pz);
+        if (kind_of(t) == TripHook) { if (dir_of(block_prop(t, "facing")) == opposite(f)) wire_distance = d; break; }
+        if (kind_of(t) != Tripwire && d != wire_source) { wires[d] = 0; attached = false; }
+        else {
+            if (d == wire_source) t = wire_state;
+            bool armed = !block_flag(t, "disarmed");
+            powered = powered || (armed && block_flag(t, "powered"));
+            wires[d] = t;
+            if (d == wire_source) { c.schedule(x, y, z, 10); attached = attached && armed; }
+        }
+    }
+    attached = attached && wire_distance > 1;
+    powered = powered && attached;
+    uint16_t state = block_with(block_with(hook, "attached", attached), "powered", powered);
+    auto sound = [&](int sx, int sz) {
+        if (attached && powered && !was_powered) s_.game.play_sound(c.dim, sx + 0.5, y + 0.5, sz + 0.5, "minecraft:block.tripwire.click_on", 0.4f, 0.6f);
+        else if (!powered && was_powered) s_.game.play_sound(c.dim, sx + 0.5, y + 0.5, sz + 0.5, "minecraft:block.tripwire.click_off", 0.4f, 0.5f);
+        else if (attached && !was_attached) s_.game.play_sound(c.dim, sx + 0.5, y + 0.5, sz + 0.5, "minecraft:block.tripwire.attach", 0.4f, 0.7f);
+        else if (!attached && was_attached) s_.game.play_sound(c.dim, sx + 0.5, y + 0.5, sz + 0.5, "minecraft:block.tripwire.detach", 0.4f, 1.2f);
+    };
+    if (wire_distance > 0) {
+        int ex = x + DX[f] * wire_distance, ez = z + DZ[f] * wire_distance;
+        uint16_t end = c.at(ex, y, ez);
+        uint16_t want = block_with(state, "facing", std::string(DNAME[opposite(f)]));
+        if (end != want) { c.put_notify(ex, y, ez, want); sound(ex, ez); }
+    }
+    if (!removed) {
+        if (hook != block_with(state, "facing", std::string(DNAME[f]))) { c.put(x, y, z, state); sound(x, z); if (notify || was_powered != powered) c.notify(x, y, z); }
+    } else sound(x, z);
+    if (was_attached != attached)
+        for (int d = 1; d < wire_distance; d++) {
+            if (!wires[d]) continue;
+            int px = x + DX[f] * d, pz = z + DZ[f] * d;
+            uint16_t cur = c.at(px, y, pz);
+            if (kind_of(cur) == Tripwire) { uint16_t w = block_with(cur, "attached", attached); if (w != cur) c.put(px, y, pz, w); }
+        }
+}
+
+// TripWireBlock.updateSource: the hooks at the ends of a string read it again
+void Redstone::update_source(Ctx& c, int x, int y, int z, uint16_t wire) {
+    for (int f : {3, 4}) {   // south, west
+        for (int d = 1; d < 42; d++) {
+            int px = x + DX[f] * d, pz = z + DZ[f] * d;
+            uint16_t t = c.at(px, y, pz);
+            if (kind_of(t) == TripHook) {
+                if (dir_of(block_prop(t, "facing")) == opposite(f)) calc_hook(c, px, y, pz, t, false, true, d, wire);
+                break;
+            }
+            if (kind_of(t) != Tripwire) break;
+        }
+    }
+}
+
+void Redstone::update_tripwire(Ctx& c, int x, int y, int z, uint16_t id) {
+    uint16_t want = id;
+    for (int i = 2; i < 6; i++) {
+        uint16_t nb = c.at(x + DX[i], y, z + DZ[i]);
+        bool connected = kind_of(nb) == Tripwire || (kind_of(nb) == TripHook && dir_of(block_prop(nb, "facing")) == opposite(i));
+        want = block_with(want, DNAME[i], connected);
+    }
+    if (want != id) c.put(x, y, z, want);
+    update_source(c, x, y, z, want);
+}
+
+void Redstone::tripwires(const std::vector<PlateHit>& hits, int64_t tick) {
+    std::vector<PlateState> release;
+    std::vector<PlateHit> press, keep;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        for (const PlateHit& h : hits) {
+            uint64_t k = pos_key(h.dim, h.x, h.y, h.z);
+            auto it = wires_.find(k);
+            if (it == wires_.end()) { wires_[k] = {h.dim, h.x, h.y, h.z, tick + 10}; press.push_back(h); }
+            else it->second.until = tick + 10;
+        }
+        for (auto it = wires_.begin(); it != wires_.end();)
+            if (it->second.until <= tick) { release.push_back(it->second); it = wires_.erase(it); } else ++it;
+    }
+    for (const PlateHit& h : press) {
+        Ctx c(this, s_, h.dim);
+        uint16_t id = c.at(h.x, h.y, h.z);
+        if (kind_of(id) != Tripwire || block_flag(id, "powered")) continue;
+        uint16_t on = block_with(id, "powered", true);
+        c.put_notify(h.x, h.y, h.z, on);
+        update_source(c, h.x, h.y, h.z, on);
+    }
+    for (const PlateState& p : release) {
+        Ctx c(this, s_, p.dim);
+        uint16_t id = c.at(p.x, p.y, p.z);
+        if (kind_of(id) != Tripwire || !block_flag(id, "powered")) continue;
+        uint16_t off = block_with(id, "powered", false);
+        c.put_notify(p.x, p.y, p.z, off);
+        update_source(c, p.x, p.y, p.z, off);
+    }
+}
+
+void Redstone::removed(int dim, int x, int y, int z, uint16_t old_state, bool shears) {
+    Ctx c(this, s_, dim);
+    if (kind_of(old_state) == Tripwire) {
+        uint16_t st = block_with(block_with(old_state, "powered", true), "disarmed", shears || block_flag(old_state, "disarmed"));
+        update_source(c, x, y, z, st);
+    } else if (kind_of(old_state) == TripHook) {
+        if (block_flag(old_state, "attached") || block_flag(old_state, "powered")) calc_hook(c, x, y, z, old_state, true, false, -1, 0);
+        if (block_flag(old_state, "powered")) c.notify(x, y, z);
     }
 }
 
@@ -666,6 +788,8 @@ void Redstone::update(int dim, int x, int y, int z) {
             if (c.has_signal(x, y, z)) ignite_tnt(dim, x, y, z);
             break;
         case Observer: update_observer(c, x, y, z, id); break;
+        case Tripwire: update_tripwire(c, x, y, z, id); break;
+        case TripHook: calc_hook(c, x, y, z, id, false, false, -1, 0); break;
         case Comparator: update_comparator(c, x, y, z, id); break;
         case Daylight: update_daylight(c, x, y, z, id); break;
         case Target: update_target(c, x, y, z, id); break;

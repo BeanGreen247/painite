@@ -689,6 +689,7 @@ void Game::tick() {
     refresh_entity_world();
     { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
     plates_tick();
+    tripwire_tick();
     day_time_++;
     portal_tick();
     if (game_time_ % 20 == 0) broadcast_time();

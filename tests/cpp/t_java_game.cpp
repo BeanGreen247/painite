@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer", "Smith", "Brewer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer", "Smith", "Brewer", "Tripper"};
     return o;
 }
 
@@ -934,6 +934,30 @@ void brewing_test(Ctx& t, Env& e) {
     B.pump(200);
 }
 
+// two tripwire hooks with strings between them attach; an entity in the strings powers both hooks
+void tripwire_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Tripper");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px, z = S.pz;
+    S.set(x, y, z - 2, "tripwire_hook[facing=south,attached=false,powered=false]");
+    S.set(x, y, z + 2, "tripwire_hook[facing=north,attached=false,powered=false]");
+    S.set(x, y, z - 1, "tripwire");
+    S.set(x, y, z + 1, "tripwire");
+    B.pump(800);
+    S.collect();
+    t.check(S.at(x, y, z - 2).find("attached=false") != std::string::npos, "a gap in the strings leaves the hook unattached: " + S.at(x, y, z - 2));
+    S.set(x, y, z, "tripwire");   // closes the gap, in the cell the player stands in
+    B.pump(1500);
+    S.collect();
+    t.check(S.at(x, y, z - 2).find("powered=true") != std::string::npos, "a player in the string powers the hook: " + S.at(x, y, z - 2));
+    t.check(S.at(x, y, z + 2).find("powered=true") != std::string::npos, "and the hook at the other end: " + S.at(x, y, z + 2));
+}
+
 // a hopper moves items from the chest above into the chest it faces, a powered dropper throws an item out
 void hopper_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
@@ -1257,6 +1281,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"containers", containers_test});
     d.tests.push_back({"workstations", workstations_test});
     d.tests.push_back({"brewing", brewing_test});
+    d.tests.push_back({"tripwire", tripwire_test});
     d.tests.push_back({"hoppers-droppers", hopper_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});

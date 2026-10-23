@@ -226,6 +226,7 @@ private:
     void random_ticks();
     void block_random_tick(int dim, int x, int y, int z, uint16_t id);
     void plates_tick();
+    void tripwire_tick();
     std::atomic<int> random_tick_speed_{3};
     struct BEC;
     struct HopperRef { int dim, x, y, z; int64_t due; };

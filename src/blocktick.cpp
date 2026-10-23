@@ -495,4 +495,42 @@ void Game::plates_tick() {
     redstone().plates(hits, game_time_);
 }
 
+// ---- tripwires: the entities touching them (TripWireBlock.entityInside)
+
+void Game::tripwire_tick() {
+    if (game_time_ % 2 != 0) return;
+    std::vector<Redstone::PlateHit> hits;
+    auto check = [&](int dim, double minx, double miny, double minz, double maxx, double maxy, double maxz) {
+        World& w = s_.dim(dim);
+        int x0 = int(std::floor(minx)), x1 = int(std::floor(maxx)), z0 = int(std::floor(minz)), z1 = int(std::floor(maxz));
+        int y0 = int(std::floor(miny)), y1 = int(std::floor(maxy));
+        for (int x = x0; x <= x1; x++)
+            for (int z = z0; z <= z1; z++) {
+                auto ch = w.chunk_if_loaded(x >> 4, z >> 4);
+                if (!ch) continue;
+                for (int y = y0; y <= y1; y++) {
+                    uint16_t id;
+                    { std::lock_guard<std::mutex> l(ch->mu); id = ch->get(x & 15, y, z & 15); }
+                    if (!id || !block_named(id, "minecraft:tripwire")) continue;
+                    double top = y + (block_flag(id, "attached") ? 0.5 : 0.15625), bottom = y + (block_flag(id, "attached") ? 0.0 : 0.0625);
+                    if (maxy > bottom && miny < top) hits.push_back({dim, x, y, z, true});
+                }
+            }
+    };
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        for (auto& kv : players_) {
+            const PState& p = kv.second;
+            if (p.v.dead || p.gamemode == 3) continue;
+            double h = p.pos.sneaking ? 1.5 : 1.8;
+            check(p.pos.dim, p.pos.x - 0.3, p.pos.y, p.pos.z - 0.3, p.pos.x + 0.3, p.pos.y + h, p.pos.z + 0.3);
+        }
+    }
+    for (int dim = 0; dim < 3; ++dim)
+        if (entity_managers_[dim])
+            for (auto& e : entity_managers_[dim]->entities())
+                if (!e->removed) { sim::AABB b = e->bounding_box(); check(dim, b.min_x, b.min_y, b.min_z, b.max_x, b.max_y, b.max_z); }
+    redstone().tripwires(hits, game_time_);
+}
+
 }  // namespace pn
