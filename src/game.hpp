@@ -50,7 +50,7 @@ struct GPos {
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
                 Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen, ContainerData, Sound,
-                EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake, Experience } kind = Move;
+                EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake, Experience, BlockEvent } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
     int16_t dx = 0, dy = 0, dz = 0;
@@ -87,6 +87,8 @@ public:
     void add_entity(int dim, std::unique_ptr<sim::Entity> entity);
     void update_pos(uint64_t gid, const GPos& pos);
     void set_view(uint64_t gid, int view_chunks);
+    void block_event(int dim, int x, int y, int z, int type, int param, uint16_t block_state);   // Level.blockEvent: Java clients run the piston animation from it
+    void block_changed_bedrock(int dim, int x, int y, int z, uint16_t id);   // only Bedrock players are told (Java clients simulate the move themselves)
     void block_changed(int dim, int x, int y, int z, uint16_t id);   // tell everyone who can see that block
     void swing(uint64_t gid);
     void chat(uint64_t gid, const std::string& msg);

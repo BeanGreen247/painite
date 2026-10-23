@@ -320,7 +320,16 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             }
             send(c, w.b);
             break;
-        case GEvent::Block: send_block_update(c, ev.bx, ev.by, ev.bz, ev.block); break;
+        case GEvent::Block: if (ev.value != 1) send_block_update(c, ev.bx, ev.by, ev.bz, ev.block); break;
+        case GEvent::BlockEvent: {
+            w.varint(vd.packet("play/c/block_event"));
+            w.be64(pack_block_pos(ev.bx, ev.by, ev.bz));
+            w.u8(uint8_t(ev.value));
+            w.u8(uint8_t(ev.slot));
+            w.varint(sim::Registries::get().id("minecraft:block", Blocks::get().info(ev.block).name));
+            send(c, w.b);
+            break;
+        }
         case GEvent::Time: send_time(c, ev.t0, ev.t1); break;
         case GEvent::Health:
             w.varint(vd.packet("play/c/set_health"));

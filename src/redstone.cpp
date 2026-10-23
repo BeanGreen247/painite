@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <random>
 
 namespace pn {
 
@@ -105,6 +106,13 @@ struct Redstone::Ctx {
             if (conductor(at(nx, ny, nz)))
                 for (int e = 0; e < 6; e++) s.game.ticker().schedule(dim, nx + DX[e], ny + DY[e], nz + DZ[e], 0);
         }
+    }
+    // a change the Java clients make themselves (a piston move starts with a block event): the world changes, nobody is told
+    bool put_quiet(int x, int y, int z, uint16_t id) {
+        if (y < kMinY || y >= kMinY + kHeight || !loaded(x, z)) return false;
+        if (!w.set_block(x, y, z, id)) return false;
+        s.game.ticker().schedule_around(dim, x, y, z);
+        return true;
     }
     void put_notify(int x, int y, int z, uint16_t id) { if (put(x, y, z, id)) notify(x, y, z); }
 
@@ -523,22 +531,87 @@ bool Redstone::push_line(Ctx& c, int px, int py, int pz, int sx, int sy, int sz,
     return ok && moved.size() <= 12;
 }
 
+namespace {
+float random_float() { static thread_local std::mt19937 rng{std::random_device{}()}; return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng); }
+}
+
+// a block is on its way: the world holds a moving_piston there until the animation (three ticks) is over
+void Redstone::start_moving(Ctx& c, int x, int y, int z, uint16_t moving_state, uint16_t final_state) {
+    c.put_quiet(x, y, z, moving_state);
+    std::lock_guard<std::mutex> l(mu_);
+    moving_[pos_key(c.dim, x, y, z)] = {c.dim, x, y, z, final_state, c.now + 3};
+}
+
+void Redstone::settle(const Moving& m) {   // PistonMovingBlockEntity.tick when the progress reached 1
+    Ctx c(this, s_, m.dim);
+    if (!block_named(c.at(m.x, m.y, m.z), "minecraft:moving_piston")) return;
+    uint16_t st = m.state;
+    if (block_flag(st, "waterlogged")) st = block_with(st, "waterlogged", false);
+    c.put_notify(m.x, m.y, m.z, st);
+    if (kind_of(st) == Piston || kind_of(st) == StickyPiston) c.schedule(m.x, m.y, m.z, 1);
+}
+
+void Redstone::tick_moving(int64_t now) {
+    std::vector<Moving> due;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        for (auto it = moving_.begin(); it != moving_.end();) {
+            if (it->second.due <= now) { due.push_back(it->second); it = moving_.erase(it); } else ++it;
+        }
+    }
+    for (const Moving& m : due) settle(m);
+}
+
+void Redstone::finish_moving() {
+    std::vector<Moving> all;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        for (auto& kv : moving_) all.push_back(kv.second);
+        moving_.clear();
+    }
+    for (const Moving& m : all) settle(m);
+}
+
+void Redstone::finish_at(Ctx& c, int x, int y, int z) {   // PistonMovingBlockEntity.finalTick
+    Moving m;
+    {
+        std::lock_guard<std::mutex> l(mu_);
+        auto it = moving_.find(pos_key(c.dim, x, y, z));
+        if (it == moving_.end()) return;
+        m = it->second;
+        moving_.erase(it);
+    }
+    settle(m);
+}
+
 void Redstone::extend_piston(Ctx& c, int x, int y, int z, uint16_t id) {
     int dir = dir_of(block_prop(id, "facing"));
     if (dir < 0) return;
     std::vector<Pos> moved, destroyed;
     if (!push_line(c, x, y, z, x + DX[dir], y + DY[dir], z + DZ[dir], dir, moved, destroyed)) return;
+    s_.game.block_event(c.dim, x, y, z, 0, dir, id);
     for (const Pos& d : destroyed) c.put(d.x, d.y, d.z, 0);
     std::sort(moved.begin(), moved.end(), [&](const Pos& a, const Pos& b) { return a.x * DX[dir] + a.y * DY[dir] + a.z * DZ[dir] > b.x * DX[dir] + b.y * DY[dir] + b.z * DZ[dir]; });   // the far end first
+    std::vector<std::pair<Pos, uint16_t>> fin;   // what Bedrock players are told: the blocks as they will stand
+    auto set_fin = [&](Pos p, uint16_t st) { for (auto& f : fin) if (f.first.x == p.x && f.first.y == p.y && f.first.z == p.z) { f.second = st; return; } fin.push_back({p, st}); };
+    bool sticky = kind_of(id) == StickyPiston;
+    uint16_t push_state = Blocks::get().find("minecraft:moving_piston", std::string("facing=") + DNAME[dir] + ",type=normal");
     for (const Pos& m : moved) {
         uint16_t b = c.at(m.x, m.y, m.z);
-        c.put(m.x, m.y, m.z, 0);
-        c.put(m.x + DX[dir], m.y + DY[dir], m.z + DZ[dir], b);
+        c.put_quiet(m.x, m.y, m.z, 0);
+        set_fin(m, 0);
+        Pos to{m.x + DX[dir], m.y + DY[dir], m.z + DZ[dir]};
+        start_moving(c, to.x, to.y, to.z, push_state, b);
+        set_fin(to, b);
     }
-    bool sticky = kind_of(id) == StickyPiston;
     std::string props = std::string("facing=") + DNAME[dir] + ",short=false,type=" + (sticky ? "sticky" : "normal");
-    c.put(x + DX[dir], y + DY[dir], z + DZ[dir], Blocks::get().find("minecraft:piston_head", props));
+    Pos arm{x + DX[dir], y + DY[dir], z + DZ[dir]};
+    uint16_t head = Blocks::get().find("minecraft:piston_head", props);
+    start_moving(c, arm.x, arm.y, arm.z, Blocks::get().find("minecraft:moving_piston", std::string("facing=") + DNAME[dir] + ",type=" + (sticky ? "sticky" : "normal")), head);
+    set_fin(arm, head);
     c.put(x, y, z, block_with(id, "extended", true));
+    for (auto& f : fin) s_.game.block_changed_bedrock(c.dim, f.first.x, f.first.y, f.first.z, f.second);
+    s_.game.play_sound(c.dim, x + 0.5, y + 0.5, z + 0.5, "minecraft:block.piston.extend", 0.5f, random_float() * 0.25f + 0.6f);
     c.notify(x, y, z);
 }
 
@@ -546,9 +619,14 @@ void Redstone::retract_piston(Ctx& c, int x, int y, int z, uint16_t id) {
     int dir = dir_of(block_prop(id, "facing"));
     if (dir < 0) return;
     int hx = x + DX[dir], hy = y + DY[dir], hz = z + DZ[dir];
+    finish_at(c, hx, hy, hz);   // a head still on its way arrives first
+    s_.game.block_event(c.dim, x, y, z, 1, dir, id);
+    std::vector<std::pair<Pos, uint16_t>> fin;
+    auto set_fin = [&](Pos p, uint16_t st) { for (auto& f : fin) if (f.first.x == p.x && f.first.y == p.y && f.first.z == p.z) { f.second = st; return; } fin.push_back({p, st}); };
     uint16_t head = c.at(hx, hy, hz);
-    if (kind_of(head) == PistonHead && dir_of(block_prop(head, "facing")) == dir) c.put(hx, hy, hz, 0);
-    if (kind_of(id) == StickyPiston) {   // a sticky piston takes the block in front of its head back with it (and what sticks to that block)
+    if (kind_of(head) == PistonHead && dir_of(block_prop(head, "facing")) == dir) { c.put_quiet(hx, hy, hz, 0); set_fin({hx, hy, hz}, 0); }
+    bool sticky = kind_of(id) == StickyPiston;
+    if (sticky) {   // a sticky piston takes the block in front of its head back with it (and what sticks to that block)
         int px = hx + DX[dir], py = hy + DY[dir], pz = hz + DZ[dir];
         uint16_t pulled = c.at(px, py, pz);
         bool dest;
@@ -558,15 +636,23 @@ void Redstone::retract_piston(Ctx& c, int x, int y, int z, uint16_t id) {
             if (push_line(c, x, y, z, px, py, pz, back, moved, destroyed) && !moved.empty()) {
                 std::sort(moved.begin(), moved.end(), [&](const Pos& a, const Pos& b) { return a.x * DX[back] + a.y * DY[back] + a.z * DZ[back] > b.x * DX[back] + b.y * DY[back] + b.z * DZ[back]; });
                 for (const Pos& d : destroyed) c.put(d.x, d.y, d.z, 0);
+                uint16_t pull_state = Blocks::get().find("minecraft:moving_piston", std::string("facing=") + DNAME[dir] + ",type=normal");
                 for (const Pos& m : moved) {
                     uint16_t bl = c.at(m.x, m.y, m.z);
-                    c.put(m.x, m.y, m.z, 0);
-                    c.put(m.x + DX[back], m.y + DY[back], m.z + DZ[back], bl);
+                    c.put_quiet(m.x, m.y, m.z, 0);
+                    set_fin(m, 0);
+                    Pos to{m.x + DX[back], m.y + DY[back], m.z + DZ[back]};
+                    start_moving(c, to.x, to.y, to.z, pull_state, bl);
+                    set_fin(to, bl);
                 }
             }
         }
     }
-    c.put(x, y, z, block_with(id, "extended", false));
+    uint16_t base = block_with(id, "extended", false);
+    start_moving(c, x, y, z, Blocks::get().find("minecraft:moving_piston", std::string("facing=") + DNAME[dir] + ",type=" + (sticky ? "sticky" : "normal")), base);
+    set_fin({x, y, z}, base);
+    for (auto& f : fin) s_.game.block_changed_bedrock(c.dim, f.first.x, f.first.y, f.first.z, f.second);
+    s_.game.play_sound(c.dim, x + 0.5, y + 0.5, z + 0.5, "minecraft:block.piston.contract", 0.5f, random_float() * 0.15f + 0.6f);
     c.notify(x, y, z);
 }
 

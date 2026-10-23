@@ -21,6 +21,8 @@ public:
     void plates(const std::vector<PlateHit>& hits, int64_t tick);     // game thread: the plates entities stand on right now
     bool ignite_tnt(int dim, int x, int y, int z);                    // flint and steel on TNT
     static bool is_interactive(uint16_t block);
+    void tick_moving(int64_t now);                                    // game thread: blocks a piston moved settle where the client animation ends
+    void finish_moving();                                             // before a save: nothing may stay in motion
     void tripwires(const std::vector<PlateHit>& hits, int64_t tick);  // game thread: the tripwires entities touch right now
     void removed(int dim, int x, int y, int z, uint16_t old_state, bool shears);   // a tripwire or hook was broken by a player
     void target_hit(int dim, int x, int y, int z, double rx, double ry, double rz, int ticks);   // an arrow hit a target block; (rx, ry, rz) is the hit inside the block
@@ -48,6 +50,10 @@ private:
     int analog_signal(Ctx& c, int x, int y, int z);
     int comparator_signal(Ctx& c, int x, int y, int z, uint16_t id);
     bool push_line(Ctx& c, int px, int py, int pz, int sx, int sy, int sz, int move, std::vector<Pos>& moved, std::vector<Pos>& destroyed);
+    struct Moving { int dim, x, y, z; uint16_t state; int64_t due; };
+    void start_moving(Ctx& c, int x, int y, int z, uint16_t moving_state, uint16_t final_state);
+    void settle(const Moving& m);
+    void finish_at(Ctx& c, int x, int y, int z);
     void extend_piston(Ctx& c, int x, int y, int z, uint16_t id);
     void retract_piston(Ctx& c, int x, int y, int z, uint16_t id);
     Server& s_;
@@ -57,6 +63,7 @@ private:
     std::unordered_map<uint64_t, std::vector<int64_t>> burnout_;   // redstone torches: when they turned off lately        // comparators: their output signal
     std::unordered_map<uint64_t, int64_t> pending_;   // blocks waiting for their delay: key of the position -> game time it is due
     struct PlateState { int dim, x, y, z; int64_t until; };
+    std::unordered_map<uint64_t, Moving> moving_;      // moving_piston blocks and the final block each becomes (the clients animate them)
     std::unordered_map<uint64_t, PlateState> wires_;   // tripwires something touches and the game time until which they stay powered
     std::unordered_map<uint64_t, PlateState> plates_;  // pressed plates and the game time until which they stay pressed
 };

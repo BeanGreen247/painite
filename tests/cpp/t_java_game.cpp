@@ -1192,6 +1192,7 @@ void redstone(Ctx& t, Env& e) {
     S.set(bx, y, pz2 + 1, "redstone_block");
     t.check(S.wait(bx + 2, y, pz2, "minecraft:stone", 3000), "a powered piston pushes the stone one block: " + S.at(bx + 2, y, pz2));
     t.check(S.wait(bx + 1, y, pz2, "piston_head", 3000), "and its head takes the place: " + S.at(bx + 1, y, pz2));
+    t.check(B.count("block_event") > 0, "clients get a block event to animate the piston");
     // 6. a repeater passes the signal on after its delay, a button gives a short pulse, a plate answers to the player standing on it
     int rz = bz - 8;
     S.set(bx, y, rz, "lever[face=floor,facing=north,powered=false]");

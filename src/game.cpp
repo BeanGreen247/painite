@@ -466,6 +466,40 @@ void Game::swing(uint64_t gid) {
         }
 }
 
+void Game::block_event(int dim, int x, int y, int z, int type, int param, uint16_t block_state) {
+    std::lock_guard<std::mutex> l(mu_);
+    int cx = x >> 4, cz = z >> 4;
+    for (auto& kv : players_) {
+        PState& p = kv.second;
+        if (p.pos.dim != dim) continue;
+        int pcx = static_cast<int>(std::floor(p.pos.x / 16)), pcz = static_cast<int>(std::floor(p.pos.z / 16));
+        if (std::abs(pcx - cx) > p.view + 1 || std::abs(pcz - cz) > p.view + 1) continue;
+        GEvent e;
+        e.kind = GEvent::BlockEvent;
+        e.bx = x; e.by = y; e.bz = z;
+        e.value = type; e.slot = param;
+        e.block = block_state;
+        send_event(p.id, e);
+    }
+}
+
+void Game::block_changed_bedrock(int dim, int x, int y, int z, uint16_t id) {
+    std::lock_guard<std::mutex> l(mu_);
+    int cx = x >> 4, cz = z >> 4;
+    for (auto& kv : players_) {
+        PState& p = kv.second;
+        if (p.pos.dim != dim) continue;
+        int pcx = static_cast<int>(std::floor(p.pos.x / 16)), pcz = static_cast<int>(std::floor(p.pos.z / 16));
+        if (std::abs(pcx - cx) > p.view + 1 || std::abs(pcz - cz) > p.view + 1) continue;
+        GEvent e;
+        e.kind = GEvent::Block;
+        e.bx = x; e.by = y; e.bz = z;
+        e.block = id;
+        e.value = 1;   // Bedrock only
+        send_event(p.id, e);
+    }
+}
+
 void Game::block_changed(int dim, int x, int y, int z, uint16_t id) {
     ticker_.schedule_around(dim, x, y, z);
     std::lock_guard<std::mutex> l(mu_);
@@ -647,6 +681,7 @@ void Game::save_player_data(uint64_t gid) {
 }
 
 void Game::save_everything(bool unload) {
+    redstone().finish_moving();   // no block may be saved in the middle of a piston move
     PN_PERF("save.world_and_players");
     std::vector<uint64_t> gids;
     {
@@ -690,6 +725,7 @@ void Game::tick() {
     { PN_PERF("tick.entities"); for (auto& manager : entity_managers_) if (manager) manager->tick(); }
     plates_tick();
     tripwire_tick();
+    redstone().tick_moving(game_time_);
     day_time_++;
     portal_tick();
     if (game_time_ % 20 == 0) broadcast_time();
