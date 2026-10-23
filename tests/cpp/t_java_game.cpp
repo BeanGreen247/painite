@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber"};
     return o;
 }
 
@@ -571,6 +571,60 @@ struct Stage {
     std::string at(int x, int y, int z) { collect(); auto it = seen.find({x, y, z}); return it == seen.end() ? "(unseen)" : it->second; }
 };
 
+void fluids_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Plumber");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, bx = S.px + 3, bz = S.pz + 3;
+    B.command("fill " + std::to_string(bx - 2) + " " + std::to_string(y - 1) + " " + std::to_string(bz - 8) + " " + std::to_string(bx + 12) + " " + std::to_string(y - 1) + " " + std::to_string(bz + 8) + " stone");
+    B.pump(200);
+    // 1. a water source spreads: level 1 next to it, level 3 three blocks away, nothing beyond 7
+    S.set(bx, y, bz, "water");
+    B.pump(1500);
+    S.collect();
+    t.check(S.at(bx, y, bz) != "", "source: " + S.at(bx, y, bz));
+    t.check(S.at(bx + 1, y, bz).find("level=1") != std::string::npos, "water flows one block out at level 1: " + S.at(bx + 1, y, bz));
+    t.check(S.at(bx + 3, y, bz).find("level=3") != std::string::npos, "three blocks out it is level 3: " + S.at(bx + 3, y, bz));
+    t.check(S.at(bx + 8, y, bz) == "(unseen)" || S.at(bx + 8, y, bz).find("air") != std::string::npos, "it stops after seven blocks: " + S.at(bx + 8, y, bz));
+    // 2. water falls off an edge and the column below is falling water
+    S.set(bx + 4, y - 1, bz, "air");
+    B.pump(1500);
+    S.collect();
+    t.check(S.at(bx + 4, y - 1, bz).find("water") != std::string::npos, "water flows down a hole: " + S.at(bx + 4, y - 1, bz));
+    // 3. removing the source dries the flow up
+    S.set(bx, y, bz, "air");
+    B.pump(2500);
+    S.collect();
+    t.check(S.at(bx + 1, y, bz).find("air") != std::string::npos, "the flow dries up without its source: " + S.at(bx + 1, y, bz));
+    // 4. lava meets water: a flowing lava block turns to cobblestone, a source to obsidian
+    int lz = bz + 5;
+    S.set(bx, y, lz, "lava");
+    S.set(bx + 2, y, lz, "water");
+    B.pump(1000);
+    S.collect();
+    t.check(S.at(bx + 1, y, lz).find("cobblestone") != std::string::npos || S.at(bx + 1, y, lz).find("obsidian") != std::string::npos || S.at(bx, y, lz).find("obsidian") != std::string::npos,
+            "lava and water make stone: " + S.at(bx, y, lz) + " / " + S.at(bx + 1, y, lz));
+    // 5. buckets: scoop the source in front of the player
+    S.set(S.px, y, S.pz + 2, "water");
+    B.pump(300);
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at("bucket"))).varint(0).varint(0).b);
+    B.pump(300);
+    B.send("move_player_pos_rot", Wr().f64(S.px + 0.5).f64(y).f64(S.pz + 0.5).f32(0.0f).f32(30.0f).u8(1).b);   // looks south at the water two blocks away
+    B.pump(200);
+    B.send("use_item", Wr().varint(0).varint(30).f32(0.0f).f32(0.0f).b);
+    bool scooped = S.wait(S.px, y, S.pz + 2, "air", 3000);
+    t.check(scooped, "a bucket scoops up the source: " + S.at(S.px, y, S.pz + 2));
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(1).varint(uint32_t(ids->items.at("lava_bucket"))).varint(0).varint(0).b);
+    B.pump(300);
+    B.send("use_item", Wr().varint(0).varint(31).f32(0.0f).f32(30.0f).b);
+    bool poured = S.wait(S.px, y, S.pz + 3, "lava", 3000);
+    t.check(poured, "a lava bucket pours a source where the ray meets the floor: " + S.at(S.px, y, S.pz + 3));
+}
+
 void redstone(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Wirer");
@@ -708,6 +762,7 @@ void reg_java_game(Registry& reg) {
     rs.opts = survival_opts;
     rs.tests.push_back({"circuits", redstone});
     rs.tests.push_back({"random-ticks", random_tick_test});
+    rs.tests.push_back({"fluids", fluids_test});
     reg.push_back(std::move(rs));
     Group f;
     f.name = "persist";

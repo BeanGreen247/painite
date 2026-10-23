@@ -26,8 +26,13 @@ void RegionTicker::schedule(int dim, int x, int y, int z, int delay) {
     if (y < kMinY || y >= kMinY + kHeight) return;
     Region& r = region_for(dim, x, z);
     std::lock_guard<std::mutex> l(r.mu);
-    if (!r.keys.insert(pos_key(x, y, z)).second) return;
-    r.q.push_back({dim, x, y, z, now_.load() + delay});
+    int64_t due = now_.load() + delay;
+    auto ins = r.keys.emplace(pos_key(x, y, z), due);
+    if (!ins.second) {
+        if (ins.first->second <= due) return;   // already queued for sooner
+        ins.first->second = due;                // wanted sooner: queue it again, the later entry runs harmlessly
+    }
+    r.q.push_back({dim, x, y, z, due});
 }
 
 void RegionTicker::schedule_around(int dim, int x, int y, int z) {
@@ -121,7 +126,11 @@ void RegionTicker::process_region(Region& r, int64_t tick) {
         std::lock_guard<std::mutex> l(r.mu);
         size_t keep = 0;
         for (auto& e : r.q) {
-            if (e.due <= tick && due.size() < 1024) { due.push_back(e); r.keys.erase(pos_key(e.x, e.y, e.z)); }
+            if (e.due <= tick && due.size() < 1024) {
+                due.push_back(e);
+                auto k = r.keys.find(pos_key(e.x, e.y, e.z));
+                if (k != r.keys.end() && k->second == e.due) r.keys.erase(k);
+            }
             else r.q[keep++] = e;
         }
         r.q.resize(keep);
@@ -164,6 +173,7 @@ void RegionTicker::process_block(int dim, int x, int y, int z) {
     }
     if (bi.name.find("leaves") != std::string::npos) s_.game.leaves_update(dim, x, y, z);
     else if (bi.name == "minecraft:fire") s_.game.fire_update(dim, x, y, z);
+    if (bi.fluid) s_.game.fluid_update(dim, x, y, z);
     s_.game.redstone().update(dim, x, y, z);   // power: dust, torches, repeaters, lamps, doors, pistons ...
 }
 

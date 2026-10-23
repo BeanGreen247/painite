@@ -33,7 +33,7 @@ private:
     struct Region {
         std::mutex mu;
         std::vector<Entry> q;
-        std::unordered_set<uint64_t> keys;
+        std::unordered_map<uint64_t, int64_t> keys;   // position -> the earliest due time queued for it
     };
     Region& region_for(int dim, int x, int z);
     void process_region(Region& r, int64_t tick);

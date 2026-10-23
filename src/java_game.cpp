@@ -1,6 +1,7 @@
 // Java Edition side of the shared game: entity/tab-list/block/time packets for events, and player input handling.
 #include "log.hpp"
 #include "perf.hpp"
+#include "blockstate.hpp"
 #include "server.hpp"
 #include "dimension.hpp"
 #include "sim/components.hpp"
@@ -677,8 +678,10 @@ void Worker::on_dig(JConn& c, Rd& r) {
                        s_.game.op_level(c.gid) == 0;
         uint16_t cur = W.get_block(x, y, z);
         const BlockInfo& bi = Blocks::get().info(cur);
-        if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && W.set_block(x, y, z, 0)) {
-            s_.game.block_changed(c.dim, x, y, z, 0);
+        uint16_t left = bi.props.find("waterlogged=true") != std::string::npos ? block_with(cur, "waterlogged", false) : 0;   // a waterlogged block leaves its water behind
+        if (left) left = Blocks::get().find("minecraft:water", "level=0");
+        if (take && near && !protect && !bi.air && bi.name != "minecraft:bedrock" && W.set_block(x, y, z, left)) {
+            s_.game.block_changed(c.dim, x, y, z, left);
             if (c.gamemode == 0 && c.gid) s_.game.player_broke_block(c.gid, c.dim, x, y, z, cur);
         } else if (status == 0 || status == 2) {
             send_block_update(c, x, y, z, W.get_block(x, y, z));
@@ -741,6 +744,7 @@ void Worker::on_place(JConn& c, Rd& r) {
     }
     if (ok) {
         uint16_t state = placed_state(item_block, face, c.yaw, cy);
+        { uint16_t here = W.get_block(tx, ty, tz); if (B.info(here).name == "minecraft:water" && block_int(here, "level", 1) == 0 && B.info(state).props.find("waterlogged=false") != std::string::npos) state = block_with(state, "waterlogged", true); }   // a slab or stair set into a water source holds the water
         if (W.set_block(tx, ty, tz, state)) {
             s_.game.block_changed(c.dim, tx, ty, tz, state);
             if (c.gid) s_.game.inv_consume_held(c.gid, 1);   // not in creative

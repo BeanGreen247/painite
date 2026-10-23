@@ -21,7 +21,7 @@ Read with `docs/HANDOFF.md` (worldgen port, versions, verification) and `docs/AI
 - Players are trusted on mining time (no dig-speed check) and on movement.
 
 ## To assess tomorrow, ranked by my guess of value (the owner decides the order)
-1. Fluids: water and lava flowing, buckets, waterlogging, obsidian, farmland watered by flowing water, swimming for players, drowning of mobs. Nothing spreads today.
+1. Fluids, remaining: flow pushing entities, drowning of mobs, lava starting fires and random-tick behaviour, bubble columns, kelp and seagrass growth, cauldrons, dispensers with buckets, powder snow and milk buckets, flowing water entering waterloggable blocks. Built (`src/fluids.cpp`): FlowingFluid tick, spread and slope search for water and lava (Nether rates), infinite water, lava meeting water (obsidian, cobblestone, stone, basalt), empty/water/lava buckets, waterlogging on place and dig; test `redstone/fluids`. The region ticker now keeps the earliest due time per position, so a neighbour change can wake a block sooner than its queued tick.
 2. Containers and crafting: chests and other block entities, crafting table and recipes, furnaces, hoppers, droppers and dispensers (the inventory and menu code in `src/sim/inventory.*` exists, recipes are not ported).
 3. Remaining redstone parts: observer, comparator, note block, daylight sensor, tripwire, target block, slime and honey, piston animation, quasi-connectivity, torch burnout.
 4. More world behaviour: bone meal, vines, bamboo, kelp, snow, ice, weather and lightning, lava fire spread, copper, vanilla tree shapes.

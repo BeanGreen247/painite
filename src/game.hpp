@@ -138,6 +138,8 @@ public:
     Redstone& redstone();
     void leaves_update(int dim, int x, int y, int z);                     // region threads: recompute the distance of a leaf block
     void fire_update(int dim, int x, int y, int z);                       // region threads: a fire block's turn
+    void fluid_update(int dim, int x, int y, int z);                      // region threads: water or lava (or a waterlogged block) may flow
+    void bucket_use(uint64_t gid);                                        // game thread: use_item with a bucket, scoop or pour
     bool set_fire(int dim, int x, int y, int z);                          // light a fire where it can live
     void drop_block_loot(int dim, int x, int y, int z, uint16_t state);   // the items a block gives when it breaks by itself
     int random_tick_speed() const { return random_tick_speed_.load(); }
@@ -203,6 +205,8 @@ private:
     void block_random_tick(int dim, int x, int y, int z, uint16_t id);
     void plates_tick();
     std::atomic<int> random_tick_speed_{3};
+    std::mutex fluid_mu_;
+    std::unordered_map<uint64_t, int64_t> fluid_next_;   // fluid blocks waiting for their tick delay: position key -> game time
     std::mutex fire_mu_;
     std::unordered_map<uint64_t, int64_t> fire_next_;   // fire blocks and the game time of their next tick   // tick, players_ locked: players collect the item entities they touch
     void spawn_for(PState& viewer, PState& p);
