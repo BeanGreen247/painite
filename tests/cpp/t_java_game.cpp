@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Crafter"};
     return o;
 }
 
@@ -625,6 +625,65 @@ void fluids_test(Ctx& t, Env& e) {
     t.check(poured, "a lava bucket pours a source where the ray meets the floor: " + S.at(S.px, y, S.pz + 3));
 }
 
+// the crafting table: open it, put planks in the grid, take sticks out of the result slot
+void crafting_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Crafter");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 2, z = S.pz;
+    S.set(x, y, z, "crafting_table");
+    B.send("set_creative_mode_slot", Wr().be16(36).varint(8).varint(uint32_t(ids->items.at("oak_planks"))).varint(0).varint(0).b);
+    B.pump(300);
+    B.command("gamemode survival");
+    B.pump(300);
+    B.drop("container_set_slot");
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(x, y, z)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(60).b);
+    t.check(B.wait_for("open_screen", 1, 3000), "using a crafting table opens its window");
+    auto scr = B.take("open_screen");
+    int cid = 0;
+    if (!scr.empty()) { Rd r(scr[0]); cid = int(r.varint()); }
+    B.until([&] { return B.count("container_set_content") >= 1; }, 2000);
+    B.drop("container_set_content");
+    B.drop("container_set_slot");
+    auto click = [&](int slot, int button) { B.send("container_click", Wr().varint(uint32_t(cid)).varint(0).be16(uint16_t(slot)).u8(uint8_t(button)).varint(0).varint(0).u8(0).b); B.pump(150); };
+    click(37, 0);   // pick up the planks from the first hotbar slot
+    click(2, 1);    // one into the top middle of the grid
+    click(5, 1);    // one below it
+    int result_item = -1, result_count = 0;
+    for (auto& d : B.take("container_set_content")) {   // the last full state shows the result slot first
+        Rd r(d);
+        r.varint(); r.varint(); r.varint();
+        int count = int(r.varint());
+        result_count = count;
+        result_item = count > 0 ? int(r.varint()) : 0;
+    }
+    t.check(result_item == ids->items.at("stick") && result_count == 4, "two planks stacked make 4 sticks: item " + std::to_string(result_item) + " x" + std::to_string(result_count));
+    click(37, 0);   // put the rest of the planks back, the hand must be free
+    B.drop("container_set_content");
+    click(0, 0);    // take the sticks
+    int sticks = 0;
+    for (auto& d : B.take("container_set_content")) {   // the full state lists the slots: the sticks went to the inventory
+        Rd r(d);
+        r.varint(); r.varint();
+        int n = int(r.varint());
+        for (int i = 0; i < n && !r.bad; i++) {
+            int count = int(r.varint());
+            int item = count > 0 ? int(r.varint()) : 0;
+            if (count > 0) { int pos = int(r.varint()), neg = int(r.varint()); (void)pos; (void)neg; }
+            if (i >= 10 && item == ids->items.at("stick")) sticks += count;
+        }
+        int ccount = int(r.varint());   // the carried stack follows the slots
+        if (ccount > 0 && int(r.varint()) == ids->items.at("stick")) sticks += ccount;
+    }
+    t.check(sticks == 4, "taking the result puts 4 sticks in the hand: " + std::to_string(sticks));
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+}
+
 void fluids_more_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
     JBot B(e.port(), 777, ids, "Plumber2");
@@ -819,6 +878,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"dig-and-pickup", survival});
     d.tests.push_back({"health-and-death", vitals});
     d.tests.push_back({"eating", eating});
+    d.tests.push_back({"crafting-table", crafting_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});
     d.tests.push_back({"perf-mobs", perf_mobs});

@@ -1,4 +1,5 @@
 #include "game.hpp"
+#include "sim/recipe.hpp"
 #include "redstone.hpp"
 #include "perf.hpp"
 #include "anvil.hpp"
@@ -134,6 +135,30 @@ void Game::inv_close(uint64_t gid, int container) {
     if (it == players_.end() || !it->second.sim) return;
     it->second.sim->handle_container_close(container);
     it->second.sim->menu->broadcast_changes();
+}
+bool Game::open_menu(uint64_t gid, const std::string& kind, const std::string& title) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim || it->second.v.dead || it->second.gamemode == 3) return false;
+    PState& p = it->second;
+    sim::PlayerSim& sm = *p.sim;
+    if (sm.menu != sm.inventory_menu.get()) { sm.handle_container_close(sm.menu->container_id); }
+    int type = sim::Registries::get().id("minecraft:menu", "minecraft:" + kind);
+    if (type < 0) return false;
+    int cid = sm.new_container_id();
+    std::unique_ptr<sim::Menu> m;
+    if (kind == "crafting") m = std::make_unique<sim::CraftingMenu>(type, cid, &sm.inv, &sm, &sim::RecipeCrafting::get());
+    if (!m) return false;
+    GEvent e;
+    e.kind = GEvent::OpenScreen;
+    e.container = cid;
+    e.value = type;
+    e.text = title;
+    send_event(p.id, e);
+    sm.open_menu = std::move(m);
+    sm.menu = sm.open_menu.get();
+    sm.menu->set_synchronizer(p.sync.get());
+    return true;
 }
 void Game::inv_set_held(uint64_t gid, int slot) {
     std::lock_guard<std::mutex> l(mu_);

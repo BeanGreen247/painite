@@ -401,6 +401,13 @@ void Worker::java_event(JConn& c, const GEvent& ev) {
             w.varint(ev.slot);
             send(c, w.b);
             break;
+        case GEvent::OpenScreen:
+            w.varint(vd.packet("play/c/open_screen"));
+            w.varint(ev.container);
+            w.varint(ev.value);
+            w.text_nbt(ev.text);
+            send(c, w.b);
+            break;
         case GEvent::ContainerClose:
             w.varint(vd.packet("play/c/container_close"));
             w.varint(ev.container);
@@ -719,6 +726,7 @@ void Worker::on_place(JConn& c, Rd& r) {
     uint16_t target = W.get_block(x, y, z);
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && Redstone::is_interactive(target) && s_.game.redstone().use(c.dim, x, y, z)) { send_block_ack(c, seq); return; }   // levers, buttons, doors ...
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gamemode != 2 && B.info(target).name.find("cauldron") != std::string::npos && s_.game.cauldron_use(c.gid, c.dim, x, y, z, held_name)) { send_block_ack(c, seq); return; }
+    if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && B.info(target).name == "minecraft:crafting_table" && s_.game.open_menu(c.gid, "crafting", "Crafting")) { send_block_ack(c, seq); return; }
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }
     const DimInfo& di = dim_info(c.dim);

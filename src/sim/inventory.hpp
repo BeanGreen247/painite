@@ -256,4 +256,18 @@ public:
     void update_crafting_result();
 };
 
+// CraftingMenu: the crafting table's window (slot 0 result, 1-9 grid, 10-36 inventory, 37-45 hotbar)
+class CraftingMenu : public Menu {
+public:
+    CraftingMenu(int menu_type_id, int container_id, PlayerInventory* inv, MenuPlayer* owner, CraftingProvider* provider);
+    ItemStack quick_move_stack(MenuPlayer& player, int slot) override;
+    void slots_changed(Container*) override { broadcast_changes(); }
+    void removed(MenuPlayer& player) override;
+    bool can_take_item_for_pick_all(const ItemStack& carried, Slot* target) override { return target->container != &result_ && Menu::can_take_item_for_pick_all(carried, target); }
+    CraftingContainer craft{3, 3};
+    SimpleContainer result_{1};
+    CraftingProvider* crafting;
+    void update_crafting_result();
+};
+
 }  // namespace pn::sim

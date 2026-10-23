@@ -650,4 +650,43 @@ ItemStack InventoryMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
     return clicked;
 }
 
+CraftingMenu::CraftingMenu(int menu_type_id, int container_id, PlayerInventory* inv, MenuPlayer* owner, CraftingProvider* provider) : Menu(menu_type_id, container_id), crafting(provider) {
+    craft.on_changed = [this]() { update_crafting_result(); };
+    add_slot(std::make_unique<ResultSlot>(owner, &craft, &result_, &crafting));
+    for (int i = 0; i < 9; i++) add_slot(std::make_unique<Slot>(&craft, i));
+    add_standard_inventory_slots(inv, 8, 84);
+}
+void CraftingMenu::update_crafting_result() {
+    ItemStack r = crafting ? crafting->result(craft) : ItemStack();
+    if (!ItemStack::matches(result_.item(0), r)) result_.items()[0] = r;
+}
+void CraftingMenu::removed(MenuPlayer& player) {
+    Menu::removed(player);
+    result_.clear_content();
+    clear_container(player, &craft);
+}
+ItemStack CraftingMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
+    ItemStack clicked;
+    Slot* slot = slots[size_t(slot_index)].get();
+    if (slot->has_item()) {
+        ItemStack& stack = slot->get_item();
+        clicked = stack.copy();
+        if (slot_index == 0) {
+            if (!move_item_stack_to(stack, 10, 46, true)) return ItemStack();
+            slot->on_quick_craft(stack, clicked);
+        } else if (slot_index >= 10 && slot_index < 46) {
+            if (!move_item_stack_to(stack, 1, 10, false)) {
+                if (slot_index < 37) { if (!move_item_stack_to(stack, 37, 46, false)) return ItemStack(); }
+                else if (!move_item_stack_to(stack, 10, 37, false)) return ItemStack();
+            }
+        } else if (!move_item_stack_to(stack, 10, 46, false)) return ItemStack();
+        if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
+        else slot->set_changed();
+        if (stack.count() == clicked.count()) return ItemStack();
+        slot->on_take(player, stack);
+        if (slot_index == 0) player.drop(stack, false);
+    }
+    return clicked;
+}
+
 }  // namespace pn::sim

@@ -21,6 +21,9 @@ public:
     PlayerSim();
     PlayerInventory inv{this};
     std::unique_ptr<InventoryMenu> inventory_menu;
+    std::unique_ptr<Menu> open_menu;   // the window of a crafting table, chest ... while it is open
+    int next_container = 0;
+    int new_container_id() { next_container = next_container % 100 + 1; return next_container; }
     Menu* menu = nullptr;           // the menu the player has open (the inventory menu when none)
     int gamemode = 0;               // 0 survival, 1 creative, 2 adventure, 3 spectator
     std::function<void(const ItemStack&, bool)> drop_hook;

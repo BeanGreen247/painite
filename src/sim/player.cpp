@@ -1,4 +1,5 @@
 #include "player.hpp"
+#include "recipe.hpp"
 
 namespace pn::sim {
 
@@ -10,6 +11,7 @@ bool HashedLite::matches(const ItemStack& s) const {
 
 PlayerSim::PlayerSim() {
     inventory_menu = std::make_unique<InventoryMenu>(&inv, this);
+    inventory_menu->crafting = &RecipeCrafting::get();
     menu = inventory_menu.get();
 }
 
@@ -34,6 +36,7 @@ void PlayerSim::handle_container_close(int container_id) {
     if (menu->container_id != container_id) return;
     menu->removed(*this);
     menu = inventory_menu.get();
+    open_menu.reset();
 }
 
 bool PlayerSim::handle_creative_slot(int slot, const ItemStack& stack) {

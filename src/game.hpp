@@ -49,7 +49,7 @@ struct GPos {
 
 struct GEvent {
     enum Kind { AddTab, RemoveTab, Spawn, Despawn, Move, Teleport, Rotate, Swing, Block, Time, Gamemode, Kick, Message, Pose, Dimension,
-                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose,
+                Health, Death, Hurt, ContainerContent, ContainerSlot, SetCursor, SetPlayerSlot, HeldSlot, ContainerClose, OpenScreen,
                 EntityEvent, EntityEquip, EntityAdd, EntityRemove, EntityMove, EntitySync, EntityMotion, EntityData, EntityTake } kind = Move;
     std::shared_ptr<const GIdentity> id;   // subject
     GPos pos;
@@ -104,6 +104,8 @@ public:
     // --- inventory (called from worker threads; the game state lives in sim::PlayerSim) ---
     void inv_click(uint64_t gid, int container, int state, int slot, int button, int mode, const std::map<int, sim::HashedLite>& changed, const sim::HashedLite& carried);
     void inv_close(uint64_t gid, int container);
+    bool open_menu(uint64_t gid, const std::string& kind, const std::string& title);   // crafting table ...: open the window of a block; false when the player cannot
+
     void inv_set_held(uint64_t gid, int slot);
     void inv_creative_slot(uint64_t gid, int slot, const sim::ItemStack& stack);
     sim::ItemStack inv_held(uint64_t gid);                  // a copy of the stack in the selected hotbar slot
