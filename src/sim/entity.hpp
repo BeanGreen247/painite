@@ -27,6 +27,8 @@ public:
     virtual float block_friction(int x, int y, int z) const { return 0.6f; }
     // 0..1 height of the fluid the box stands in at (x, z), the largest over the blocks it touches; 0 when dry
     virtual double fluid_height(const AABB& box, bool lava) const { return 0.0; }
+    // the push of the water or lava flowing around the box (Entity.updateFluidHeightAndDoFluidPushing); zero when still or dry
+    virtual Vec3 fluid_flow(const AABB& box, bool lava) const { return Vec3(); }
     virtual bool is_full_block(int x, int y, int z) const { return false; }   // BlockState.isCollisionShapeFullBlock
     virtual uint16_t block_state(int x, int y, int z) const { return 0; }
     virtual bool set_block_state(int x, int y, int z, uint16_t state) { return false; }   // tells the players who see it
@@ -79,6 +81,7 @@ public:
     void apply_gravity() { double g = gravity(); if (g != 0.0) delta = delta + Vec3(0, -g, 0); }
     virtual float air_drag() const { return 0.98f; }
     virtual double entity_bounciness() const { return 0.0; }
+    void fluid_push();                    // flowing water pushes the entity along
     void move_self(Vec3 d);               // Entity.move(MoverType.SELF, delta)
     void move_towards_closest_space(double x, double y, double z);
     int block_x() const { return int(std::floor(pos.x)); }

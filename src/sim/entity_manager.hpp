@@ -35,6 +35,7 @@ public:
     float block_friction(int x, int y, int z) const override;
     bool is_full_block(int x, int y, int z) const override;
     double fluid_height(const AABB& box, bool lava) const override;
+    Vec3 fluid_flow(const AABB& box, bool lava) const override;
     uint16_t block_state(int x, int y, int z) const override { return block_at(x, y, z); }
     bool set_block_state(int x, int y, int z, uint16_t state) override;
     void players_near(const Vec3& p, double range, std::vector<PlayerRef>& out) override;

@@ -285,6 +285,27 @@ void Game::block_random_tick(int dim, int x, int y, int z, uint16_t id) {
     const std::string& name = Blocks::get().info(id).name;
     auto is = [&](const char* n) { return name == n; };
     auto has = [&](const char* p) { return name.find(p) != std::string::npos; };
+    // ---- lava sets fire to what burns around it (LavaFluid.randomTick)
+    if (is("minecraft:lava")) {
+        int n = rnd(3);
+        if (n > 0) {
+            int fx = x, fy = y, fz = z;
+            for (int j = 0; j < n; j++) {
+                fx += rnd(3) - 1; fy += 1; fz += rnd(3) - 1;
+                if (b.air(fx, fy, fz)) {
+                    bool near = false;
+                    for (int d = 0; d < 6 && !near; d++) near = burn_odds(b, fx + DX[d], fy + DY[d], fz + DZ[d], true) > 0;
+                    if (near) { set_fire(dim, fx, fy, fz); return; }
+                } else if (b.info(fx, fy, fz).solid) return;
+            }
+        } else {
+            for (int j = 0; j < 3; j++) {
+                int fx = x + rnd(3) - 1, fz = z + rnd(3) - 1;
+                if (b.air(fx, y + 1, fz) && burn_odds(b, fx, y, fz, true) > 0) set_fire(dim, fx, y + 1, fz);
+            }
+        }
+        return;
+    }
     // ---- crops
     bool crop = is("minecraft:wheat") || is("minecraft:carrots") || is("minecraft:potatoes") || is("minecraft:beetroots") || is("minecraft:melon_stem") || is("minecraft:pumpkin_stem") ||
                 is("minecraft:torchflower_crop") || is("minecraft:sweet_berry_bush");

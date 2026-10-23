@@ -85,6 +85,62 @@ double EntityManager::fluid_height(const AABB& box, bool lava) const {
     return result;
 }
 
+static bool falling_level(const std::string& props) {
+    size_t p = props.find("level=");
+    return p != std::string::npos && atoi(props.c_str() + p + 6) >= 8;
+}
+
+// FlowingFluid.getFlow summed over the fluid blocks the box touches (each weighted by how deep the box is in it), then normalized
+Vec3 EntityManager::fluid_flow(const AABB& box, bool lava) const {
+    const Blocks& B = Blocks::get();
+    const char* want = lava ? "minecraft:lava" : "minecraft:water";
+    AABB b = box.deflate(0.001);
+    int x0 = int(std::floor(b.min_x)), x1 = int(std::ceil(b.max_x)), y0 = int(std::floor(b.min_y)), y1 = int(std::ceil(b.max_y)), z0 = int(std::floor(b.min_z)), z1 = int(std::ceil(b.max_z));
+    auto amount = [&](int x, int y, int z) -> int {
+        const BlockInfo& bi = B.info(block_at(x, y, z));
+        if (bi.name == want) {
+            size_t p = bi.props.find("level=");
+            int lvl = p == std::string::npos ? 0 : atoi(bi.props.c_str() + p + 6);
+            return lvl == 0 || lvl >= 8 ? 8 : 8 - lvl;
+        }
+        return !lava && bi.props.find("waterlogged=true") != std::string::npos ? 8 : 0;
+    };
+    static const int DX[4] = {0, 0, -1, 1}, DZ[4] = {-1, 1, 0, 0};
+    Vec3 total;
+    int count = 0;
+    for (int y = y0; y < y1; ++y)
+        for (int z = z0; z < z1; ++z)
+            for (int x = x0; x < x1; ++x) {
+                int a = amount(x, y, z);
+                if (a == 0) continue;
+                double h = a / 9.0, d = y + (amount(x, y + 1, z) > 0 ? 1.0 : h) - box.min_y;
+                if (d < 0.001) continue;
+                Vec3 flow;
+                for (int k = 0; k < 4; k++) {
+                    int nx = x + DX[k], nz = z + DZ[k];
+                    int na = amount(nx, y, nz);
+                    double f = 0.0;
+                    if (na == 0) {
+                        if (!B.info(block_at(nx, y, nz)).solid) {
+                            int ba = amount(nx, y - 1, nz);
+                            if (ba > 0) f = h - (ba / 9.0 - 0.8888889);
+                        }
+                    } else f = h - na / 9.0;
+                    if (f != 0.0) flow = flow + Vec3(DX[k] * f, 0, DZ[k] * f);
+                }
+                if (a == 8 && falling_level(B.info(block_at(x, y, z)).props)) {   // falling fluid pulled down against walls
+                    for (int k = 0; k < 4; k++)
+                        if (B.info(block_at(x + DX[k], y, z + DZ[k])).solid || B.info(block_at(x + DX[k], y + 1, z + DZ[k])).solid) { flow = flow.normalize() + Vec3(0, -6.0, 0); break; }
+                }
+                flow = flow.normalize();
+                if (d < 0.4) flow = flow.scale(d);
+                total = total + flow;
+                count++;
+            }
+    if (count == 0 || total.length_sqr() == 0.0) return Vec3();
+    return total.scale(1.0 / count).normalize();
+}
+
 bool EntityManager::set_block_state(int x, int y, int z, uint16_t state) {
     if (!chunk_loaded(x, z) || !world_.set_block(x, y, z, state)) return false;
     if (on_block_changed) on_block_changed(x, y, z, state);

@@ -145,7 +145,18 @@ void LivingEntity::tick() {
         if (fall_distance > 3.0f) hurt(std::ceil(fall_distance - 3.0f), nullptr);
         fall_distance = 0.0f;
     } else if (pos.y < before.y) fall_distance += float(before.y - pos.y);
-    if (level->fluid_height(bounding_box(), false) > 0.0) fall_distance = 0.0f;
+    if (level->fluid_height(bounding_box(), false) > 0.0) {
+        fall_distance = 0.0f;
+        fluid_push();
+        static const char* const breathes[] = {"drowned", "cod", "salmon", "tropical_fish", "pufferfish", "squid", "dolphin", "axolotl", "turtle", "guardian", "frog", "tadpole", "nautilus", "skeleton_horse"};
+        bool water_breather = false;
+        for (const char* n : breathes) if (type.find(n) != std::string::npos) water_breather = true;
+        AABB bb = bounding_box();
+        double ey = bb.min_y + (bb.max_y - bb.min_y) * 0.85;
+        if (!water_breather && level->fluid_height(AABB(pos.x - 0.01, ey - 0.01, pos.z - 0.01, pos.x + 0.01, ey + 0.01, pos.z + 0.01), false) > 0.0) {   // LivingEntity.baseTick: the air runs out, then 2 damage a second
+            if (--air_supply <= -20) { air_supply = 0; hurt(2.0f, nullptr); }
+        } else if (air_supply < 300) air_supply = std::min(300, air_supply + 4);
+    } else if (air_supply < 300) air_supply = std::min(300, air_supply + 4);
     if (pos.y < level->min_build_y() - 64) hurt(4.0f, nullptr);
     if (std::fabs(delta.x) > 0.02 || std::fabs(delta.z) > 0.02 || !on_ground) needs_sync = true;
 }

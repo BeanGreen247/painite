@@ -3,6 +3,7 @@
 #include "../../src/sim/entity_manager.hpp"
 #include "../../src/blocks.hpp"
 #include "../../src/sim/path.hpp"
+#include "../../src/sim/mob.hpp"
 #include <cstdio>
 #include <functional>
 #include <cstdlib>
@@ -165,6 +166,23 @@ int main(int argc, char** argv) {
         cliff.solid = [](int x, int y, int z) { return y <= 0 && x < 4; };   // the floor ends: the target is across a pit
         auto none = find_path(cliff, Vec3(0.5, 1, 0.5), Vec3(8.5, 1, 0.5), 0.6, 1.8);
         CHECK(none.empty() || none.back().x < 4.0);   // it walks to the edge, not into the void
+    }
+    {   // a cow with its head under water runs out of air after 300 ticks and then takes damage; a zombie-like mob on land keeps its air
+        struct Pool : ColumnWorld {
+            double fluid_height(const AABB& box, bool lava) const override { return lava ? 0.0 : std::max(0.0, 5.0 - box.min_y); }
+        };
+        Pool pool;
+        pool.floor_y = 0;
+        Mob cow("minecraft:cow", &pool);
+        cow.pos = Vec3(0.5, 1.0, 0.5);
+        for (int i = 0; i < 250; i++) cow.tick();
+        CHECK(cow.air_supply < 100 && cow.health == 20.0f);
+        for (int i = 0; i < 100; i++) cow.tick();
+        CHECK(cow.health < 20.0f);
+        Mob fish("minecraft:cod", &pool);
+        fish.pos = Vec3(0.5, 1.0, 0.5);
+        for (int i = 0; i < 400; i++) fish.tick();
+        CHECK(fish.air_supply == 300 && fish.health == 20.0f);
     }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;

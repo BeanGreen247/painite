@@ -17,6 +17,7 @@ public:
     float last_hurt = 0.0f;
     bool dead = false;
     int fire_ticks = 0;          // remaining burning time
+    int air_supply = 300;        // drowning: runs down with the head in water
     ItemStack main_hand;         // shown to the players (a skeleton's bow)
     bool killed_by_player = false;
     uint64_t last_attacker_gid = 0;

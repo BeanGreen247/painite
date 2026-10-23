@@ -118,6 +118,13 @@ void ItemEntity::merge_with_neighbours() {
     }
 }
 
+void Entity::fluid_push() {
+    Vec3 flow = level->fluid_flow(bounding_box(), false);
+    if (flow.length_sqr() == 0.0) return;
+    if (std::fabs(delta.x) < 0.003 && std::fabs(delta.z) < 0.003 && flow.length() < 0.0045) flow = flow.normalize().scale(0.0045);
+    delta = delta + flow.scale(0.014);
+}
+
 void ItemEntity::tick() {
     if (item.is_empty()) { discard(); return; }
     Entity::tick();
@@ -126,6 +133,7 @@ void ItemEntity::tick() {
     Vec3 old = delta;
     AABB box = bounding_box();
     if (level->fluid_height(box, false) > double(0.1f)) {   // setUnderwaterMovement
+        fluid_push();
         delta = Vec3(delta.x * 0.99f, delta.y + (delta.y < double(0.06f) ? double(5.0E-4f) : 0.0), delta.z * 0.99f);
     } else if (level->fluid_height(box, true) > double(0.1f)) {
         delta = Vec3(delta.x * 0.95f, delta.y + (delta.y < double(0.06f) ? double(5.0E-4f) : 0.0), delta.z * 0.95f);
