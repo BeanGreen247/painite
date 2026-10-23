@@ -737,6 +737,12 @@ void Worker::on_play(JConn& c, Rd& r, int pid) {
         if (!r.bad && slot >= 0 && slot < 9) { c.held = slot; if (c.gid) s_.game.inv_set_held(c.gid, slot); }
     } else if (pid == c.vd->packet("play/s/container_click")) {
         on_container_click(c, r);
+    } else if (pid == c.vd->packet("play/s/container_button_click")) {
+        int container = r.varint(), button = r.varint();
+        if (!r.bad && c.gid) s_.game.menu_button(c.gid, container, button);
+    } else if (pid == c.vd->packet("play/s/rename_item")) {
+        std::string name = r.str(50);
+        if (!r.bad && c.gid) s_.game.anvil_rename(c.gid, name);
     } else if (pid == c.vd->packet("play/s/container_close")) {
         int container = r.varint();
         if (!r.bad && c.gid) s_.game.inv_close(c.gid, container);

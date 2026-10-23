@@ -756,6 +756,7 @@ void Worker::on_place(JConn& c, Rd& r) {
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && Redstone::is_interactive(target) && s_.game.redstone().use(c.dim, x, y, z)) { send_block_ack(c, seq); return; }   // levers, buttons, doors ...
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gamemode != 2 && B.info(target).name.find("cauldron") != std::string::npos && s_.game.cauldron_use(c.gid, c.dim, x, y, z, held_name)) { send_block_ack(c, seq); return; }
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && B.info(target).name == "minecraft:crafting_table" && s_.game.open_menu(c.gid, "crafting", "Crafting")) { send_block_ack(c, seq); return; }
+    if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && s_.game.open_workstation(c.gid, c.dim, x, y, z)) { send_block_ack(c, seq); return; }
     if (hand == 0 && !c.sneaking && c.gamemode != 3 && c.gid && s_.game.open_container(c.gid, c.dim, x, y, z)) { send_block_ack(c, seq); return; }
     int tx = x, ty = y, tz = z;
     if (!B.info(target).replaceable) { tx += face_dx(face); ty += face_dy(face); tz += face_dz(face); }

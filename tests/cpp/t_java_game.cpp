@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer", "Smith"};
     return o;
 }
 
@@ -810,6 +810,84 @@ void containers_test(Ctx& t, Env& e) {
     B.pump(200);
 }
 
+// the enchanting table offers enchantments and applies one, the anvil renames an item (creative, so levels and lapis cost nothing)
+void workstations_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Smith");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 2, z = S.pz;
+    S.set(x, y, z, "enchanting_table");
+    S.set(x, y, z + 4, "anvil[facing=north]");
+    auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
+    give(36, "diamond_sword", 1);
+    give(37, "iron_sword", 1);
+    B.pump(300);
+    int seq = 90;
+    auto open = [&](int bz) -> int {
+        B.drop("open_screen");
+        B.send("use_item_on", Wr().varint(0).be64(block_pos(x, y, bz)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(uint32_t(seq++)).b);
+        B.wait_for("open_screen", 1, 3000);
+        auto scr = B.take("open_screen");
+        int cid = 0;
+        if (!scr.empty()) { Rd r(scr[0]); cid = int(r.varint()); }
+        B.pump(200);
+        return cid;
+    };
+    auto click = [&](int cid, int slot, int button) { B.send("container_click", Wr().varint(uint32_t(cid)).varint(0).be16(uint16_t(slot)).u8(uint8_t(button)).varint(0).varint(0).u8(0).b); B.pump(150); };
+    // the number of data changes with a value, and the components a slot got in the last update
+    auto slot_components = [&](int want_slot) {
+        int best = -1;
+        for (auto& d : B.log) {
+            if (d.first != "container_set_slot") continue;
+            Rd r(d.second);
+            r.varint(); r.varint();
+            int slot = int16_t(r.be16());
+            if (slot != want_slot) continue;
+            int count = int(r.varint());
+            if (count <= 0) { best = 0; continue; }
+            r.varint();
+            best = int(r.varint());
+        }
+        return best;
+    };
+    // 1. the enchanting table
+    int cid = open(z);
+    t.check(cid > 0, "the enchanting table opens");
+    B.drop("container_set_data");
+    click(cid, 29, 0);   // the diamond sword (hotbar 0)
+    click(cid, 0, 0);    // into the item slot
+    bool offered = false;
+    for (auto& d : B.log) {
+        if (d.first != "container_set_data") continue;
+        Rd r(d.second);
+        r.varint();
+        int id = int16_t(r.be16()), value = int16_t(r.be16());
+        if (id == 0 && value > 0) offered = true;
+    }
+    t.check(offered, "the table offers a first enchantment cost");
+    B.drop("container_set_slot");
+    B.send("container_button_click", Wr().varint(uint32_t(cid)).varint(0).b);
+    B.pump(300);
+    t.check(slot_components(0) >= 1, "the sword in the table got components (enchanted)");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+    // 2. the anvil renames
+    cid = open(z + 4);
+    t.check(cid > 0, "the anvil opens");
+    click(cid, 3 + 27 + 1, 0);   // the iron sword (hotbar 1)
+    click(cid, 0, 0);
+    B.drop("container_set_slot");
+    B.send("rename_item", Wr().str("Excalibur").b);
+    B.pump(300);
+    t.check(slot_components(2) >= 1, "the anvil makes a renamed sword in the result slot");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+}
+
 // a hopper moves items from the chest above into the chest it faces, a powered dropper throws an item out
 void hopper_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
@@ -1131,6 +1209,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"eating", eating});
     d.tests.push_back({"crafting-table", crafting_test});
     d.tests.push_back({"containers", containers_test});
+    d.tests.push_back({"workstations", workstations_test});
     d.tests.push_back({"hoppers-droppers", hopper_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});

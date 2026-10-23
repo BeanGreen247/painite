@@ -9,7 +9,10 @@
 #include "sim/entity_manager.hpp"
 #include "sim/item_nbt.hpp"
 #include "sim/loot.hpp"
+#include "sim/data.hpp"
+#include "sim/enchant.hpp"
 #include "sim/recipe.hpp"
+#include "sim/workstation.hpp"
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -281,6 +284,87 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
     sm.menu->set_synchronizer(p.sync.get());
     if (furnace) bec_active_[bec_key(dim, x, y, z)] = first;
     return true;
+}
+
+// right click on an anvil or an enchanting table
+bool Game::open_workstation(uint64_t gid, int dim, int x, int y, int z) {
+    if (dim < 0 || dim > 2) return false;
+    World& w = s_.dim(dim);
+    const std::string name = Blocks::get().info(w.get_block(x, y, z)).name;
+    bool anvil = name == "minecraft:anvil" || name == "minecraft:chipped_anvil" || name == "minecraft:damaged_anvil";
+    if (!anvil && name != "minecraft:enchanting_table") return false;
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return false;
+    PState& p = it->second;
+    sim::PlayerSim& sm = *p.sim;
+    if (p.v.dead || p.gamemode == 3) return false;
+    if (sm.menu != sm.inventory_menu.get()) sm.handle_container_close(sm.menu->container_id);
+    int type = sim::Registries::get().id("minecraft:menu", anvil ? "minecraft:anvil" : "minecraft:enchantment");
+    if (type < 0) return false;
+    int cid = sm.new_container_id();
+    std::unique_ptr<sim::Menu> m;
+    if (anvil) {
+        auto am = std::make_unique<sim::AnvilMenu>(type, cid, &sm.inv, &sm);
+        am->on_result_taken = [this, dim, x, y, z] {   // AnvilMenu: a used anvil may chip (12 percent)
+            sim::EntityManager* mgr = entity_managers_[dim].get();
+            if (!mgr || mgr->random().next_float() >= 0.12f) return;
+            post_task([this, dim, x, y, z] {
+                World& w = s_.dim(dim);
+                uint16_t id = w.get_block(x, y, z);
+                const std::string n = Blocks::get().info(id).name;
+                uint16_t next = 0;
+                if (n == "minecraft:anvil") next = Blocks::get().find("minecraft:chipped_anvil", "facing=" + block_prop(id, "facing"));
+                else if (n == "minecraft:chipped_anvil") next = Blocks::get().find("minecraft:damaged_anvil", "facing=" + block_prop(id, "facing"));
+                else if (n != "minecraft:damaged_anvil") return;
+                bool broken = next == 0;
+                if (w.set_block(x, y, z, next)) block_changed(dim, x, y, z, next);
+                play_sound(dim, x + 0.5, y + 0.5, z + 0.5, broken ? "minecraft:block.anvil.destroy" : "minecraft:block.anvil.use", 1.0f, 1.0f);
+            });
+        };
+        m = std::move(am);
+    } else {
+        m = std::make_unique<sim::EnchantmentMenu>(type, cid, &sm.inv, &sm, [this, dim, x, y, z] {   // EnchantingTableBlock.BOOKSHELF_OFFSETS: shelves two blocks away with a free block in between
+            World& w = s_.dim(dim);
+            int n = 0;
+            for (int dx = -2; dx <= 2; dx++)
+                for (int dz = -2; dz <= 2; dz++) {
+                    if (std::abs(dx) != 2 && std::abs(dz) != 2) continue;
+                    for (int dy = 0; dy <= 1; dy++) {
+                        if (!sim::Tags::get().contains("block", "minecraft:enchantment_power_provider", Blocks::get().info(w.get_block(x + dx, y + dy, z + dz)).name)) continue;
+                        if (sim::Tags::get().contains("block", "minecraft:enchantment_power_transmitter", Blocks::get().info(w.get_block(x + dx / 2, y + dy, z + dz / 2)).name)) n++;
+                    }
+                }
+            return n;
+        });
+    }
+    GEvent e;
+    e.kind = GEvent::OpenScreen;
+    e.container = cid;
+    e.value = type;
+    e.text = anvil ? "Repair & Name" : "Enchant";
+    send_event(p.id, e);
+    sm.open_menu = std::move(m);
+    sm.menu = sm.open_menu.get();
+    sm.menu->set_synchronizer(p.sync.get());
+    return true;
+}
+
+void Game::menu_button(uint64_t gid, int container, int button) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return;
+    sim::PlayerSim& sm = *it->second.sim;
+    if (!sm.menu || sm.menu->container_id != container || sm.menu == sm.inventory_menu.get() || it->second.gamemode == 3) return;
+    if (sm.menu->click_menu_button(sm, button)) sm.menu->broadcast_changes();
+}
+
+void Game::anvil_rename(uint64_t gid, const std::string& name) {
+    std::lock_guard<std::mutex> l(mu_);
+    auto it = players_.find(gid);
+    if (it == players_.end() || !it->second.sim) return;
+    sim::PlayerSim& sm = *it->second.sim;
+    if (auto* am = dynamic_cast<sim::AnvilMenu*>(sm.menu)) am->set_item_name(name);
 }
 
 // the items of a container block that is being broken pop out of it

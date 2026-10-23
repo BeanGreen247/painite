@@ -48,6 +48,13 @@ void Game::add_xp_locked(PState& p, int points) {
     send_xp_locked(p);
 }
 
+void Game::give_levels_locked(PState& p, int levels) {
+    Vitals& v = p.v;
+    v.xp_level += levels;
+    if (v.xp_level < 0) { v.xp_level = 0; v.xp_progress = 0.0f; v.xp_total = 0; }
+    send_xp_locked(p);
+}
+
 void Game::give_xp(uint64_t gid, int points) {
     post_task([this, gid, points] {
         std::lock_guard<std::mutex> l(mu_);

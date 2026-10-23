@@ -34,6 +34,13 @@ public:
     bool can_drop_items() const override { return gamemode != 3; }
     PlayerInventory& inventory() override { return inv; }
     void on_equip_item(EquipmentSlot s, const ItemStack& prev, const ItemStack& now) override { if (equip_hook) equip_hook(s, prev, now); }
+    std::function<int()> level_hook, random_int_hook;
+    std::function<void(int)> levels_hook;
+    int enchant_seed_value = 0;
+    int experience_level() const override { return level_hook ? level_hook() : 0; }
+    void give_experience_levels(int n) override { if (levels_hook) levels_hook(n); }
+    int enchant_seed() const override { return enchant_seed_value; }
+    void new_enchant_seed() override { if (random_int_hook) enchant_seed_value = random_int_hook(); }
 
     // ServerGamePacketListenerImpl.handleContainerClick
     void handle_container_click(int container_id, int state_id, int slot, int button, ContainerInput input, const std::map<int, HashedLite>& changed, const HashedLite& carried);

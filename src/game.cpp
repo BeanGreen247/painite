@@ -14,6 +14,7 @@
 #include <chrono>
 #include <pthread.h>
 #include <cmath>
+#include <random>
 
 namespace pn {
 
@@ -96,7 +97,7 @@ namespace {
 class MenuSync : public sim::ContainerSynchronizer {
 public:
     MenuSync(Game* g, std::shared_ptr<const GIdentity> id, std::function<void(const std::shared_ptr<const GIdentity>&, GEvent)> send) : game(g), id_(std::move(id)), send_(std::move(send)) {}
-    void send_initial_data(sim::Menu& m, const std::vector<sim::ItemStack>& items, const sim::ItemStack& carried, const std::vector<int>&) override {
+    void send_initial_data(sim::Menu& m, const std::vector<sim::ItemStack>& items, const sim::ItemStack& carried, const std::vector<int>& data) override {
         GEvent e;
         e.kind = GEvent::ContainerContent;
         e.container = m.container_id;
@@ -104,6 +105,7 @@ public:
         e.items = items;
         e.stack = carried;
         send_(id_, std::move(e));
+        for (size_t i = 0; i < data.size(); i++) send_data_change(m, int(i), data[i]);   // AbstractContainerMenu.sendAllDataToRemote: the data slots follow the content
     }
     void send_slot_change(sim::Menu& m, int slot, const sim::ItemStack& s) override {
         GEvent e;
@@ -354,6 +356,16 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
     }
     ps.sync = std::make_unique<MenuSync>(this, id, [this](const std::shared_ptr<const GIdentity>& to, GEvent ev) { send_event(to, std::move(ev)); });
     ps.sim->inventory_menu->set_synchronizer(ps.sync.get());
+    {   // what the workstation menus ask of the player
+        PState* pp = &ps;
+        ps.sim->level_hook = [pp] { return pp->v.xp_level; };
+        ps.sim->levels_hook = [this, pp](int n) { give_levels_locked(*pp, n); };
+        ps.sim->random_int_hook = [] { static std::mt19937 rng{std::random_device{}()}; return int(rng()); };
+        Nbt saved;
+        bool have = s_.world.load_player(uuid_string(id->uuid), saved) && saved.type == Nbt::Compound && saved.get("XpSeed");
+        ps.sim->enchant_seed_value = have ? int(saved.geti("XpSeed", 0)) : 0;
+        if (!have) ps.sim->new_enchant_seed();
+    }
     {   // the ender chest
         ps.ender = std::make_shared<sim::SimpleContainer>(27);
         Nbt saved;
@@ -571,7 +583,7 @@ void Game::save_player_data(uint64_t gid) {
     GPos pos;
     int gm = 0;
     Nbt inventory_list = Nbt::list_of(Nbt::Compound);
-    int selected_slot = 0;
+    int selected_slot = 0, enchant_seed = 0;
     Nbt ender_list = Nbt::list_of(Nbt::Compound);
     Vitals vit;
     {
@@ -588,6 +600,7 @@ void Game::save_player_data(uint64_t gid) {
             for (int i = 0; i < inv.size(); i++)
                 if (!inv.item(i).is_empty()) inventory_list.list.push_back(sim::item_to_nbt(inv.item(i), i));
             selected_slot = inv.selected;
+            enchant_seed = it->second.sim->enchant_seed_value;
         }
         if (it->second.ender)
             for (int i = 0; i < 27; i++) if (!it->second.ender->items()[size_t(i)].is_empty()) ender_list.list.push_back(sim::item_to_nbt(it->second.ender->items()[size_t(i)], i));
@@ -627,6 +640,7 @@ void Game::save_player_data(uint64_t gid) {
     root.put("playerGameType", Nbt::make(Nbt::Int, gm));
     root.put("Inventory", std::move(inventory_list));
     root.put("EnderItems", std::move(ender_list));
+    root.put("XpSeed", Nbt::make(Nbt::Int, enchant_seed));
     root.put("SelectedItemSlot", Nbt::make(Nbt::Int, selected_slot));
     root.put("DataVersion", Nbt::make(Nbt::Int, w.data_version));
     if (!w.save_player(u, root)) warn("could not save player data for " + id->name);

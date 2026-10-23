@@ -112,6 +112,9 @@ public:
     void queue_dispense(int dim, int x, int y, int z, int delay);              // region threads: a dispenser or dropper fires in `delay` ticks
     bool dispense_fluid(int dim, int x, int y, int z, int pour);               // a dispenser pours (1 water, 2 lava) or picks up (0) a fluid at a spot; true when something happened
     void containers_tick();                                                    // game thread: furnaces burn and smelt
+    bool open_workstation(uint64_t gid, int dim, int x, int y, int z);        // right click on an anvil or an enchanting table
+    void menu_button(uint64_t gid, int container, int button);                // container_button_click (enchanting offers)
+    void anvil_rename(uint64_t gid, const std::string& name);                 // rename_item
     bool open_menu(uint64_t gid, const std::string& kind, const std::string& title);   // crafting table ...: open the window of a block; false when the player cannot
 
     void inv_set_held(uint64_t gid, int slot);
@@ -214,7 +217,8 @@ private:
     void die_locked(PState& p, const std::string& source);
     void send_health_locked(PState& p);
     void send_xp_locked(PState& p);
-    void add_xp_locked(PState& p, int points);   // Player.giveExperiencePoints
+    void add_xp_locked(PState& p, int points);
+    void give_levels_locked(PState& p, int levels);   // Player.giveExperienceLevels   // Player.giveExperiencePoints
     void track_movement_locked(PState& p, const GPos& now);
     void add_exhaustion_locked(PState& p, float x) { if (p.gamemode != 1 && p.gamemode != 3) p.v.exhaustion = std::min(40.0f, p.v.exhaustion + x); }
     void pickup_items();

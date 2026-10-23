@@ -4,6 +4,7 @@
 #include "sim/data.hpp"
 #include "sim/loot.hpp"
 #include "sim/recipe.hpp"
+#include "sim/enchant.hpp"
 #include "log.hpp"
 #include "util.hpp"
 #include "perf.hpp"
@@ -238,6 +239,7 @@ bool Server::start(std::string& err) {
                 sim::Tags::set_dir(d);
                 sim::LootTables::set_dir(d);
                 if (!sim::Recipes::get().load(d, err2)) warn("recipes: " + err2); else info("recipes: " + std::to_string(sim::Recipes::get().crafting_count()) + " crafting recipes loaded");
+                if (!sim::Enchants::get().load(d)) warn("enchantments: none loaded");
                 if (!sim::BlockTable::get().load(d, err2)) warn("block facts: " + err2);
                 if (!sim::EntityTable::get().load(d, err2)) warn("entity facts: " + err2);
                 info("gameplay data loaded from " + d);

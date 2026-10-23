@@ -62,6 +62,10 @@ public:
     virtual bool can_drop_items() const { return true; }
     virtual class PlayerInventory& inventory() = 0;
     virtual void on_equip_item(EquipmentSlot slot, const ItemStack& previous, const ItemStack& now) {}
+    virtual int experience_level() const { return 0; }
+    virtual void give_experience_levels(int) {}
+    virtual int enchant_seed() const { return 0; }
+    virtual void new_enchant_seed() {}   // Player.onEnchantmentPerformed: the next offers differ
 };
 
 // The player's own container: 36 slots, then feet 36, legs 37, chest 38, head 39, offhand 40, body 41, saddle 42
