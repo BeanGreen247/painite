@@ -9,6 +9,7 @@
 #include "sim/entity_manager.hpp"
 #include "sim/item_nbt.hpp"
 #include "sim/loot.hpp"
+#include "sim/brewing.hpp"
 #include "sim/data.hpp"
 #include "sim/enchant.hpp"
 #include "sim/recipe.hpp"
@@ -25,6 +26,8 @@ struct Game::BEC {
     sim::SimpleContainer items;
     std::vector<sim::Menu*> viewers;  // open windows on this container
     int lit = 0, lit_total = 0, cook = 0, cook_total = 0;   // furnaces
+    int brew_time = 0, brew_fuel = 0, bottles = 0;           // brewing stands (bottles: bit mask of the has_bottle_N properties last applied)
+    std::string brew_item;                                    // the ingredient the running brew started with
     std::map<std::string, int> used;                        // furnaces: recipes smelted since the output was last taken (their experience waits in the furnace)
     explicit BEC(int n) : items(n) {}
 };
@@ -36,6 +39,7 @@ int container_size(const std::string& n) {
     if (n == "minecraft:dispenser" || n == "minecraft:dropper") return 9;
     if (n == "minecraft:hopper") return 5;
     if (n == "minecraft:furnace" || n == "minecraft:blast_furnace" || n == "minecraft:smoker") return 3;
+    if (n == "minecraft:brewing_stand") return 5;
     return 0;
 }
 
@@ -52,6 +56,7 @@ const char* title_of(const std::string& n) {
     if (n == "minecraft:dropper") return "Dropper";
     if (n == "minecraft:hopper") return "Item Hopper";
     if (n == "minecraft:furnace") return "Furnace";
+    if (n == "minecraft:brewing_stand") return "Brewing Stand";
     if (n == "minecraft:blast_furnace") return "Blast Furnace";
     if (n == "minecraft:smoker") return "Smoker";
     return "Shulker Box";
@@ -89,6 +94,8 @@ std::shared_ptr<Game::BEC> Game::bec_get_locked(int dim, int x, int y, int z) {
                 int slot = -1;
                 if (sim::item_from_nbt(e, st, &slot) && slot >= 0 && slot < n) b->items.items()[size_t(slot)] = st;
             }
+        b->brew_time = int(be.geti("BrewTime", 0));
+        b->brew_fuel = int(be.geti("Fuel", 0));
         b->lit = int(be.geti("lit_time_remaining", be.geti("BurnTime", 0)));
         b->lit_total = int(be.geti("lit_total_time", 0));
         b->cook = int(be.geti("cooking_time_spent", be.geti("CookTime", 0)));
@@ -128,7 +135,7 @@ std::shared_ptr<Game::BEC> Game::bec_get_locked(int dim, int x, int y, int z) {
         for (sim::Menu* m : raw->viewers) m->broadcast_changes();
         ticker_.schedule_around(raw->dim, raw->x, raw->y, raw->z);   // comparators next to it (or behind a block next to it) read the new fill level
         for (int d = 0; d < 4; d++) ticker_.schedule(raw->dim, raw->x + (d == 2 ? -2 : d == 3 ? 2 : 0), raw->y, raw->z + (d == 0 ? -2 : d == 1 ? 2 : 0), 2);
-        if (raw->block == "minecraft:furnace" || raw->block == "minecraft:blast_furnace" || raw->block == "minecraft:smoker") bec_active_[bec_key(raw->dim, raw->x, raw->y, raw->z)] = bec_registry_[bec_key(raw->dim, raw->x, raw->y, raw->z)].lock();
+        if (raw->block == "minecraft:furnace" || raw->block == "minecraft:blast_furnace" || raw->block == "minecraft:smoker" || raw->block == "minecraft:brewing_stand") bec_active_[bec_key(raw->dim, raw->x, raw->y, raw->z)] = bec_registry_[bec_key(raw->dim, raw->x, raw->y, raw->z)].lock();
     };
     bec_registry_[key] = b;
     return b;
@@ -143,6 +150,10 @@ void Game::bec_save_locked(BEC& b) {
     Nbt items = Nbt::list_of(Nbt::Compound);
     for (int i = 0; i < b.items.size(); i++) if (!b.items.items()[size_t(i)].is_empty()) items.list.push_back(sim::item_to_nbt(b.items.items()[size_t(i)], i));
     be.put("Items", std::move(items));
+    if (b.block == "minecraft:brewing_stand") {
+        be.put("BrewTime", Nbt::make(Nbt::Short, b.brew_time));
+        be.put("Fuel", Nbt::make(Nbt::Byte, b.brew_fuel));
+    }
     if (container_size(b.block) == 3) {
         be.put("lit_time_remaining", Nbt::make(Nbt::Short, b.lit));
         be.put("lit_total_time", Nbt::make(Nbt::Short, b.lit_total));
@@ -227,6 +238,7 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
     *keep = order;
     std::string title = second ? "Large Chest" : title_of(name);
     bool furnace = container_size(name) == 3;
+    bool brewing = name == "minecraft:brewing_stand";
     // the window is built under mu_ (open_menu takes it, so build here and hand over)
     PState& p = it->second;
     sim::PlayerSim& sm = *p.sim;
@@ -262,6 +274,14 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
             if (pit != players_.end() && xp > 0) add_xp_locked(pit->second, int(xp));
         };
         m = std::move(fm);
+    } else if (brewing) {
+        auto bm = std::make_unique<sim::BrewingMenu>(type, cid, &sm.inv, &first->items, keep);
+        sim::Menu* raw = bm.get();
+        first->viewers.push_back(raw);
+        BEC* fb = first.get();
+        bm->on_closed = [fb, raw] { fb->viewers.erase(std::remove(fb->viewers.begin(), fb->viewers.end(), raw), fb->viewers.end()); };
+        bm->data_slots = {first->brew_time, first->brew_fuel};
+        m = std::move(bm);
     } else {
         std::vector<sim::Container*> parts;
         for (auto& b : order) parts.push_back(&b->items);
@@ -282,7 +302,7 @@ bool Game::open_container(uint64_t gid, int dim, int x, int y, int z) {
     sm.open_menu = std::move(m);
     sm.menu = sm.open_menu.get();
     sm.menu->set_synchronizer(p.sync.get());
-    if (furnace) bec_active_[bec_key(dim, x, y, z)] = first;
+    if (furnace || brewing) bec_active_[bec_key(dim, x, y, z)] = first;
     return true;
 }
 
@@ -434,6 +454,8 @@ void Game::containers_tick() {
     if (bec_active_.empty()) return;
     struct Pending { int dim, x, y, z; bool lit; };
     std::vector<Pending> lights;
+    struct BrewPending { int dim, x, y, z, bottles; bool done; };
+    std::vector<BrewPending> brews;
     {
         std::lock_guard<std::mutex> l(mu_);
         for (auto it = bec_active_.begin(); it != bec_active_.end();) {
@@ -442,6 +464,46 @@ void Game::containers_tick() {
             if (!w.chunk_if_loaded(f.x >> 4, f.z >> 4)) { ++it; continue; }
             uint16_t id = w.get_block(f.x, f.y, f.z);
             if (Blocks::get().info(id).name != f.block) { it = bec_active_.erase(it); continue; }   // the furnace is gone
+            if (f.block == "minecraft:brewing_stand") {   // BrewingStandBlockEntity.serverTick
+                bool changed = false;
+                sim::ItemStack& ing = f.items.item(3);
+                sim::ItemStack& blaze = f.items.item(4);
+                if (f.brew_fuel <= 0 && blaze.is("minecraft:blaze_powder")) {
+                    f.brew_fuel = 20;
+                    blaze.shrink(1);
+                    if (blaze.is_empty()) f.items.items()[4] = sim::ItemStack();
+                    changed = true;
+                }
+                bool brewable = false;
+                if (sim::is_brewing_ingredient(ing))
+                    for (int i = 0; i < 3; i++) if (sim::brew_changes(ing, f.items.item(i))) brewable = true;
+                bool done = false;
+                if (f.brew_time > 0) {
+                    f.brew_time--;
+                    changed = true;
+                    if (f.brew_time == 0 && brewable) {
+                        for (int i = 0; i < 3; i++) f.items.items()[size_t(i)] = sim::brew_mix(ing, f.items.item(i));
+                        ing.shrink(1);
+                        if (ing.is_empty()) f.items.items()[3] = sim::ItemStack();
+                        done = true;
+                    } else if (!brewable || ing.item()->name != f.brew_item) f.brew_time = 0;
+                } else if (brewable && f.brew_fuel > 0) {
+                    f.brew_fuel--;
+                    f.brew_time = 400;
+                    f.brew_item = ing.item()->name;
+                    changed = true;
+                }
+                int mask = 0;
+                for (int i = 0; i < 3; i++) if (!f.items.item(i).is_empty()) mask |= 1 << i;
+                if (mask != f.bottles || done) { f.bottles = mask; brews.push_back({f.dim, f.x, f.y, f.z, mask, done}); }
+                if (changed) bec_save_locked(f);
+                for (sim::Menu* m : f.viewers) {
+                    if (m->data_slots.size() == 2) m->data_slots = {f.brew_time, f.brew_fuel};
+                    m->broadcast_changes();
+                }
+                if (f.brew_time <= 0 && !(brewable && f.brew_fuel > 0) && f.viewers.empty()) it = bec_active_.erase(it); else ++it;
+                continue;
+            }
             const char* kind = furnace_kind(f.block);
             bool was_lit = f.lit > 0, changed = false;
             if (was_lit) f.lit--;
@@ -486,6 +548,13 @@ void Game::containers_tick() {
             bool idle = f.lit <= 0 && f.cook <= 0 && !(has_fuel && has_input && r) && f.viewers.empty();
             if (idle) it = bec_active_.erase(it); else ++it;
         }
+    }
+    for (auto& b : brews) {
+        World& w = s_.dim(b.dim);
+        uint16_t id = w.get_block(b.x, b.y, b.z), now = id;
+        for (int i = 0; i < 3; i++) now = block_with(now, ("has_bottle_" + std::to_string(i)).c_str(), bool(b.bottles >> i & 1));
+        if (now != id && w.set_block(b.x, b.y, b.z, now)) block_changed(b.dim, b.x, b.y, b.z, now);
+        if (b.done) play_sound(b.dim, b.x + 0.5, b.y + 0.5, b.z + 0.5, "minecraft:block.brewing_stand.brew", 1.0f, 1.0f);
     }
     for (auto& p : lights) {   // the lit property of the block, applied outside the lock
         World& w = s_.dim(p.dim);

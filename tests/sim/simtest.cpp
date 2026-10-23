@@ -1,5 +1,10 @@
 // Checks of the gameplay core against what Mojang's code does (hand-worked cases), run without a server: painite_simtest
 #include "../../src/sim/inventory.hpp"
+#include "../../src/sim/brewing.hpp"
+#include "../../src/sim/components.hpp"
+#include "../../src/sim/data.hpp"
+#include "../../src/sim/enchant.hpp"
+#include "../../src/sim/workstation.hpp"
 #include "../../src/sim/entity_manager.hpp"
 #include "../../src/blocks.hpp"
 #include "../../src/sim/path.hpp"
@@ -193,6 +198,38 @@ int main(int argc, char** argv) {
         auto flat = [](int x, int y, int z) { return y == 1 && z == 0 && x >= 0 && x <= 6 ? 8 : 0; };
         Vec3 g = compute_fluid_flow(AABB(2.1, 1.0, 0.1, 2.7, 1.5, 0.7), flat, none, floor);
         CHECK(g.length_sqr() == 0.0);
+    }
+    {   // brewing: water + nether wart = awkward, awkward + golden carrot = night vision, gunpowder makes a potion splash and keeps its potion
+        ItemStack water(I.by_name("minecraft:potion"), 1);
+        set_potion(water, "minecraft:water");
+        CHECK(potion_of(water) == "minecraft:water");
+        ItemStack wart(I.by_name("minecraft:nether_wart"), 1);
+        ItemStack awkward = brew_mix(wart, water);
+        CHECK(potion_of(awkward) == "minecraft:awkward");
+        ItemStack carrot(I.by_name("minecraft:golden_carrot"), 1);
+        CHECK(potion_of(brew_mix(carrot, awkward)) == "minecraft:night_vision");
+        CHECK(!brew_changes(carrot, water));
+        ItemStack powder(I.by_name("minecraft:gunpowder"), 1);
+        ItemStack splash = brew_mix(powder, awkward);
+        CHECK(splash.is("minecraft:splash_potion") && potion_of(splash) == "minecraft:awkward");
+        CHECK(is_brewing_ingredient(wart) && !is_brewing_ingredient(ItemStack(dirt, 1)));
+    }
+    {   // the anvil repairs a damaged sword with a diamond: damage back to 0 for one level, repair cost 1
+        Tags::set_dir(dir);
+        TestPlayer anvil_player;
+        anvil_player.creative = false;
+        AnvilMenu anvil(1, 1, &anvil_player.inv, &anvil_player);
+        ItemStack sword(I.by_name("minecraft:diamond_sword"), 1);
+        sword.set_damage_value(100);
+        anvil.input.set_item(0, sword);
+        anvil.input.set_item(1, ItemStack(I.by_name("minecraft:diamond"), 1));
+        const ItemStack& res = anvil.result.item(0);
+        CHECK(res.is("minecraft:diamond_sword") && res.damage_value() == 0 && get_repair_cost(res) == 1);
+        CHECK(anvil.data_slots[0] == 1 && anvil.repair_item_count_cost == 1);
+        // a rename costs one level and sets the custom name
+        anvil.input.set_item(1, ItemStack());
+        anvil.set_item_name("Excalibur");
+        CHECK(anvil.result.item(0).is("minecraft:diamond_sword") && get_custom_name(anvil.result.item(0)) == "Excalibur" && anvil.data_slots[0] == 1);
     }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;

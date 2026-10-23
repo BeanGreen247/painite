@@ -34,4 +34,15 @@ public:
     std::function<int()> bookshelves;
 };
 
+// slots 0-2 the bottles, 3 the ingredient, 4 the blaze powder, then the player's 27 + 9; data slots: brew time, fuel
+class BrewingMenu : public Menu {
+public:
+    BrewingMenu(int menu_type_id, int container_id, PlayerInventory* inv, Container* stand, std::shared_ptr<void> keep_alive);
+    ~BrewingMenu() override { if (on_closed) on_closed(); }
+    ItemStack quick_move_stack(MenuPlayer& player, int slot) override;
+    void removed(MenuPlayer& player) override { Menu::removed(player); if (on_closed) { auto f = std::move(on_closed); on_closed = nullptr; f(); } }
+    std::function<void()> on_closed;
+    std::shared_ptr<void> keep;
+};
+
 }  // namespace pn::sim

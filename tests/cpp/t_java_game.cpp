@@ -216,7 +216,7 @@ void region(Ctx& t, Env& e) {
 ServerOpts survival_opts(const Env&) {
     ServerOpts o;
     o.properties = "gamemode=survival\nlevel-type=flat\n";
-    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer", "Smith"};
+    o.ops = {"Digger", "Faller", "Eater", "Hunter", "Hunter2", "Keeper", "Archer", "Stress", "Cacher", "Wirer", "Farmer", "Plumber", "Plumber2", "Wirer2", "Crafter", "Packer", "Hopperer", "Smith", "Brewer"};
     return o;
 }
 
@@ -888,6 +888,52 @@ void workstations_test(Ctx& t, Env& e) {
     B.pump(200);
 }
 
+// a brewing stand turns a potion with gunpowder into a splash potion (400 ticks) using blaze powder as fuel
+void brewing_test(Ctx& t, Env& e) {
+    auto ids = e.ids("26.3");
+    JBot B(e.port(), 777, ids, "Brewer");
+    B.until([&] { return B.has_pos; }, 5000);
+    B.settle(150, 1500);
+    Stage S(t, B, e.data_dir + "/vanilla-26.3.blocks");
+    B.command("gamemode creative");
+    B.pump(150);
+    int y = S.py, x = S.px + 2, z = S.pz;
+    S.set(x, y, z, "brewing_stand[has_bottle_0=false,has_bottle_1=false,has_bottle_2=false]");
+    auto give = [&](int slot, const char* item, int n) { B.send("set_creative_mode_slot", Wr().be16(uint16_t(slot)).varint(uint32_t(n)).varint(uint32_t(ids->items.at(item))).varint(0).varint(0).b); };
+    give(36, "potion", 1);
+    give(37, "gunpowder", 2);
+    give(38, "blaze_powder", 2);
+    B.pump(300);
+    B.drop("open_screen");
+    B.send("use_item_on", Wr().varint(0).be64(block_pos(x, y, z)).varint(1).f32(0.5f).f32(0.5f).f32(0.5f).u8(0).u8(0).varint(95).b);
+    B.wait_for("open_screen", 1, 3000);
+    auto scr = B.take("open_screen");
+    t.check(!scr.empty(), "the brewing stand opens");
+    if (scr.empty()) return;
+    Rd sr(scr[0]);
+    int cid = int(sr.varint());
+    B.pump(200);
+    auto click = [&](int slot) { B.send("container_click", Wr().varint(uint32_t(cid)).varint(0).be16(uint16_t(slot)).u8(0).varint(0).varint(0).u8(0).b); B.pump(150); };
+    click(32); click(0);   // the potion into a bottle slot
+    click(33); click(3);   // gunpowder as the ingredient
+    click(34); click(4);   // blaze powder as fuel
+    B.drop("container_set_slot");
+    bool brewed = B.until([&] {
+        for (auto& d : B.log) {
+            if (d.first != "container_set_slot") continue;
+            Rd r(d.second);
+            r.varint(); r.varint();
+            int slot = int16_t(r.be16());
+            int count = int(r.varint());
+            if (slot == 0 && count > 0 && int(r.varint()) == ids->items.at("splash_potion")) return true;
+        }
+        return false;
+    }, 30000);
+    t.check(brewed, "gunpowder turns the potion into a splash potion");
+    B.send("container_close", Wr().varint(uint32_t(cid)).b);
+    B.pump(200);
+}
+
 // a hopper moves items from the chest above into the chest it faces, a powered dropper throws an item out
 void hopper_test(Ctx& t, Env& e) {
     auto ids = e.ids("26.3");
@@ -1210,6 +1256,7 @@ void reg_java_game(Registry& reg) {
     d.tests.push_back({"crafting-table", crafting_test});
     d.tests.push_back({"containers", containers_test});
     d.tests.push_back({"workstations", workstations_test});
+    d.tests.push_back({"brewing", brewing_test});
     d.tests.push_back({"hoppers-droppers", hopper_test});
     d.tests.push_back({"mobs", mobs});
     d.tests.push_back({"mobs-more", mobs2});

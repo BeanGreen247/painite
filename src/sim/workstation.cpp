@@ -1,5 +1,6 @@
 #include "workstation.hpp"
 #include "components.hpp"
+#include "brewing.hpp"
 #include "enchant.hpp"
 #include <algorithm>
 #include <cmath>
@@ -39,6 +40,23 @@ class LapisSlot : public Slot {
 public:
     using Slot::Slot;
     bool may_place(const ItemStack& s) const override { return s.is("minecraft:lapis_lazuli"); }
+};
+
+class BottleSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override { return is_brewing_container(s); }
+    int max_stack_size() const override { return 1; }
+};
+class IngredientSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override { return is_brewing_ingredient(s); }
+};
+class BlazeSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override { return s.is("minecraft:blaze_powder"); }
 };
 
 }  // namespace
@@ -274,6 +292,45 @@ ItemStack EnchantmentMenu::quick_move_stack(MenuPlayer& player, int slot_index) 
             stack.shrink(1);
             slots[0]->set_by_player(one);
         }
+        if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
+        else slot->set_changed();
+        if (stack.count() == clicked.count()) return ItemStack();
+        slot->on_take(player, stack);
+    }
+    return clicked;
+}
+
+// ---- brewing stand
+
+BrewingMenu::BrewingMenu(int menu_type_id, int container_id, PlayerInventory* inv, Container* stand, std::shared_ptr<void> keep_alive)
+    : Menu(menu_type_id, container_id), keep(std::move(keep_alive)) {
+    for (int i = 0; i < 3; i++) add_slot(std::make_unique<BottleSlot>(stand, i));
+    add_slot(std::make_unique<IngredientSlot>(stand, 3));
+    add_slot(std::make_unique<BlazeSlot>(stand, 4));
+    add_standard_inventory_slots(inv, 8, 84);
+    data_slots.assign(2, 0);
+}
+
+ItemStack BrewingMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
+    ItemStack clicked;
+    Slot* slot = slots[size_t(slot_index)].get();
+    if (slot->has_item()) {
+        ItemStack& stack = slot->get_item();
+        clicked = stack.copy();
+        if ((slot_index >= 0 && slot_index <= 4) ) {
+            if (!move_item_stack_to(stack, 5, 41, true)) return ItemStack();
+            slot->on_quick_craft(stack, clicked);
+        } else if (stack.is("minecraft:blaze_powder")) {
+            if (!move_item_stack_to(stack, 4, 5, false) && !(is_brewing_ingredient(stack) && move_item_stack_to(stack, 3, 4, false))) return ItemStack();
+        } else if (is_brewing_ingredient(stack)) {
+            if (!move_item_stack_to(stack, 3, 4, false)) return ItemStack();
+        } else if (is_brewing_container(stack) && stack.count() == 1) {
+            if (!move_item_stack_to(stack, 0, 3, false)) return ItemStack();
+        } else if (slot_index >= 5 && slot_index < 32) {
+            if (!move_item_stack_to(stack, 32, 41, false)) return ItemStack();
+        } else if (slot_index >= 32 && slot_index < 41) {
+            if (!move_item_stack_to(stack, 5, 32, false)) return ItemStack();
+        } else if (!move_item_stack_to(stack, 5, 41, false)) return ItemStack();
         if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
         else slot->set_changed();
         if (stack.count() == clicked.count()) return ItemStack();
