@@ -360,6 +360,8 @@ uint64_t Game::add_player(std::shared_ptr<GIdentity> id, const GPos& pos, int ga
         PState* pp = &ps;
         ps.sim->level_hook = [pp] { return pp->v.xp_level; };
         ps.sim->levels_hook = [this, pp](int n) { give_levels_locked(*pp, n); };
+        ps.sim->points_hook = [this, pp](int n) { add_xp_locked(*pp, n); };
+        ps.sim->below_hook = [](int bound) { static std::mt19937 rng{std::random_device{}()}; return bound > 0 ? int(rng() % unsigned(bound)) : 0; };
         ps.sim->random_int_hook = [] { static std::mt19937 rng{std::random_device{}()}; return int(rng()); };
         Nbt saved;
         bool have = s_.world.load_player(uuid_string(id->uuid), saved) && saved.type == Nbt::Compound && saved.get("XpSeed");

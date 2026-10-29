@@ -39,6 +39,10 @@ public:
     int enchant_seed_value = 0;
     int experience_level() const override { return level_hook ? level_hook() : 0; }
     void give_experience_levels(int n) override { if (levels_hook) levels_hook(n); }
+    std::function<void(int)> points_hook;
+    std::function<int(int)> below_hook;
+    void give_experience_points(int n) override { if (points_hook) points_hook(n); }
+    int random_below(int bound) override { return below_hook ? below_hook(bound) : 0; }
     int enchant_seed() const override { return enchant_seed_value; }
     void new_enchant_seed() override { if (random_int_hook) enchant_seed_value = random_int_hook(); }
 

@@ -64,6 +64,8 @@ public:
     virtual void on_equip_item(EquipmentSlot slot, const ItemStack& previous, const ItemStack& now) {}
     virtual int experience_level() const { return 0; }
     virtual void give_experience_levels(int) {}
+    virtual void give_experience_points(int) {}
+    virtual int random_below(int bound) { return 0; }
     virtual int enchant_seed() const { return 0; }
     virtual void new_enchant_seed() {}   // Player.onEnchantmentPerformed: the next offers differ
 };

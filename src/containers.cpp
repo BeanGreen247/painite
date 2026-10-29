@@ -312,7 +312,8 @@ bool Game::open_workstation(uint64_t gid, int dim, int x, int y, int z) {
     World& w = s_.dim(dim);
     const std::string name = Blocks::get().info(w.get_block(x, y, z)).name;
     bool anvil = name == "minecraft:anvil" || name == "minecraft:chipped_anvil" || name == "minecraft:damaged_anvil";
-    if (!anvil && name != "minecraft:enchanting_table") return false;
+    bool grind = name == "minecraft:grindstone";
+    if (!anvil && !grind && name != "minecraft:enchanting_table") return false;
     std::lock_guard<std::mutex> l(mu_);
     auto it = players_.find(gid);
     if (it == players_.end() || !it->second.sim) return false;
@@ -320,11 +321,13 @@ bool Game::open_workstation(uint64_t gid, int dim, int x, int y, int z) {
     sim::PlayerSim& sm = *p.sim;
     if (p.v.dead || p.gamemode == 3) return false;
     if (sm.menu != sm.inventory_menu.get()) sm.handle_container_close(sm.menu->container_id);
-    int type = sim::Registries::get().id("minecraft:menu", anvil ? "minecraft:anvil" : "minecraft:enchantment");
+    int type = sim::Registries::get().id("minecraft:menu", anvil ? "minecraft:anvil" : grind ? "minecraft:grindstone" : "minecraft:enchantment");
     if (type < 0) return false;
     int cid = sm.new_container_id();
     std::unique_ptr<sim::Menu> m;
-    if (anvil) {
+    if (grind) {
+        m = std::make_unique<sim::GrindstoneMenu>(type, cid, &sm.inv, &sm);
+    } else if (anvil) {
         auto am = std::make_unique<sim::AnvilMenu>(type, cid, &sm.inv, &sm);
         am->on_result_taken = [this, dim, x, y, z] {   // AnvilMenu: a used anvil may chip (12 percent)
             sim::EntityManager* mgr = entity_managers_[dim].get();
@@ -362,7 +365,7 @@ bool Game::open_workstation(uint64_t gid, int dim, int x, int y, int z) {
     e.kind = GEvent::OpenScreen;
     e.container = cid;
     e.value = type;
-    e.text = anvil ? "Repair & Name" : "Enchant";
+    e.text = anvil ? "Repair & Name" : grind ? "Repair & Disenchant" : "Enchant";
     send_event(p.id, e);
     sm.open_menu = std::move(m);
     sm.menu = sm.open_menu.get();

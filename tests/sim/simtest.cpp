@@ -231,6 +231,24 @@ int main(int argc, char** argv) {
         anvil.set_item_name("Excalibur");
         CHECK(anvil.result.item(0).is("minecraft:diamond_sword") && get_custom_name(anvil.result.item(0)) == "Excalibur" && anvil.data_slots[0] == 1);
     }
+    {   // the grindstone strips enchantments and merges damaged tools
+        TestPlayer gp;
+        gp.creative = false;
+        GrindstoneMenu gm(1, 1, &gp.inv, &gp);
+        ItemStack sw(I.by_name("minecraft:diamond_sword"), 1);
+        set_enchantments(sw, {{"minecraft:sharpness", 3}, {"minecraft:binding_curse", 1}});
+        gm.input.set_item(0, sw);
+        CHECK(gm.result.item(0).is("minecraft:diamond_sword"));
+        auto left = get_enchantments(gm.result.item(0));
+        CHECK(left.size() == 1 && left.count("minecraft:binding_curse") == 1);
+        gm.input.set_item(0, ItemStack());
+        ItemStack a(I.by_name("minecraft:iron_pickaxe"), 1), b(I.by_name("minecraft:iron_pickaxe"), 1);
+        a.set_damage_value(200); b.set_damage_value(200);
+        gm.input.set_item(0, a);
+        gm.input.set_item(1, b);
+        const ItemStack& m = gm.result.item(0);
+        CHECK(m.is("minecraft:iron_pickaxe") && m.damage_value() == a.max_damage() - (2 * (a.max_damage() - 200) + a.max_damage() * 5 / 100));
+    }
     printf(failures ? "%d failures\n" : "all passed\n", failures);
     return failures ? 1 : 0;
 }

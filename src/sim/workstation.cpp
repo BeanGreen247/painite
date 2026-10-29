@@ -30,6 +30,56 @@ public:
     AnvilMenu* menu;
 };
 
+class GrindstoneInputSlot : public Slot {
+public:
+    using Slot::Slot;
+    bool may_place(const ItemStack& s) const override { return s.damageable() || s.is("minecraft:enchanted_book") || s.is_enchanted(); }
+};
+
+class GrindstoneResultSlot : public Slot {
+public:
+    GrindstoneResultSlot(GrindstoneMenu* m, Container* c) : Slot(c, 0), menu(m) {}
+    bool may_place(const ItemStack&) const override { return false; }
+    void on_take(MenuPlayer& p, const ItemStack&) override {
+        int xp = menu->experience_amount(p);
+        if (xp > 0) p.give_experience_points(xp);
+        menu->input.set_item(0, ItemStack());
+        menu->input.set_item(1, ItemStack());
+        Slot::on_take(p, ItemStack());
+    }
+    GrindstoneMenu* menu;
+};
+
+bool is_curse(const std::string& n) { return n.size() > 6 && n.compare(n.size() - 6, 6, "_curse") == 0; }
+
+// every enchantment of the stack, normal and stored
+std::map<std::string, int> all_enchants(const ItemStack& s) {
+    std::map<std::string, int> m = get_enchantments(s, "minecraft:enchantments");
+    for (auto& kv : get_enchantments(s, "minecraft:stored_enchantments")) m[kv.first] = std::max(m[kv.first], kv.second);
+    return m;
+}
+
+// GrindstoneMenu.removeNonCursesFrom
+ItemStack remove_non_curses(const ItemStack& in) {
+    ItemStack r = in;
+    std::map<std::string, int> keep;
+    for (auto& kv : all_enchants(in)) if (is_curse(kv.first)) keep[kv.first] = kv.second;
+    bool book = in.is("minecraft:enchanted_book");
+    remove_component(r, "minecraft:enchantments");
+    remove_component(r, "minecraft:stored_enchantments");
+    if (book && keep.empty()) {
+        ItemStack b(Items::get().by_name("minecraft:book"), in.count());
+        b.patch() = r.patch();
+        r = b;
+    } else if (!keep.empty()) {
+        set_enchantments(r, keep, book ? "minecraft:stored_enchantments" : "minecraft:enchantments");
+    }
+    int cost = 0;
+    for (size_t i = 0; i < keep.size(); i++) cost = cost * 2 + 1;
+    set_repair_cost(r, cost);
+    return r;
+}
+
 class OneItemSlot : public Slot {
 public:
     using Slot::Slot;
@@ -175,6 +225,86 @@ void AnvilMenu::removed(MenuPlayer& player) {
 }
 
 ItemStack AnvilMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
+    ItemStack clicked;
+    Slot* slot = slots[size_t(slot_index)].get();
+    if (slot->has_item()) {
+        ItemStack& stack = slot->get_item();
+        clicked = stack.copy();
+        if (slot_index == 2) {
+            if (!move_item_stack_to(stack, 3, 39, true)) return ItemStack();
+            slot->on_quick_craft(stack, clicked);
+        } else if (slot_index == 0 || slot_index == 1) {
+            if (!move_item_stack_to(stack, 3, 39, false)) return ItemStack();
+        } else if (slot_index >= 3 && slot_index < 39) {
+            if (!move_item_stack_to(stack, 0, 2, false)) {
+                if (slot_index < 30) { if (!move_item_stack_to(stack, 30, 39, false)) return ItemStack(); }
+                else if (!move_item_stack_to(stack, 3, 30, false)) return ItemStack();
+            }
+        }
+        if (stack.is_empty()) slot->set_by_player(ItemStack(), clicked);
+        else slot->set_changed();
+        if (stack.count() == clicked.count()) return ItemStack();
+        slot->on_take(player, stack);
+    }
+    return clicked;
+}
+
+// ---- grindstone
+
+GrindstoneMenu::GrindstoneMenu(int menu_type_id, int container_id, PlayerInventory* inv, MenuPlayer* o) : Menu(menu_type_id, container_id), owner(o) {
+    input.on_changed = [this] { create_result(); };
+    add_slot(std::make_unique<GrindstoneInputSlot>(&input, 0));
+    add_slot(std::make_unique<GrindstoneInputSlot>(&input, 1));
+    add_slot(std::make_unique<GrindstoneResultSlot>(this, &result));
+    add_standard_inventory_slots(inv, 8, 84);
+}
+
+int GrindstoneMenu::experience_amount(MenuPlayer& p) const {
+    int total = 0;
+    for (int i = 0; i < 2; i++)
+        for (auto& kv : all_enchants(const_cast<SimpleContainer&>(input).item(i))) {
+            if (is_curse(kv.first)) continue;
+            if (const EnchantDef* d = Enchants::get().find(kv.first)) total += d->min_cost(kv.second);
+        }
+    if (total <= 0) return 0;
+    int half = (total + 1) / 2;
+    return half + p.random_below(half);
+}
+
+void GrindstoneMenu::create_result() {
+    const ItemStack a = input.item(0), b = input.item(1);
+    ItemStack res;
+    bool any_enchant = (!a.is_empty() && !all_enchants(a).empty()) || (!b.is_empty() && !all_enchants(b).empty());
+    if (a.is_empty() && b.is_empty()) {
+    } else if (a.count() > 1 || b.count() > 1 || (!a.is_empty() && !b.is_empty() && !a.is(b.item()))) {
+    } else if (a.is_empty() || b.is_empty()) {
+        const ItemStack& s = a.is_empty() ? b : a;
+        if (any_enchant) res = remove_non_curses(s);
+    } else {   // GrindstoneMenu.mergeItems
+        int max_damage = std::max(a.max_damage(), b.max_damage());
+        int total = (a.max_damage() - a.damage_value()) + (b.max_damage() - b.damage_value()) + max_damage * 5 / 100;
+        res = a;
+        if (a.damageable()) res.set_damage_value(std::max(max_damage - total, 0));
+        else if (a.max_stack_size() < 2) res = ItemStack();
+        std::map<std::string, int> curses;
+        for (const ItemStack* s : {&a, &b})
+            for (auto& kv : all_enchants(*s)) if (is_curse(kv.first)) curses[kv.first] = std::max(curses[kv.first], kv.second);
+        if (!res.is_empty()) {
+            remove_component(res, "minecraft:enchantments");
+            if (!curses.empty()) set_enchantments(res, curses, "minecraft:enchantments");
+            res = remove_non_curses(res);
+        }
+    }
+    result.items()[0] = res;
+}
+
+void GrindstoneMenu::removed(MenuPlayer& player) {
+    Menu::removed(player);
+    result.clear_content();
+    clear_container(player, &input);
+}
+
+ItemStack GrindstoneMenu::quick_move_stack(MenuPlayer& player, int slot_index) {
     ItemStack clicked;
     Slot* slot = slots[size_t(slot_index)].get();
     if (slot->has_item()) {

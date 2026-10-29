@@ -20,6 +20,19 @@ public:
     MenuPlayer* owner;
 };
 
+// slots 0 and 1 the inputs, 2 the result, then the player's 27 + 9; taking the result pays out experience for the removed enchantments
+class GrindstoneMenu : public Menu {
+public:
+    GrindstoneMenu(int menu_type_id, int container_id, PlayerInventory* inv, MenuPlayer* owner);
+    ItemStack quick_move_stack(MenuPlayer& player, int slot) override;
+    void slots_changed(Container*) override { broadcast_changes(); }
+    void removed(MenuPlayer& player) override;
+    void create_result();
+    int experience_amount(MenuPlayer& p) const;
+    SimpleContainer input{2}, result{1};
+    MenuPlayer* owner;
+};
+
 // slot 0 the item, 1 the lapis, then the player's 27 + 9; ten data slots (costs 0-2, seed, enchantment clues 4-6, level clues 7-9)
 class EnchantmentMenu : public Menu {
 public:
